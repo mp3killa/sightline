@@ -31,6 +31,11 @@ own tool window. Verify:
   double-prompt question — reproduce before any approval-flow refactor).
 - `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open — check
   for deadlock / UI-block.
+- **Markdown rendering (needs eyes):** headings (no `#`), real tables, lists (incl. task lists), fenced
+  code (Copy + horizontal scroll), quotes, `> [!WARNING]` callouts, inline styles, and clickable project
+  file links all render in light + dark; the turn footer shows cost/duration/turns and the status strip
+  never echoes the response; malformed/half-streamed Markdown stays readable; auto-scroll follows only at
+  the bottom (scrolling up pauses it, sending re-follows).
 - **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
   `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
   clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
@@ -50,11 +55,6 @@ Claude CLI" wording are all in place — the remaining step is actually submitti
 
 The bulk of the P1 tail has shipped (see [../CLAUDE.md](../CLAUDE.md)); only these remain:
 
-## Android command interpreter
-
-- `PRODUCED` correlation is sequential (best-effort); parallel `tool_use` in one turn could mis-link —
-  revisit if/when the CLI emits parallel results, ideally threading the `tool_use_id` into result events.
-
 ## PSI enrichment
 
 - Android **resource → referencing source** (the reverse lookup, via the resource/reference index — live
@@ -71,6 +71,21 @@ The bulk of the P1 tail has shipped (see [../CLAUDE.md](../CLAUDE.md)); only the
   already supports it) and the fuller tier progression (hide low-value labels → collapse historical by
   category → "Show more" → better Fit). Minimap only if navigation is still hard — Fit + node caps + the
   new fold mean it isn't the bottleneck.
+
+---
+
+# Chat transcript rendering — remaining polish
+
+The Markdown renderer overhaul shipped (phases A–3, see [../CLAUDE.md](../CLAUDE.md)): the status-echo fix
++ turn footer, the platform-free `ui/markdown/` parser → model → component pipeline
+(headings/lists/tables/code/quotes/callouts + inline styles), project-file links, and the scroll-follow
+guard. What's left is optional polish:
+
+- **Syntax highlighting** in fenced code — only if it can reuse IntelliJ editor/highlighter APIs safely;
+  don't block on it.
+- **Code block** height cap + Expand/Collapse for very long blocks (today: full height, horizontal scroll).
+- **Table** horizontal scroll for very wide tables (today: cells wrap to the available width).
+- **"Jump to latest"** affordance when auto-follow is paused (the scroll guard ships; the button doesn't).
 
 ---
 
