@@ -81,13 +81,31 @@ class StatusModelTest {
         assertEquals("Editing X.kt", m.view.primary)
     }
 
-    @Test fun completedSettlesToSummaryEvenOverActiveTool() {
+    @Test fun completedSettlesToConciseLabelEvenOverActiveTool() {
         val m = model()
         m.taskStarted()
         m.apply(FileEdited("/a/X.kt", at = t))
         m.apply(TaskCompleted("Done", isError = false, at = t))
         assertEquals(StatusKind.SUCCESS, m.view.kind)
-        assertEquals("Done", m.view.primary)
+        assertEquals("Completed", m.view.primary)
+    }
+
+    @Test fun completionNeverPutsResponseProseInStatus() {
+        // The TaskCompleted summary is the full final assistant text; it must never reach the strip.
+        val m = model()
+        m.taskStarted()
+        val longResponse = "Here is a long assistant answer that explains the whole thing in detail. ".repeat(5)
+        m.apply(TaskCompleted(longResponse, isError = false, at = t))
+        assertEquals("Completed", m.view.primary)
+        assertEquals(StatusKind.SUCCESS, m.view.kind)
+    }
+
+    @Test fun erroredCompletionShowsStoppedNotProse() {
+        val m = model()
+        m.taskStarted()
+        m.apply(TaskCompleted("A long explanation of what went wrong and why it stopped.", isError = true, at = t))
+        assertEquals("Stopped", m.view.primary)
+        assertEquals(StatusKind.WARNING, m.view.kind)
     }
 
     @Test fun resetReturnsToReady() {

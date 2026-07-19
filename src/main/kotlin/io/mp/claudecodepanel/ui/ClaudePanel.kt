@@ -52,6 +52,7 @@ import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
 import io.mp.claudecodepanel.theme.ClaudeIcons
 import io.mp.claudecodepanel.theme.ClaudeUiTokens
 import io.mp.claudecodepanel.ui.components.EmptyStatePanel
+import io.mp.claudecodepanel.ui.state.CompletionSummary
 import io.mp.claudecodepanel.ui.state.ComposerModel
 import io.mp.claudecodepanel.ui.state.LayoutProfile
 import io.mp.claudecodepanel.ui.state.PermissionModes
@@ -219,7 +220,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
-    private var completionMeta: String? = null
     private val turns = ArrayList<AssistantTurn>()
 
     private val modes = PermissionModes.all
@@ -741,11 +741,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onResult(o: JsonObject) {
         finalizeCurrent(); inAssistant = false; setRunning(false)
         val isErr = o.has("is_error") && o.get("is_error").let { it.isJsonPrimitive && it.asBoolean }
-        val parts = ArrayList<String>()
-        o.dblOrNull("total_cost_usd")?.let { parts.add("$" + String.format("%.4f", it)) }
-        o.dblOrNull("duration_ms")?.let { parts.add(String.format("%.1fs", it / 1000)) }
-        o.intOrNull("num_turns")?.let { parts.add("$it turn" + if (it > 1) "s" else "") }
-        completionMeta = parts.joinToString("   ·   ").ifBlank { null }
+        // Run metadata lives in a subtle turn footer, not the status strip — cost/duration/turns.
+        curTurn?.addFooter(
+            CompletionSummary.footer(o.dblOrNull("total_cost_usd"), o.dblOrNull("duration_ms"), o.intOrNull("num_turns"), isErr),
+        )
         feed(interpreter.taskDone(o.str("result") ?: "", isErr))
         if (isErr) o.str("result")?.let { addInfo(it, true) }
     }
@@ -1043,7 +1042,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun refreshStatus() {
         val view = statusModel.view
-        val meta = if (running) modelLabel() else completionMeta
+        // Live model name while working; nothing extra once done (run metadata lives in the turn footer).
+        val meta = if (running) modelLabel() else null
         statusStrip.update(view, meta)
         header.setSessionState(coarseKind(view), coarseLabel(view))
         uiState.sessionState = if (approvalCoordinator.hasPending()) "WAITING_FOR_APPROVAL" else view.kind.name
@@ -1078,7 +1078,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun clearAll() {
         transcript.removeAll()
         toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
-        completionMeta = null
         interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
         statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
@@ -1219,6 +1218,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             refreshVisibility(); relayout()
         }
         fun applyDetails(show: Boolean) { detailKids.forEach { it.isVisible = show }; refreshVisibility() }
+
+        /** A subtle run-metadata footer ("Completed · 51.6s · 13 turns · $0.404") — secondary, never the answer. */
+        fun addFooter(text: String) {
+            val footer = JBLabel(text)
+            footer.foreground = mutedFg()
+            footer.font = footer.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+            footer.border = JBUI.Borders.emptyTop(4)
+            footer.alignmentX = Component.LEFT_ALIGNMENT
+            body.add(fullWidth(footer))
+            relayout()
+        }
         private fun refreshVisibility() { isVisible = showDetails || textCount > 0 }
     }
 

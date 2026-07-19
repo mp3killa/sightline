@@ -84,7 +84,10 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
             is TaskCompleted -> {
                 savedBeforePermission = null
                 val kind = if (event.isError) StatusKind.WARNING else StatusKind.SUCCESS
-                force(StatusView(kind, event.summary.ifBlank { if (event.isError) "Stopped" else "Done" }, null, P_COMPLETED, false, now))
+                // The status line shows session *state*, never the answer: [event.summary] is the full
+                // final assistant text, so it must not reach the strip. Settle to a fixed concise label
+                // (the response itself stays in the transcript; cost/turns go to the turn footer).
+                force(StatusView(kind, if (event.isError) "Stopped" else "Completed", null, P_COMPLETED, false, now))
             }
             is StatusUpdated -> {
                 if (event.verb.equals("Thinking", ignoreCase = true)) {
