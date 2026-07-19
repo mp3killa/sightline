@@ -113,8 +113,10 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
         when {
             gradleTasks.isNotEmpty() -> {
                 remember(if (isTest) Kind.TEST else Kind.GRADLE, null, cmd)
-                gradleTasks.forEach { out.add(GradleTaskRun(it, now)) }
+                // A gradle *test* task is a single Testing-cluster node (avoid a duplicate gradle +
+                // test node with the same label); other gradle tasks are Build-cluster nodes.
                 if (isTest) out.add(TestStarted(gradleTasks.joinToString(" "), now))
+                else gradleTasks.forEach { out.add(GradleTaskRun(it, now)) }
             }
             isTest -> {
                 remember(Kind.TEST, null, cmd)

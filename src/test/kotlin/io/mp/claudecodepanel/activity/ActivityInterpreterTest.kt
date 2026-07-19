@@ -33,10 +33,16 @@ class ActivityInterpreterTest {
         assertEquals("app/src", e.path)
     }
 
-    @Test fun gradleTestCommandEmitsTaskAndTestStart() {
+    @Test fun gradleTestCommandEmitsSingleTestNode() {
         val ev = interp.toolUse("b1", "Bash", obj("""{"command":"./gradlew :app:test"}"""))
-        assertTrue(ev.any { it is GradleTaskRun })
         assertTrue(ev.any { it is TestStarted })
+        // A gradle test task is one Testing node, not also a duplicate Gradle-task node.
+        assertTrue(ev.none { it is GradleTaskRun })
+    }
+
+    @Test fun gradleNonTestCommandEmitsGradleTask() {
+        val ev = interp.toolUse("b9", "Bash", obj("""{"command":"./gradlew :app:assembleDebug"}"""))
+        assertTrue(ev.any { it is GradleTaskRun })
     }
 
     @Test fun plainBashIsCommand() {

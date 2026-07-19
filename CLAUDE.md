@@ -31,6 +31,13 @@ which emits `AgentActivityEvent`s that `ActivityGraph` reduces into nodes/edges/
 Structured tool events are high-confidence; text/heuristic guesses are lower-confidence and drawn
 subtler. Prose is **never** mined for file names. The map physics run on a Swing `Timer` that only
 ticks while the component is showing and auto-suspends when idle; "reduce motion" settles statically.
+Header layout button switches **Chat / Split / Map** (`activityViewMode`).
+
+**Headless preview (dev):** `activity/ActivityMapRenderer.kt` paints an `ActivityGraph` to a PNG
+using plain `java.awt` (no platform deps), so the map can be eyeballed without launching the IDE.
+`ActivityMapPreviewTest` drives a busy fixture and writes `build/activity-map-preview-{dark,light}.png`
+— regenerate with `./gradlew test` and open/read those files. (The live panel is theme-aware and
+animated, so the preview is representative, not pixel-identical.)
 
 The transcript is a `Scrollable` `JPanel` (BoxLayout Y) of block components. Each assistant turn is
 an `AssistantTurn` holding `TextBlock` (streamed markdown), `ThinkingBlock` (collapsible),

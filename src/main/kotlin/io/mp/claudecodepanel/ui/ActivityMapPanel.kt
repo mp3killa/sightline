@@ -4,6 +4,7 @@ import com.intellij.ide.projectView.ProjectView
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
@@ -79,6 +80,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private val countLabel = JBLabel(" ")
     private val canvas = GraphCanvas()
     private val details = DetailsPanel()
+    private val detailsScroll = JBScrollPane(details).apply { border = JBUI.Borders.empty() }
+    private val contentSplit = JBSplitter(false, 0.72f)
     private val timelineModel = DefaultListModel<TimelineEntry>()
     private val timelineList = JBList(timelineModel)
 
@@ -135,7 +138,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         timelineModel.clear()
         selectedId = null
         canvas.positions.clear(); canvas.velocities.clear()
-        refreshFocusCard(); details.refresh()
+        refreshFocusCard(); details.refresh(); updateDetailsVisibility()
         canvas.repaint()
     }
 
@@ -148,11 +151,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         root.border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor.border())
         root.add(buildHeader(), BorderLayout.NORTH)
 
-        val split = JBSplitter(false, 0.72f)
-        split.firstComponent = canvas
-        split.secondComponent = JBScrollPane(details).apply { border = JBUI.Borders.empty() }
-        split.setHonorComponentsMinimumSize(false)
-        root.add(split, BorderLayout.CENTER)
+        contentSplit.firstComponent = canvas
+        contentSplit.setHonorComponentsMinimumSize(false)
+        updateDetailsVisibility() // details are collapsed until a node is selected
+        root.add(contentSplit, BorderLayout.CENTER)
 
         root.add(buildTimeline(), BorderLayout.SOUTH)
         root.preferredSize = Dimension(JBUI.scale(480), JBUI.scale(320))
@@ -205,9 +207,52 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         }
         controls.add(reduceMotionButton)
         controls.add(smallButton("Fit") { fit() })
+        val legendBtn = JButton("Legend"); legendBtn.margin = JBUI.insets(2, 6)
+        legendBtn.toolTipText = "What the node colours mean"
+        legendBtn.addActionListener { showLegend(legendBtn) }
+        controls.add(legendBtn)
         controls.add(smallButton("Clear") { clearSession() })
         header.add(controls)
         return header
+    }
+
+    private fun showLegend(anchor: Component) {
+        val panel = JPanel()
+        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
+        panel.border = JBUI.Borders.empty(8, 10)
+        panel.background = UIUtil.getListBackground()
+        val entries = listOf(
+            ActivityColorRole.TASK to "Current task",
+            ActivityColorRole.DISCOVERED to "Discovered · searched",
+            ActivityColorRole.READING to "Read · inspected · testing",
+            ActivityColorRole.FOCUS to "Current focus",
+            ActivityColorRole.EDITING to "Editing · proposed change",
+            ActivityColorRole.SUCCESS to "Created · passed · completed",
+            ActivityColorRole.WARNING to "Warning",
+            ActivityColorRole.ERROR to "Error · failed",
+            ActivityColorRole.SUGGESTION to "Generated patch",
+            ActivityColorRole.IDLE to "Idle · historical",
+        )
+        for ((role, label) in entries) {
+            val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 1)); row.isOpaque = false
+            row.alignmentX = Component.LEFT_ALIGNMENT
+            val dot = JBLabel("●"); dot.foreground = colorForRole(role)
+            val text = JBLabel(label); text.font = text.font.deriveFont(JBUI.scale(11.5f))
+            row.add(dot); row.add(text)
+            panel.add(row)
+        }
+        val hint = JBLabel("Brightness fades with recency; failed nodes keep a red ring.")
+        hint.foreground = UIUtil.getContextHelpForeground()
+        hint.font = hint.font.deriveFont(Font.ITALIC, JBUI.scale(10.5f))
+        hint.alignmentX = Component.LEFT_ALIGNMENT
+        hint.border = JBUI.Borders.emptyTop(4)
+        panel.add(hint)
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(panel, null)
+            .setRequestFocus(true)
+            .setTitle("Activity map legend")
+            .createPopup()
+            .showUnderneathOf(anchor)
     }
 
     private fun buildTimeline(): JComponent {
@@ -245,8 +290,17 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private fun selectNode(id: String?, center: Boolean = false) {
         selectedId = id
         details.refresh()
+        updateDetailsVisibility()
         if (center && id != null) canvas.positions[id]?.let { canvas.centerOn(it) }
         canvas.repaint()
+    }
+
+    /** The details pane auto-collapses until a real node is selected (no "Select a node" filler). */
+    private fun updateDetailsVisibility() {
+        val show = selectedId?.let { graph.node(it) } != null
+        contentSplit.secondComponent = if (show) detailsScroll else null
+        contentSplit.proportion = if (show) 0.72f else 1f
+        contentSplit.revalidate(); contentSplit.repaint()
     }
 
     // ---------- layout / physics ----------
@@ -372,6 +426,17 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             p.x += v.x * DT; p.y += v.y * DT
             energy += speed
         }
+        // Keep a clear halo around the pinned task hub so no node overlaps the central node.
+        for (id in ids) {
+            if (id == ActivityGraph.TASK_ID) continue
+            if (canvas.dragging && id == canvas.draggedId) continue
+            val p = pos[id] ?: continue
+            val d = hypot(p.x, p.y)
+            when {
+                d <= 0.001 -> { p.x = TASK_CLEARANCE; p.y = 0.0 }
+                d < TASK_CLEARANCE -> { val s = TASK_CLEARANCE / d; p.x *= s; p.y *= s }
+            }
+        }
         return energy / ids.size
     }
 
@@ -437,6 +502,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         private const val DT = 0.9
         private const val MAX_SPEED = 22.0
         private const val GLOW_SECONDS = 12L
+        private const val TASK_CLEARANCE = 52.0
     }
 
     // ---------- canvas ----------
@@ -580,6 +646,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 g2.drawOval((s.x - r).toInt(), (s.y - r).toInt(), (r * 2).toInt(), (r * 2).toInt())
                 g2.stroke = BasicStroke(1f)
 
+                // Central task node: a distinctive accent ring so the hub always stands out.
+                if (n.type == ActivityNodeType.TASK) {
+                    g2.color = accent()
+                    g2.stroke = BasicStroke(2f)
+                    val tr = r + 4
+                    g2.drawOval((s.x - tr).toInt(), (s.y - tr).toInt(), (tr * 2).toInt(), (tr * 2).toInt())
+                    g2.stroke = BasicStroke(1f)
+                }
+
                 // Persistent red ring if an active error affects this node.
                 if (graph.hasActiveError(id)) {
                     g2.color = colorForRole(ActivityColorRole.ERROR)
@@ -609,10 +684,14 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 val showLabel = alwaysLabel || id == focusId || id == selectedId || (scale >= 0.75 && r >= 6)
                 if (showLabel) {
                     g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUI.scale(11f) else JBUI.scale(10.5f))
-                    g2.color = withAlpha(UIUtil.getLabelForeground(), (0.55 + fresh * 0.45).toFloat())
                     val label = n.label
                     val tx = s.x + r.toInt() + 4
-                    val ty = s.y + g2.fontMetrics.ascent / 2 - 1
+                    val fm = g2.fontMetrics
+                    val ty = s.y + fm.ascent / 2 - 1
+                    // Semi-transparent pill behind the text so overlapping labels stay legible.
+                    g2.color = withAlpha(canvasBg(), 0.72f)
+                    g2.fillRoundRect(tx - 3, ty - fm.ascent, fm.stringWidth(label) + 6, fm.height, 7, 7)
+                    g2.color = withAlpha(UIUtil.getLabelForeground(), (0.6 + fresh * 0.4).toFloat())
                     g2.drawString(label, tx, ty)
                 }
             }
