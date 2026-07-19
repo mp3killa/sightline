@@ -130,7 +130,7 @@ data class ToolInvoked(
 ) : AgentActivityEvent
 
 /** How one file structurally relates to another (resolved to real project files, not path guesses). */
-enum class StructuralRelationKind { IMPORTS, TESTS, EXTENDS, IMPLEMENTS, NAVIGATES_TO }
+enum class StructuralRelationKind { IMPORTS, TESTS, EXTENDS, IMPLEMENTS, NAVIGATES_TO, REFERENCED_BY }
 
 /**
  * A structural relationship discovered by enriching a file Claude touched — its import resolved to a

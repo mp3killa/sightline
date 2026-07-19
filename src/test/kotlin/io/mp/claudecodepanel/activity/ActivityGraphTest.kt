@@ -283,6 +283,18 @@ class ActivityGraphTest {
         assertTrue(edge.evidence!!.explanation.contains("navigates to"))
     }
 
+    @Test fun resourceReferencedByBecomesReferencesEdge() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/res/layout/activity_main.xml", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/res/layout/activity_main.xml", "/app/MainActivity.kt", "MainActivity",
+            StructuralRelationKind.REFERENCED_BY, tick()))
+        val edge = g.edgesTouching("file:/app/res/layout/activity_main.xml")
+            .firstOrNull { it.type == ActivityEdgeType.REFERENCES }
+        assertNotNull(edge)
+        assertEquals(EvidenceSource.PSI_REFERENCE, edge!!.evidence!!.source)
+        assertTrue(edge.evidence!!.explanation.contains("referenced by"))
+    }
+
     @Test fun testRelationAndPackageMetadata() {
         val g = freshGraph()
         g.apply(FileRead("/app/FooTest.kt", tick()))

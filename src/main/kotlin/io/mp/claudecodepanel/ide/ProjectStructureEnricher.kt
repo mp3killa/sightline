@@ -12,10 +12,13 @@ import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.PsiSearchHelper
+import com.intellij.psi.search.UsageSearchContext
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.uast.UFile
 import org.jetbrains.uast.toUElementOfType
 import io.mp.claudecodepanel.activity.AgentActivityEvent
+import io.mp.claudecodepanel.activity.AndroidResourceParser
 import io.mp.claudecodepanel.activity.FilePackage
 import io.mp.claudecodepanel.activity.NavGraphParser
 import io.mp.claudecodepanel.activity.SourceStructureParser
@@ -83,8 +86,14 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
         val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return emptyList()
         val now = Instant.now()
         val fileIndex = ProjectFileIndex.getInstance(project)
-        // Android navigation graph (res/navigation/*.xml): link each destination to its screen file.
-        if (isNavResource(sourcePath)) return computeNav(psiFile.text, sourcePath, now, fileIndex, vf)
+        // Android resource files: link to the sources that reference the resource, plus (for a nav graph)
+        // forward to its destination screens.
+        AndroidResourceParser.resourceRef(sourcePath)?.let { ref ->
+            val out = ArrayList<AgentActivityEvent>()
+            if (isNavResource(sourcePath)) out += computeNav(psiFile.text, sourcePath, now, fileIndex, vf)
+            out += computeResourceReferrers(ref, sourcePath, now, fileIndex, vf)
+            return out
+        }
         val parsed = SourceStructureParser.parse(psiFile.text, sourcePath)
         val out = ArrayList<AgentActivityEvent>()
 
@@ -127,6 +136,30 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
             links++
         }
         return out
+    }
+
+    /**
+     * Reverse resource lookup: finds project sources that reference a touched resource by
+     * `R.<type>.<name>` or `@<type>/<name>`, emitting [StructuralRelationKind.REFERENCED_BY]. The word
+     * index bounds the scan to files that mention the resource name; each candidate is then confirmed to
+     * contain a *real* reference (not a coincidental identifier), so an edge is never guessed.
+     */
+    private fun computeResourceReferrers(
+        ref: AndroidResourceParser.ResourceRef, resourcePath: String, now: Instant,
+        fileIndex: ProjectFileIndex, self: VirtualFile,
+    ): List<AgentActivityEvent> {
+        val referrers = LinkedHashSet<VirtualFile>()
+        val psiManager = PsiManager.getInstance(project)
+        PsiSearchHelper.getInstance(project).processCandidateFilesForText(
+            GlobalSearchScope.projectScope(project), UsageSearchContext.ANY, true, ref.name,
+        ) { vf ->
+            if (vf != self && fileIndex.isInContent(vf) && vf.length <= MAX_BYTES) {
+                val text = psiManager.findFile(vf)?.text
+                if (text != null && AndroidResourceParser.isReferencedIn(text, ref)) referrers.add(vf)
+            }
+            referrers.size < MAX_LINKS
+        }
+        return referrers.map { StructuralRelation(resourcePath, it.path, it.nameWithoutExtension, StructuralRelationKind.REFERENCED_BY, now) }
     }
 
     /** Type imports resolved to their exact declaration; member/wildcard imports resolve to non-classes. */
@@ -195,7 +228,7 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
     private fun isNavResource(path: String): Boolean =
         path.endsWith(".xml") && (path.contains("/navigation/") || path.contains("\\navigation\\"))
 
-    private fun isEnrichable(path: String): Boolean = isSource(path) || isNavResource(path)
+    private fun isEnrichable(path: String): Boolean = isSource(path) || AndroidResourceParser.resourceRef(path) != null
 
     private companion object {
         val EXTS = listOf("kt", "kts", "java")

@@ -346,6 +346,7 @@ class ActivityGraph(
             StructuralRelationKind.EXTENDS -> ActivityEdgeType.EXTENDS
             StructuralRelationKind.IMPLEMENTS -> ActivityEdgeType.IMPLEMENTS
             StructuralRelationKind.NAVIGATES_TO -> ActivityEdgeType.NAVIGATES_TO
+            StructuralRelationKind.REFERENCED_BY -> ActivityEdgeType.REFERENCES
         }
         edge(srcId, tgtId, type, now, weight = 0.4f, bump = false, evidence = structuralEvidence(e))
     }
@@ -360,6 +361,8 @@ class ActivityGraph(
             StructuralRelationKind.TESTS -> EvidenceSource.NAMING_HEURISTIC to "tests"
             // The nav graph explicitly declares the destination class (android:name), resolved to a file.
             StructuralRelationKind.NAVIGATES_TO -> EvidenceSource.PSI_REFERENCE to "navigates to"
+            // A source references this resource by R.<type>.<name> / @<type>/<name>.
+            StructuralRelationKind.REFERENCED_BY -> EvidenceSource.PSI_REFERENCE to "referenced by"
         }
         return RelationshipEvidence(source, e.confidence, "$symbol $verb ${e.targetLabel}", e.sourcePath, symbol)
     }

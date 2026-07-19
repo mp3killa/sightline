@@ -73,6 +73,19 @@ class ProjectStructureEnricherTest : BasePlatformTestCase() {
         })
     }
 
+    fun testResourceReverseLookupFindsReferencingSource() {
+        myFixture.addFileToProject(
+            "com/example/MainActivity.java",
+            "package com.example; public class MainActivity { void go() { setContentView(R.layout.activity_main); } void setContentView(int i) {} }",
+        )
+        val layout = myFixture.addFileToProject("res/layout/activity_main.xml", "<LinearLayout/>")
+        val rels = enrich(layout.virtualFile).filterIsInstance<StructuralRelation>()
+        assertTrue(
+            "resource referenced by MainActivity",
+            rels.any { it.relation == StructuralRelationKind.REFERENCED_BY && it.targetLabel == "MainActivity" },
+        )
+    }
+
     fun testLibraryOrImplicitSupertypesAreNotLinked() {
         // A plain class (implicit java.lang.Object superclass) must not produce a hierarchy edge.
         val plain = myFixture.addFileToProject("com/example/Plain.java", "package com.example; public class Plain {}")
