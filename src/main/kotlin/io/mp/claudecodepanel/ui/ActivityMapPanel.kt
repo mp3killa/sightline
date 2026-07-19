@@ -12,6 +12,7 @@ import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.scale.JBUIScale
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.activity.ActivityColorRole
@@ -22,6 +23,12 @@ import io.mp.claudecodepanel.activity.ActivityNodeType
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.TimelineEntry
 import io.mp.claudecodepanel.settings.ClaudeSettings
+import io.mp.claudecodepanel.theme.ClaudeIcons
+import io.mp.claudecodepanel.theme.ClaudeUiTokens
+import io.mp.claudecodepanel.ui.components.IconActionButton
+import io.mp.claudecodepanel.ui.state.LayoutProfile
+import io.mp.claudecodepanel.ui.state.ResponsiveLayout
+import io.mp.claudecodepanel.ui.state.TimelineDockState
 import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Color
@@ -44,12 +51,9 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
-import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
-import javax.swing.JToggleButton
 import javax.swing.ListCellRenderer
 import javax.swing.Timer
 import javax.swing.ToolTipManager
@@ -59,39 +63,40 @@ import kotlin.math.min
 import kotlin.random.Random
 
 /**
- * The **Agent Activity Map** (Neural Activity Map / Live Context Graph): a 2.5D force-directed
- * Swing visualisation of what the agent is observably touching. Fed normalised
- * [AgentActivityEvent]s, it lights up files, commands, tests, errors and clusters as Claude works.
- *
- * This is NOT a view of the model's hidden reasoning — only observable tool activity is shown.
- *
- * Performance: physics runs on a Swing [Timer] that only ticks while the component is showing and
- * either the layout hasn't settled or a node glow is still fading; it auto-suspends when idle.
- * A "reduce motion" mode settles the layout synchronously with no animation.
+ * The **Agent Activity Map**: a force-directed Swing visualisation of what the agent is observably
+ * touching. Chrome is progressively disclosed — a compact header (Activity + live state + count +
+ * filter/fit/overflow), a translucent focus overlay inside the canvas, a right-side inspector drawer
+ * that opens only on selection, and a collapsible activity-log dock. Observable activity only; the
+ * disclaimer lives in the Activity tooltip and the About popup rather than in permanent chrome.
  */
 class ActivityMapPanel(private val project: Project, parent: Disposable) : Disposable {
 
     val component: JComponent
     private val graph = ActivityGraph(maxRetained = retainedCap())
 
-    private val focusVerb = JBLabel("Agent Activity Map")
-    private val focusLabel = JBLabel(" ")
-    private val focusDetail = JBLabel(" ")
-    private val countLabel = JBLabel(" ")
     private val canvas = GraphCanvas()
-    private val details = DetailsPanel()
-    private val detailsScroll = JBScrollPane(details).apply { border = JBUI.Borders.empty() }
-    private val contentSplit = JBSplitter(false, 0.72f)
+    private val inspector = InspectorPanel()
+    private val inspectorScroll = JBScrollPane(inspector).apply { border = JBUI.Borders.empty() }
+    private val contentSplit = JBSplitter(false, 0.70f)
+    private val bodyHost = JPanel(BorderLayout())
+
+    private val liveDot = JBLabel()
+    private val countLabel = JBLabel(" ")
+    private val filterCombo = javax.swing.JComboBox(Filter.values())
+    private lateinit var fitButton: IconActionButton
+    private lateinit var pauseButton: IconActionButton
+    private lateinit var overflowButton: IconActionButton
+
     private val timelineModel = DefaultListModel<TimelineEntry>()
     private val timelineList = JBList(timelineModel)
-
-    private val pauseButton = JToggleButton("Pause")
-    private val reduceMotionButton = JToggleButton("Reduce motion")
-    private val filterCombo = JComboBox(Filter.values())
+    private val dockState = TimelineDockState(expanded = ClaudeSettings.getInstance().state.activityTimelineExpanded)
+    private val dockToggle = JBLabel()
+    private val dockBody = JPanel(BorderLayout())
 
     private var selectedId: String? = null
     private var paused = false
     private var reduceMotion = ClaudeSettings.getInstance().state.activityReduceMotion
+    private var profile = LayoutProfile.MEDIUM
 
     private val timer = Timer(33) { step() }
     private val dashedStroke = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 4f, floatArrayOf(4f, 4f), 0f)
@@ -116,19 +121,19 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 if (canvas.isShowing) kick() else timer.stop()
             }
         }
-        refreshFocusCard()
+        updateLayout()
+        refreshHeader()
     }
 
-    // ---------- public API (called from ClaudePanel) ----------
+    // ---------- public API ----------
 
-    /** Feed a batch of normalised events; updates the model, timeline and (re)starts animation. */
     fun apply(events: List<AgentActivityEvent>) {
         if (events.isEmpty()) return
         for (e in events) graph.apply(e)
         rebuildTimeline()
         ensurePositions()
-        refreshFocusCard()
-        details.refresh()
+        refreshHeader()
+        inspector.refresh()
         if (reduceMotion) settleSync(60) else kick()
         canvas.repaint()
     }
@@ -138,8 +143,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         timelineModel.clear()
         selectedId = null
         canvas.positions.clear(); canvas.velocities.clear()
-        refreshFocusCard(); details.refresh(); updateDetailsVisibility()
+        refreshHeader(); inspector.refresh(); updateLayout()
         canvas.repaint()
+    }
+
+    /** Adapt controls/inspector placement to the panel width. */
+    fun applyProfile(p: LayoutProfile) {
+        if (p == profile) return
+        profile = p
+        updateLayout()
     }
 
     override fun dispose() { timer.stop() }
@@ -148,72 +160,101 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun build(): JComponent {
         val root = JPanel(BorderLayout())
-        root.border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor.border())
+        root.border = BorderFactory.createMatteBorder(1, 0, 0, 0, ClaudeUiTokens.border())
         root.add(buildHeader(), BorderLayout.NORTH)
 
         contentSplit.firstComponent = canvas
         contentSplit.setHonorComponentsMinimumSize(false)
-        updateDetailsVisibility() // details are collapsed until a node is selected
-        root.add(contentSplit, BorderLayout.CENTER)
+        bodyHost.add(contentSplit, BorderLayout.CENTER)
+        root.add(bodyHost, BorderLayout.CENTER)
 
-        root.add(buildTimeline(), BorderLayout.SOUTH)
-        root.preferredSize = Dimension(JBUI.scale(480), JBUI.scale(320))
+        root.add(buildDock(), BorderLayout.SOUTH)
+        root.preferredSize = Dimension(JBUI.scale(460), JBUI.scale(320))
         return root
     }
 
     private fun buildHeader(): JComponent {
-        val header = JPanel()
-        header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
-        header.border = JBUI.Borders.empty(6, 10, 4, 10)
+        val header = JPanel(BorderLayout())
+        header.isOpaque = false
+        header.border = JBUI.Borders.empty(4, 10, 4, 6)
 
-        val focusRow = JPanel(BorderLayout(8, 0)); focusRow.isOpaque = false
-        focusVerb.font = focusVerb.font.deriveFont(Font.BOLD, JBUI.scale(12f))
-        focusVerb.foreground = accent()
-        val texts = JPanel(); texts.layout = BoxLayout(texts, BoxLayout.Y_AXIS); texts.isOpaque = false
-        focusLabel.font = focusLabel.font.deriveFont(Font.BOLD)
-        focusDetail.foreground = UIUtil.getContextHelpForeground()
-        focusDetail.font = focusDetail.font.deriveFont(JBUI.scale(11f))
-        texts.add(focusLabel); texts.add(focusDetail)
-        focusRow.add(focusVerb, BorderLayout.WEST)
-        focusRow.add(texts, BorderLayout.CENTER)
-        countLabel.foreground = UIUtil.getContextHelpForeground()
-        countLabel.font = countLabel.font.deriveFont(JBUI.scale(11f))
-        focusRow.add(countLabel, BorderLayout.EAST)
-        focusRow.alignmentX = Component.LEFT_ALIGNMENT
-        header.add(focusRow)
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
+        val title = JBLabel("Activity")
+        title.font = UIUtil.getLabelFont().deriveFont(Font.BOLD)
+        title.foreground = ClaudeUiTokens.textPrimary()
+        title.toolTipText = DISCLAIMER
+        left.add(title)
+        liveDot.toolTipText = "Live activity state"
+        left.add(liveDot)
+        countLabel.foreground = ClaudeUiTokens.textSecondary()
+        countLabel.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        left.add(countLabel)
+        header.add(left, BorderLayout.WEST)
 
-        val note = JBLabel("Observable activity only — not the model's private reasoning.")
-        note.foreground = UIUtil.getContextHelpForeground()
-        note.font = note.font.deriveFont(Font.ITALIC, JBUI.scale(10.5f))
-        note.alignmentX = Component.LEFT_ALIGNMENT
-        note.border = JBUI.Borders.emptyTop(1)
-        header.add(note)
-
-        val controls = JPanel(FlowLayout(FlowLayout.LEFT, 5, 2)); controls.isOpaque = false
-        controls.alignmentX = Component.LEFT_ALIGNMENT
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)); right.isOpaque = false
         filterCombo.toolTipText = "Filter which nodes are shown"
-        filterCombo.addActionListener { ensurePositions(); canvas.repaint() }
-        controls.add(filterCombo)
-        pauseButton.toolTipText = "Pause live layout animation"
-        pauseButton.addActionListener { paused = pauseButton.isSelected; if (!paused) kick() else timer.stop() }
-        controls.add(pauseButton)
-        reduceMotionButton.isSelected = reduceMotion
-        reduceMotionButton.toolTipText = "Static layout, no pulsing (lower CPU)"
-        reduceMotionButton.addActionListener {
-            reduceMotion = reduceMotionButton.isSelected
-            ClaudeSettings.getInstance().state.activityReduceMotion = reduceMotion
-            if (reduceMotion) { timer.stop(); settleSync() } else kick()
-            canvas.repaint()
-        }
-        controls.add(reduceMotionButton)
-        controls.add(smallButton("Fit", "Zoom to fit all nodes in view") { fit() })
-        val legendBtn = JButton("Legend"); legendBtn.margin = JBUI.insets(2, 8)
-        legendBtn.toolTipText = "What the node colours mean"
-        legendBtn.addActionListener { showLegend(legendBtn) }
-        controls.add(legendBtn)
-        controls.add(smallButton("Clear", "Clear the activity map for this session") { clearSession() })
-        header.add(controls)
+        filterCombo.addActionListener { ensurePositions(); refreshHeader(); canvas.repaint() }
+        right.add(filterCombo)
+        fitButton = IconActionButton(ClaudeIcons.fit, "Fit graph to view") { fit() }
+        right.add(fitButton)
+        pauseButton = IconActionButton(ClaudeIcons.pause, "Pause layout animation") { togglePause() }
+        right.add(pauseButton)
+        overflowButton = IconActionButton(ClaudeIcons.more, "More activity options") { showOverflow(overflowButton) }
+        right.add(overflowButton)
+        header.add(right, BorderLayout.EAST)
         return header
+    }
+
+    private fun togglePause() {
+        paused = !paused
+        pauseButton.update(if (paused) ClaudeIcons.resume else ClaudeIcons.pause, if (paused) "Resume layout animation" else "Pause layout animation")
+        pauseButton.toggledOn = paused
+        if (!paused) kick() else timer.stop()
+    }
+
+    private fun showOverflow(anchor: Component) {
+        val group = com.intellij.openapi.actionSystem.DefaultActionGroup()
+        group.add(toggle("Reduce motion", reduceMotion) { setReduceMotion(!reduceMotion) })
+        group.add(action("Legend…") { showLegend(anchor) })
+        group.add(action("About the Activity Map…") { showAbout(anchor) })
+        group.add(com.intellij.openapi.actionSystem.Separator.getInstance())
+        group.add(action("Clear activity") { clearSession() })
+        group.add(action("Activity map preferences…") { openSettings() })
+        JBPopupFactory.getInstance()
+            .createActionGroupPopup("Activity", group, com.intellij.openapi.actionSystem.impl.SimpleDataContext.getProjectContext(project),
+                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, true)
+            .showUnderneathOf(anchor)
+    }
+
+    private fun action(text: String, run: () -> Unit) = object : com.intellij.openapi.actionSystem.AnAction(text) {
+        override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) { run() }
+    }
+    private fun toggle(text: String, state: Boolean, run: () -> Unit) =
+        action((if (state) "✓ " else "   ") + text, run)
+
+    private fun openSettings() {
+        com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+            .showSettingsDialog(project, io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable::class.java)
+    }
+
+    private fun showAbout(anchor: Component) {
+        val panel = JPanel(BorderLayout())
+        panel.border = JBUI.Borders.empty(10, 12)
+        panel.background = UIUtil.getListBackground()
+        val text = JBLabel("<html><div style='width:280px;'>The Activity Map shows only <b>observable</b> agent " +
+            "activity — files, searches, edits, commands, tests and errors it actually touches. " +
+            "It is <b>not</b> a view of the model's private reasoning.</div></html>")
+        panel.add(text, BorderLayout.CENTER)
+        ClaudeSettings.getInstance().state.activityAboutDismissed = true
+        JBPopupFactory.getInstance().createComponentPopupBuilder(panel, null)
+            .setRequestFocus(true).setTitle("About the Activity Map").createPopup().showUnderneathOf(anchor)
+    }
+
+    fun setReduceMotion(value: Boolean) {
+        reduceMotion = value
+        ClaudeSettings.getInstance().state.activityReduceMotion = value
+        if (reduceMotion) { timer.stop(); settleSync() } else kick()
+        canvas.repaint()
     }
 
     private fun showLegend(anchor: Component) {
@@ -234,87 +275,136 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             ActivityColorRole.IDLE to "Idle · historical",
         )
         for ((role, label) in entries) {
-            val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 1)); row.isOpaque = false
+            val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 1)); row.isOpaque = false
             row.alignmentX = Component.LEFT_ALIGNMENT
-            val dot = JBLabel("●"); dot.foreground = colorForRole(role)
-            val text = JBLabel(label); text.font = text.font.deriveFont(JBUI.scale(11.5f))
+            val dot = JBLabel(dotIcon(colorForRole(role)))
+            val text = JBLabel(label); text.font = text.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
             row.add(dot); row.add(text)
             panel.add(row)
         }
-        val hint = JBLabel("Brightness fades with recency; failed nodes keep a red ring.")
-        hint.foreground = UIUtil.getContextHelpForeground()
-        hint.font = hint.font.deriveFont(Font.ITALIC, JBUI.scale(10.5f))
-        hint.alignmentX = Component.LEFT_ALIGNMENT
+        val hint = JBLabel("State drives node colour; brightness fades with recency. Failed nodes keep a red ring.")
+        hint.foreground = ClaudeUiTokens.textSecondary()
+        hint.font = hint.font.deriveFont(Font.ITALIC, JBUI.scaleFontSize(10.5f).toFloat())
         hint.border = JBUI.Borders.emptyTop(4)
         panel.add(hint)
-        JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(panel, null)
-            .setRequestFocus(true)
-            .setTitle("Activity map legend")
-            .createPopup()
-            .showUnderneathOf(anchor)
+        JBPopupFactory.getInstance().createComponentPopupBuilder(panel, null)
+            .setRequestFocus(true).setTitle("Activity map legend").createPopup().showUnderneathOf(anchor)
     }
 
-    private fun buildTimeline(): JComponent {
+    // ---------- timeline dock ----------
+
+    private fun buildDock(): JComponent {
+        val dock = JPanel(BorderLayout())
+        dock.border = BorderFactory.createMatteBorder(1, 0, 0, 0, ClaudeUiTokens.border())
+
+        val bar = JPanel(BorderLayout()); bar.isOpaque = false; bar.border = JBUI.Borders.empty(3, 10)
+        bar.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        dockToggle.foreground = ClaudeUiTokens.textSecondary()
+        dockToggle.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        bar.add(dockToggle, BorderLayout.WEST)
+        val chevron = JBLabel(ClaudeIcons.chevronUp.withSize(12))
+        bar.add(chevron, BorderLayout.EAST)
+        bar.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) { toggleDock(chevron) }
+        })
+        dock.add(bar, BorderLayout.NORTH)
+
         timelineList.cellRenderer = TimelineRenderer()
-        timelineList.visibleRowCount = 3
         timelineList.addListSelectionListener {
-            (timelineList.selectedValue)?.nodeId?.let { selectNode(it, center = true) }
+            if (!timelineList.valueIsAdjusting) {
+                dockState.following = false
+                timelineList.selectedValue?.nodeId?.let { selectNode(it, center = true) }
+            }
         }
-        val scroll = JBScrollPane(timelineList)
-        scroll.border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor.border())
-        scroll.preferredSize = Dimension(JBUI.scale(480), JBUI.scale(70))
-        return scroll
+        val listScroll = JBScrollPane(timelineList)
+        listScroll.border = JBUI.Borders.empty()
+        listScroll.preferredSize = Dimension(JBUI.scale(460), JBUI.scale(120))
+        dockBody.add(listScroll, BorderLayout.CENTER)
+        dock.add(dockBody, BorderLayout.CENTER)
+
+        applyDockExpanded(chevron)
+        return dock
     }
 
-    // NB: no "JButton.buttonType=square" — on the IntelliJ/macOS L&F that renders an icon-style
-    // square button and drops the text label, leaving a blank box.
-    private fun smallButton(text: String, tooltip: String, run: () -> Unit): JButton {
-        val b = JButton(text)
-        b.toolTipText = tooltip
-        b.margin = JBUI.insets(2, 8)
-        b.addActionListener { run() }
-        return b
+    private fun toggleDock(chevron: JBLabel) {
+        dockState.expanded = !dockState.expanded
+        ClaudeSettings.getInstance().state.activityTimelineExpanded = dockState.expanded
+        if (dockState.expanded) dockState.following = true
+        applyDockExpanded(chevron)
     }
 
-    // ---------- focus / selection ----------
+    private fun applyDockExpanded(chevron: JBLabel) {
+        dockBody.isVisible = dockState.expanded
+        chevron.icon = (if (dockState.expanded) ClaudeIcons.chevronDown else ClaudeIcons.chevronUp).withSize(12)
+        refreshHeader()
+        dockBody.revalidate(); dockBody.repaint()
+    }
 
-    private fun refreshFocusCard() {
-        val f = graph.focus
-        focusVerb.text = f.verb.ifBlank { "Agent Activity Map" }
-        focusLabel.text = f.label.ifBlank { " " }
-        focusDetail.text = f.detail ?: " "
-        // Count non-structural (non-category) nodes consistently, so "shown" is never > "total".
-        val visible = visibleNodeIds()
+    private fun rebuildTimeline() {
+        timelineModel.clear()
+        for (e in graph.timeline.takeLast(200)) timelineModel.addElement(e)
+        if (dockState.shouldAutoScroll(userNearBottom = true) && timelineModel.size() > 0) {
+            timelineList.ensureIndexIsVisible(timelineModel.size() - 1)
+        }
+    }
+
+    // ---------- header refresh ----------
+
+    private fun refreshHeader() {
         val total = graph.nodes.count { it.type != ActivityNodeType.CATEGORY }
-        val shown = visible.count { graph.node(it)?.type != ActivityNodeType.CATEGORY }
-        countLabel.text = if (shown < total) "$shown of $total nodes" else "$total nodes"
+        val shown = visibleNodeIds().count { graph.node(it)?.type != ActivityNodeType.CATEGORY }
+        countLabel.text = if (shown < total) "$shown of $total" else "$total node" + if (total == 1) "" else "s"
+        val active = !reduceMotion && hasFreshGlow()
+        liveDot.icon = dotIcon(if (active) ClaudeUiTokens.success() else ClaudeUiTokens.textSecondary())
+        pauseButton.isVisible = timer.isRunning || paused
+        dockToggle.text = dockState.collapsedSummary(graph.timeline.size, graph.timeline.lastOrNull()?.let { "${it.verb} ${it.label}".trim() })
     }
+
+    private fun dotIcon(color: Color): javax.swing.Icon = object : javax.swing.Icon {
+        override fun getIconWidth() = JBUI.scale(10)
+        override fun getIconHeight() = JBUI.scale(10)
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = color
+            val r = JBUI.scale(4)
+            g2.fillOval(x + (iconWidth - 2 * r) / 2, y + (iconHeight - 2 * r) / 2, 2 * r, 2 * r)
+            g2.dispose()
+        }
+    }
+
+    // ---------- selection / inspector placement ----------
 
     private fun selectNode(id: String?, center: Boolean = false) {
         selectedId = id
-        details.refresh()
-        updateDetailsVisibility()
+        inspector.refresh()
+        updateLayout()
         if (center && id != null) canvas.positions[id]?.let { canvas.centerOn(it) }
         canvas.repaint()
     }
 
-    /** The details pane auto-collapses until a real node is selected (no "Select a node" filler). */
-    private fun updateDetailsVisibility() {
-        val show = selectedId?.let { graph.node(it) } != null
-        contentSplit.secondComponent = if (show) detailsScroll else null
-        contentSplit.proportion = if (show) 0.72f else 1f
-        contentSplit.revalidate(); contentSplit.repaint()
+    /** Places the inspector: side drawer (medium/wide) or full replacement (narrow). */
+    private fun updateLayout() {
+        val hasSelection = selectedId?.let { graph.node(it) } != null
+        bodyHost.removeAll()
+        if (hasSelection && ResponsiveLayout.inspectorAsOverlay(profile)) {
+            contentSplit.secondComponent = null
+            bodyHost.add(inspectorScroll, BorderLayout.CENTER)
+        } else {
+            contentSplit.firstComponent = canvas
+            contentSplit.secondComponent = if (hasSelection) inspectorScroll else null
+            contentSplit.proportion = if (hasSelection) 0.66f else 1f
+            bodyHost.add(contentSplit, BorderLayout.CENTER)
+        }
+        bodyHost.revalidate(); bodyHost.repaint()
     }
 
     // ---------- layout / physics ----------
 
     private fun retainedCap(): Int = ClaudeSettings.getInstance().state.activityMaxRetained.coerceIn(50, 5000)
     private fun visibleCap(): Int = ClaudeSettings.getInstance().state.activityMaxNodes.coerceIn(20, 2000)
-
     private fun currentFilter(): Filter = (filterCombo.selectedItem as? Filter) ?: Filter.ALL
 
-    /** Capped + filtered set of node ids to render, always including task/focus/selected + live clusters. */
     private fun visibleNodeIds(): Set<String> {
         val filter = currentFilter()
         val all = graph.nodes.filter { !it.hidden }
@@ -323,12 +413,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         must.add(ActivityGraph.TASK_ID)
         graph.focus.nodeId?.let { must.add(it) }
         selectedId?.let { must.add(it) }
-        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY }
-            .sortedByDescending { it.lastSeenAt }
+        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY }.sortedByDescending { it.lastSeenAt }
         val cap = visibleCap()
         val chosen = LinkedHashSet<String>(must)
         for (n in nonCat) { if (chosen.size >= cap) break; chosen.add(n.id) }
-        // Include category clusters that still have a visible child.
         val childCats = chosen.mapNotNull { graph.node(it)?.category?.name }.toSet()
         for (n in matched) if (n.type == ActivityNodeType.CATEGORY && n.category.name in childCats) chosen.add(n.id)
         return chosen
@@ -350,6 +438,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private fun kick() {
         if (paused || reduceMotion || !canvas.isShowing) return
         if (!timer.isRunning) timer.start()
+        refreshHeader()
     }
 
     private fun step() {
@@ -357,7 +446,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         val energy = simulate()
         canvas.pulsePhase += 0.12
         canvas.repaint()
-        if (energy < 0.05 && !hasFreshGlow() && !canvas.dragging) timer.stop()
+        if (energy < 0.05 && !hasFreshGlow() && !canvas.dragging) { timer.stop(); refreshHeader() }
     }
 
     private fun settleSync(iterations: Int = 240) {
@@ -371,7 +460,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         return graph.nodes.any { Duration.between(it.lastSeenAt, now).seconds < GLOW_SECONDS }
     }
 
-    /** One force-directed integration step over visible nodes; returns total kinetic energy. */
     private fun simulate(): Double {
         val ids = visibleNodeIds().toList()
         if (ids.size < 2) return 0.0
@@ -379,8 +467,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         val vel = canvas.velocities
         val force = HashMap<String, Vec>(ids.size)
         for (id in ids) force[id] = Vec(0.0, 0.0)
-
-        // Repulsion (Coulomb-ish) between all visible pairs.
         for (i in ids.indices) {
             val a = pos[ids[i]] ?: continue
             for (j in i + 1 until ids.size) {
@@ -395,7 +481,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 force[ids[j]]!!.x -= fx; force[ids[j]]!!.y -= fy
             }
         }
-        // Spring attraction along visible edges.
         val visible = ids.toHashSet()
         for (e in graph.edges) {
             if (e.sourceNodeId !in visible || e.targetNodeId !in visible) continue
@@ -409,13 +494,11 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             force[e.sourceNodeId]!!.x += fx; force[e.sourceNodeId]!!.y += fy
             force[e.targetNodeId]!!.x -= fx; force[e.targetNodeId]!!.y -= fy
         }
-        // Weak gravity toward centre so disconnected nodes don't drift away.
         for (id in ids) {
             val p = pos[id] ?: continue
             force[id]!!.x -= p.x * GRAVITY
             force[id]!!.y -= p.y * GRAVITY
         }
-        // Integrate. Task node is pinned at the origin (the hub).
         var energy = 0.0
         for (id in ids) {
             if (id == ActivityGraph.TASK_ID) { pos[id]?.let { it.x = 0.0; it.y = 0.0 }; continue }
@@ -430,7 +513,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             p.x += v.x * DT; p.y += v.y * DT
             energy += speed
         }
-        // Keep a clear halo around the pinned task hub so no node overlaps the central node.
         for (id in ids) {
             if (id == ActivityGraph.TASK_ID) continue
             if (canvas.dragging && id == canvas.draggedId) continue
@@ -458,12 +540,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         canvas.repaint()
     }
 
-    private fun rebuildTimeline() {
-        timelineModel.clear()
-        for (e in graph.timeline.takeLast(200)) timelineModel.addElement(e)
-        if (!paused && timelineModel.size() > 0) timelineList.ensureIndexIsVisible(timelineModel.size() - 1)
-    }
-
     // ---------- theme colours ----------
 
     private fun accent(): JBColor = JBColor(Color(0xC2, 0x55, 0x2E), Color(0xE8, 0x8A, 0x6B))
@@ -483,18 +559,13 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun canvasBg(): Color {
         val base = UIUtil.getPanelBackground()
-        val dark = ColorUtilLocal.isDark(base)
-        return if (dark) darken(base, 8) else brighten(base, 4)
+        return if (ClaudeUiTokens.isDark(base)) darken(base, 8) else brighten(base, 4)
     }
 
     private fun darken(c: Color, amt: Int) = Color(clamp(c.red - amt), clamp(c.green - amt), clamp(c.blue - amt))
     private fun brighten(c: Color, amt: Int) = Color(clamp(c.red + amt), clamp(c.green + amt), clamp(c.blue + amt))
     private fun clamp(v: Int) = if (v < 0) 0 else if (v > 255) 255 else v
     private fun withAlpha(c: Color, a: Float) = Color(c.red, c.green, c.blue, (a.coerceIn(0f, 1f) * 255).toInt())
-
-    private object ColorUtilLocal {
-        fun isDark(c: Color) = (c.red * 0.299 + c.green * 0.587 + c.blue * 0.114) < 128
-    }
 
     private class Vec(var x: Double, var y: Double)
 
@@ -507,6 +578,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         private const val MAX_SPEED = 22.0
         private const val GLOW_SECONDS = 12L
         private const val TASK_CLEARANCE = 52.0
+        private const val DISCLAIMER = "Observable activity only — not the model's private reasoning."
     }
 
     // ---------- canvas ----------
@@ -519,6 +591,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         var pulsePhase = 0.0
         var dragging = false
         var draggedId: String? = null
+        var hoveredId: String? = null
         private var panning = false
         private var lastDrag: Point? = null
 
@@ -529,9 +602,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 override fun mousePressed(e: MouseEvent) {
                     lastDrag = e.point
                     val hit = hitTest(e.point)
-                    if (hit != null) {
-                        draggedId = hit; dragging = true; selectNode(hit)
-                    } else { panning = true; if (e.clickCount == 1) selectNode(null) }
+                    if (hit != null) { draggedId = hit; dragging = true; selectNode(hit) }
+                    else { panning = true; if (e.clickCount == 1) selectNode(null) }
                 }
                 override fun mouseReleased(e: MouseEvent) { dragging = false; panning = false; draggedId = null; kick() }
                 override fun mouseDragged(e: MouseEvent) {
@@ -543,13 +615,16 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                         repaint()
                     } else if (panning) { offset.x += dx; offset.y += dy; repaint() }
                 }
+                override fun mouseMoved(e: MouseEvent) {
+                    val h = hitTest(e.point)
+                    if (h != hoveredId) { hoveredId = h; repaint() }
+                }
                 override fun mouseClicked(e: MouseEvent) {
                     if (e.clickCount == 2) hitTest(e.point)?.let { openNode(graph.node(it)) }
                 }
                 override fun mouseWheelMoved(e: MouseWheelEvent) {
                     val factor = if (e.wheelRotation < 0) 1.1 else 1 / 1.1
                     val newScale = (scale * factor).coerceIn(0.1, 4.0)
-                    // Zoom around the cursor.
                     val cx = width / 2.0 + offset.x; val cy = height / 2.0 + offset.y
                     val wx = (e.x - cx) / scale; val wy = (e.y - cy) / scale
                     scale = newScale
@@ -566,7 +641,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             val n = hitTest(event.point)?.let { graph.node(it) } ?: return null
             val state = n.state.name.lowercase(Locale.ROOT)
             val sub = n.subtitle?.let { " · $it" } ?: ""
-            return "${n.label} — $state$sub"
+            return "${cleanLabel(n)} — $state$sub"
         }
 
         fun centerOn(v: Vec) { offset.x = -v.x * scale; offset.y = -v.y * scale; repaint() }
@@ -604,8 +679,9 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             val ids = visibleNodeIds()
             if (ids.size <= 1) { drawEmpty(g2); g2.dispose(); return }
             val now = Instant.now()
+            val focusId = graph.focus.nodeId
 
-            // Edges first.
+            // Edges: faded historical, stronger recent, error paths tinted.
             for (e in graph.edges) {
                 if (e.sourceNodeId !in ids || e.targetNodeId !in ids) continue
                 val a = positions[e.sourceNodeId] ?: continue
@@ -614,15 +690,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 val age = Duration.between(e.lastActivatedAt, now).seconds
                 val fresh = (1.0 - age.toDouble() / GLOW_SECONDS).coerceIn(0.0, 1.0)
                 val seq = e.type.name == "SEQUENTIAL_ACTIVITY"
-                val base = if (e.type.name == "AFFECTED_BY") colorForRole(ActivityColorRole.ERROR) else JBColor.border()
-                g2.color = withAlpha(base, (0.12 + fresh * 0.5).toFloat())
-                g2.stroke = if (seq) dashedStroke else BasicStroke((0.8 + fresh * 1.6).toFloat())
+                val onFocusPath = e.sourceNodeId == focusId || e.targetNodeId == focusId
+                val base = if (e.type.name == "AFFECTED_BY") colorForRole(ActivityColorRole.ERROR) else ClaudeUiTokens.border()
+                val alpha = (0.08 + fresh * 0.42 + if (onFocusPath) 0.2 else 0.0).toFloat().coerceAtMost(0.85f)
+                g2.color = withAlpha(base, alpha)
+                g2.stroke = if (seq) dashedStroke else BasicStroke((0.7 + fresh * 1.6 + if (onFocusPath) 0.6 else 0.0).toFloat())
                 g2.drawLine(sa.x, sa.y, sb.x, sb.y)
             }
             g2.stroke = BasicStroke(1f)
 
-            // Nodes.
-            val focusId = graph.focus.nodeId
             for (id in ids) {
                 val n = graph.node(id) ?: continue
                 val p = positions[id] ?: continue
@@ -634,40 +710,34 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 val fresh = (1.0 - age.toDouble() / GLOW_SECONDS).coerceIn(0.0, 1.0)
                 val low = n.confidence < 0.6f
 
-                // Glow halo by recency.
-                if (fresh > 0.05 && n.type != ActivityNodeType.CATEGORY) {
-                    val gr = r + 6 + fresh * 6
-                    g2.color = withAlpha(col, (fresh * 0.28).toFloat())
+                // Restrained glow only on genuinely fresh, non-cluster nodes.
+                if (fresh > 0.1 && n.type != ActivityNodeType.CATEGORY) {
+                    val gr = r + 4 + fresh * 5
+                    g2.color = withAlpha(col, (fresh * 0.18).toFloat())
                     g2.fillOval((s.x - gr).toInt(), (s.y - gr).toInt(), (gr * 2).toInt(), (gr * 2).toInt())
                 }
-                // Body.
-                val bodyAlpha = (0.35 + fresh * 0.55).toFloat().coerceIn(0.35f, 1f)
-                g2.color = if (n.type == ActivityNodeType.CATEGORY) withAlpha(col, 0.18f) else withAlpha(col, bodyAlpha)
+                // Category clusters: soft containing halo only.
+                val bodyAlpha = (0.4 + fresh * 0.5).toFloat().coerceIn(0.4f, 1f)
+                g2.color = if (n.type == ActivityNodeType.CATEGORY) withAlpha(col, 0.14f) else withAlpha(col, bodyAlpha)
                 g2.fillOval((s.x - r).toInt(), (s.y - r).toInt(), (r * 2).toInt(), (r * 2).toInt())
-                // Outline (dashed + subtle for low-confidence inferred nodes).
                 g2.color = withAlpha(col, if (low) 0.5f else 0.9f)
                 g2.stroke = if (low) dashedStroke else BasicStroke(1.2f)
                 g2.drawOval((s.x - r).toInt(), (s.y - r).toInt(), (r * 2).toInt(), (r * 2).toInt())
                 g2.stroke = BasicStroke(1f)
 
-                // Central task node: a distinctive accent ring so the hub always stands out.
                 if (n.type == ActivityNodeType.TASK) {
-                    g2.color = accent()
-                    g2.stroke = BasicStroke(2f)
+                    g2.color = accent(); g2.stroke = BasicStroke(2f)
                     val tr = r + 4
                     g2.drawOval((s.x - tr).toInt(), (s.y - tr).toInt(), (tr * 2).toInt(), (tr * 2).toInt())
                     g2.stroke = BasicStroke(1f)
                 }
-
-                // Persistent red ring if an active error affects this node.
                 if (graph.hasActiveError(id)) {
                     g2.color = colorForRole(ActivityColorRole.ERROR)
                     val er = r + 3
                     g2.drawOval((s.x - er).toInt(), (s.y - er).toInt(), (er * 2).toInt(), (er * 2).toInt())
                 }
-                // Pinned indicator.
-                if (n.pinned) { g2.color = accent(); g2.fillOval(s.x + r.toInt() - 2, s.y - r.toInt() - 2, 5, 5) }
-                // Focus pulse.
+                if (n.pinned) { g2.color = accent(); g2.fillOval(s.x + r.toInt() - 2, s.y - r.toInt() - 2, JBUI.scale(5), JBUI.scale(5)) }
+                // Focus pulse: only the active node animates.
                 if (id == focusId && !reduceMotion) {
                     val pr = r + 5 + Math.sin(pulsePhase) * 3
                     g2.color = withAlpha(colorForRole(ActivityColorRole.FOCUS), 0.75f)
@@ -675,43 +745,109 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     g2.drawOval((s.x - pr).toInt(), (s.y - pr).toInt(), (pr * 2).toInt(), (pr * 2).toInt())
                     g2.stroke = BasicStroke(1f)
                 }
-                // Selection ring.
                 if (id == selectedId) {
                     g2.color = accent(); g2.stroke = BasicStroke(2f)
                     val sr = r + 4
                     g2.drawOval((s.x - sr).toInt(), (s.y - sr).toInt(), (sr * 2).toInt(), (sr * 2).toInt())
                     g2.stroke = BasicStroke(1f)
                 }
-                // Labels: always for task/category/patch/error/focus/selected, else only when zoomed in.
+                // Labels: task/category/patch/error/focus/selected/hovered always; others when zoomed in.
                 val alwaysLabel = n.type == ActivityNodeType.TASK || n.type == ActivityNodeType.CATEGORY ||
                     n.type == ActivityNodeType.PATCH || n.type == ActivityNodeType.ERROR
-                val showLabel = alwaysLabel || id == focusId || id == selectedId || (scale >= 0.75 && r >= 6)
+                val showLabel = alwaysLabel || id == focusId || id == selectedId || id == hoveredId || (scale >= 0.78 && r >= 6)
                 if (showLabel) {
-                    g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUI.scale(11f) else JBUI.scale(10.5f))
-                    val label = n.label
+                    g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUIScale.scale(11f) else JBUIScale.scale(10.5f))
+                    val label = truncateLabel(cleanLabel(n), 26)
                     val tx = s.x + r.toInt() + 4
                     val fm = g2.fontMetrics
                     val ty = s.y + fm.ascent / 2 - 1
-                    // Semi-transparent pill behind the text so overlapping labels stay legible.
                     g2.color = withAlpha(canvasBg(), 0.72f)
                     g2.fillRoundRect(tx - 3, ty - fm.ascent, fm.stringWidth(label) + 6, fm.height, 7, 7)
-                    g2.color = withAlpha(UIUtil.getLabelForeground(), (0.6 + fresh * 0.4).toFloat())
+                    g2.color = withAlpha(ClaudeUiTokens.textPrimary(), (0.6 + fresh * 0.4).toFloat())
                     g2.drawString(label, tx, ty)
                 }
             }
+
+            drawFocusOverlay(g2)
             g2.dispose()
         }
 
+        /** Compact translucent focus card, top-left; hidden when there is no meaningful focus. */
+        private fun drawFocusOverlay(g2: Graphics2D) {
+            val f = graph.focus
+            val node = f.nodeId?.let { graph.node(it) }
+            if (node == null || f.label.isBlank()) return
+            val verb = f.verb.uppercase(Locale.ROOT)
+            val label = truncateLabel(f.label, 30)
+            val detail = f.detail?.let { truncateLabel(it, 34) }
+            val pad = JBUI.scale(8)
+            g2.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, JBUIScale.scale(9.5f))
+            val vfm = g2.fontMetrics
+            g2.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, JBUIScale.scale(12f))
+            val lfm = g2.fontMetrics
+            val w = maxOf(vfm.stringWidth(verb), lfm.stringWidth(label), detail?.let { lfm.stringWidth(it) } ?: 0) + pad * 2
+            var h = pad * 2 + vfm.height + lfm.height + JBUI.scale(2)
+            if (detail != null) h += lfm.height
+            val x = JBUI.scale(10); val y = JBUI.scale(10)
+            g2.color = withAlpha(ClaudeUiTokens.overlaySurface(), 0.9f)
+            g2.fillRoundRect(x, y, w, h, JBUI.scale(10), JBUI.scale(10))
+            g2.color = withAlpha(colorForRole(ActivityColorRoles.roleForNode(node)), 0.8f)
+            g2.stroke = BasicStroke(1.4f)
+            g2.drawRoundRect(x, y, w, h, JBUI.scale(10), JBUI.scale(10))
+            g2.stroke = BasicStroke(1f)
+            var ty = y + pad + vfm.ascent
+            g2.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, JBUIScale.scale(9.5f))
+            g2.color = withAlpha(colorForRole(ActivityColorRoles.roleForNode(node)), 1f)
+            g2.drawString(verb, x + pad, ty)
+            ty += vfm.height - vfm.descent + JBUI.scale(3)
+            g2.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, JBUIScale.scale(12f))
+            g2.color = ClaudeUiTokens.textPrimary()
+            g2.drawString(label, x + pad, ty)
+            if (detail != null) {
+                ty += lfm.height
+                g2.font = UIUtil.getLabelFont().deriveFont(JBUIScale.scale(11f))
+                g2.color = ClaudeUiTokens.textSecondary()
+                g2.drawString(detail, x + pad, ty)
+            }
+        }
+
         private fun drawEmpty(g2: Graphics2D) {
-            g2.color = UIUtil.getContextHelpForeground()
-            g2.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC)
-            val msg = "Agent active — waiting for contextual activity…"
-            val fm = g2.fontMetrics
-            g2.drawString(msg, (width - fm.stringWidth(msg)) / 2, height / 2)
+            // A designed empty state: a central task node + a few faint placeholders + copy.
+            val cx = width / 2; val cy = height / 2 - JBUI.scale(14)
+            val faint = withAlpha(ClaudeUiTokens.textSecondary(), 0.22f)
+            g2.color = faint
+            val ring = JBUI.scale(46)
+            for (i in 0 until 3) {
+                val a = Math.PI * 2 * i / 3 - Math.PI / 2
+                val px = cx + (Math.cos(a) * ring).toInt(); val py = cy + (Math.sin(a) * ring).toInt()
+                g2.drawLine(cx, cy, px, py)
+                val rr = JBUI.scale(7)
+                g2.fillOval(px - rr, py - rr, rr * 2, rr * 2)
+            }
+            g2.color = withAlpha(accent(), 0.55f)
+            val cr = JBUI.scale(12)
+            g2.fillOval(cx - cr, cy - cr, cr * 2, cr * 2)
+
+            g2.color = ClaudeUiTokens.textPrimary()
+            g2.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, JBUIScale.scale(13f))
+            val head = "Activity will appear here"
+            g2.drawString(head, cx - g2.fontMetrics.stringWidth(head) / 2, cy + JBUI.scale(70))
+            g2.color = ClaudeUiTokens.textSecondary()
+            g2.font = UIUtil.getLabelFont().deriveFont(JBUIScale.scale(11.5f))
+            val desc = "Files, searches, edits, commands and tests light up as Claude works."
+            g2.drawString(desc, cx - g2.fontMetrics.stringWidth(desc) / 2, cy + JBUI.scale(88))
         }
 
         override fun getPreferredSize(): Dimension = Dimension(JBUI.scale(360), JBUI.scale(260))
     }
+
+    // ---------- label helpers ----------
+
+    /** Strips decorative glyph prefixes the graph model may carry, for a clean UI label. */
+    private fun cleanLabel(n: ActivityNode): String =
+        n.label.trimStart('⌕', '↗', '⚠', '△', '✱', '$', ' ').ifBlank { n.label }
+
+    private fun truncateLabel(s: String, max: Int) = if (s.length > max) s.substring(0, max - 1) + "…" else s
 
     private fun openNode(n: ActivityNode?) {
         val path = n?.path ?: return
@@ -727,13 +863,12 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         ProjectView.getInstance(project).select(null, vf, true)
     }
 
-    // ---------- details panel ----------
+    // ---------- inspector ----------
 
-    private inner class DetailsPanel : JPanel() {
+    private inner class InspectorPanel : JPanel(BorderLayout()) {
         private val body = JPanel()
         init {
-            layout = BorderLayout()
-            border = JBUI.Borders.empty(8)
+            border = JBUI.Borders.empty(8, 10)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS)
             add(body, BorderLayout.NORTH)
             refresh()
@@ -741,46 +876,69 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
         fun refresh() {
             body.removeAll()
-            val n = selectedId?.let { graph.node(it) }
-            if (n == null) {
-                addLine("Select a node", bold = true)
-                addLine("Click any node to see its details, related files and actions.", muted = true)
-            } else {
-                addLine(n.label, bold = true)
-                addLine("${prettyType(n.type)} · ${n.category.label}", muted = true)
-                n.path?.let { addLine(it, muted = true) }
-                addGap()
-                addLine("State: ${n.state.name.lowercase(Locale.ROOT)}")
-                addLine("Interactions: ${n.interactionCount}")
-                addLine("Confidence: ${(n.confidence * 100).toInt()}%")
-                addLine("First seen: ${timeAgo(n.firstSeenAt)}   ·   Last: ${timeAgo(n.lastSeenAt)}")
-                if (graph.hasActiveError(n.id)) addLine("⚠ affected by an active error", muted = false)
-                val related = graph.neighbors(n.id).mapNotNull { graph.node(it) }
-                    .filter { it.type != ActivityNodeType.CATEGORY }.take(6)
-                if (related.isNotEmpty()) {
-                    addGap(); addLine("Related", bold = true)
-                    related.forEach { addLine("• ${it.label}", muted = true) }
-                }
-                addGap()
-                val actions = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)); actions.isOpaque = false
-                actions.alignmentX = Component.LEFT_ALIGNMENT
-                if (n.path != null) {
-                    actions.add(smallButton("Open", "Open this file in the editor") { openNode(n) })
-                    actions.add(smallButton("Reveal", "Reveal this file in the Project view") { revealNode(n) })
-                }
-                actions.add(smallButton(if (n.pinned) "Unpin" else "Pin", "Keep this node from being evicted") { graph.setPinned(n.id, !n.pinned); refresh(); canvas.repaint() })
-                actions.add(smallButton("Hide", "Hide this node from the map") { graph.setHidden(n.id, true); selectNode(null) })
-                body.add(actions)
+            val n = selectedId?.let { graph.node(it) } ?: return
+
+            // Header: icon + name + state + close.
+            val head = JPanel(BorderLayout()); head.isOpaque = false; head.alignmentX = Component.LEFT_ALIGNMENT
+            head.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(24))
+            val name = JBLabel(cleanLabel(n))
+            name.font = name.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(13f).toFloat())
+            head.add(name, BorderLayout.CENTER)
+            head.add(IconActionButton(ClaudeIcons.close.withSize(13), "Close inspector") { selectNode(null) }, BorderLayout.EAST)
+            body.add(head)
+            addLine("${prettyType(n.type)} · ${n.state.name.lowercase(Locale.ROOT)}", muted = true)
+            n.path?.let { addLine(it, muted = true) }
+
+            // Primary actions.
+            addGap()
+            val actions = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2))); actions.isOpaque = false
+            actions.alignmentX = Component.LEFT_ALIGNMENT
+            if (n.path != null) {
+                actions.add(IconActionButton(ClaudeIcons.openFile, "Open in editor") { openNode(n) })
+                actions.add(IconActionButton(ClaudeIcons.reveal, "Reveal in Project view") { revealNode(n) })
+            }
+            actions.add(IconActionButton(if (n.pinned) ClaudeIcons.diamond else ClaudeIcons.diamond, if (n.pinned) "Unpin" else "Pin (keep from eviction)") { graph.setPinned(n.id, !n.pinned); refresh(); canvas.repaint() })
+            actions.add(IconActionButton(ClaudeIcons.close, "Hide from map") { graph.setHidden(n.id, true); selectNode(null) })
+            body.add(actions)
+
+            // Property rows.
+            addGap()
+            propRow("Category", n.category.label)
+            propRow("Interactions", n.interactionCount.toString())
+            propRow("Last active", timeAgo(n.lastSeenAt))
+            if (graph.hasActiveError(n.id)) addLine("Affected by an active error", muted = false)
+
+            // Relationships.
+            val related = graph.neighbors(n.id).mapNotNull { graph.node(it) }.filter { it.type != ActivityNodeType.CATEGORY }.take(6)
+            if (related.isNotEmpty()) {
+                addGap(); addLine("Related", bold = true)
+                related.forEach { addLine("• " + cleanLabel(it), muted = true) }
+            }
+
+            // Evidence (confidence) — secondary; only surfaced for inferred/low-confidence.
+            if (n.confidence < 0.9f) {
+                addGap(); addLine("Evidence", bold = true)
+                addLine("Inferred · confidence ${(n.confidence * 100).toInt()}%", muted = true)
             }
             body.revalidate(); body.repaint()
+        }
+
+        private fun propRow(key: String, value: String) {
+            val row = JPanel(BorderLayout()); row.isOpaque = false; row.alignmentX = Component.LEFT_ALIGNMENT
+            row.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(20))
+            val k = JBLabel(key); k.foreground = ClaudeUiTokens.textSecondary(); k.font = k.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
+            k.preferredSize = Dimension(JBUI.scale(96), JBUI.scale(18))
+            val v = JBLabel(value); v.foreground = ClaudeUiTokens.textPrimary(); v.font = v.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
+            row.add(k, BorderLayout.WEST); row.add(v, BorderLayout.CENTER)
+            body.add(row)
         }
 
         private fun addLine(text: String, bold: Boolean = false, muted: Boolean = false) {
             val l = JBLabel("<html>${escape(text)}</html>")
             l.alignmentX = Component.LEFT_ALIGNMENT
             if (bold) l.font = l.font.deriveFont(Font.BOLD)
-            if (muted) l.foreground = UIUtil.getContextHelpForeground()
-            l.font = l.font.deriveFont(JBUI.scale(11.5f))
+            l.foreground = if (muted) ClaudeUiTokens.textSecondary() else ClaudeUiTokens.textPrimary()
+            l.font = l.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
             body.add(l)
         }
         private fun addGap() { body.add(Box.createVerticalStrut(JBUI.scale(6))) }
@@ -803,20 +961,19 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         override fun getListCellRendererComponent(
             list: JList<out TimelineEntry>, value: TimelineEntry, index: Int, selected: Boolean, focus: Boolean,
         ): Component {
-            val row = JPanel(BorderLayout(6, 0))
-            row.border = JBUI.Borders.empty(1, 6)
+            val row = JPanel(BorderLayout(JBUI.scale(6), 0))
+            row.border = JBUI.Borders.empty(2, 8)
             row.background = if (selected) UIUtil.getListSelectionBackground(true) else UIUtil.getListBackground()
-            val dot = JBLabel("●")
-            dot.foreground = colorForRole(ActivityColorRoles.roleForState(value.state))
-            val fg = if (selected) UIUtil.getListSelectionForeground(true) else UIUtil.getLabelForeground()
+            val dot = JBLabel(dotIcon(colorForRole(ActivityColorRoles.roleForState(value.state))))
+            val fg = if (selected) UIUtil.getListSelectionForeground(true) else ClaudeUiTokens.textPrimary()
             val verb = JBLabel(value.verb)
-            verb.font = verb.font.deriveFont(Font.BOLD, JBUI.scale(11f)); verb.foreground = fg
+            verb.font = verb.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat()); verb.foreground = fg
             val label = JBLabel(value.label)
-            label.font = label.font.deriveFont(JBUI.scale(11f))
-            label.foreground = if (selected) fg else UIUtil.getContextHelpForeground()
-            val left = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0)); left.isOpaque = false
-            left.add(dot); left.add(verb); left.add(label)
-            row.add(left, BorderLayout.WEST)
+            label.font = label.font.deriveFont(JBUI.scaleFontSize(11f).toFloat())
+            label.foreground = if (selected) fg else ClaudeUiTokens.textSecondary()
+            val leftRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(5), 0)); leftRow.isOpaque = false
+            leftRow.add(dot); leftRow.add(verb); leftRow.add(label)
+            row.add(leftRow, BorderLayout.WEST)
             return row
         }
     }

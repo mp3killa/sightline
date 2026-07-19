@@ -48,6 +48,12 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Max nodes retained in a session before the oldest non-pinned ones are evicted. */
         var activityMaxRetained by property(500)
 
+        /** Whether the activity-log dock is expanded (vs. the compact collapsed summary). */
+        var activityTimelineExpanded by property(false)
+
+        /** Whether the one-time "observable activity only" activity-map disclaimer was dismissed. */
+        var activityAboutDismissed by property(false)
+
         /** Advanced: extra CLI args appended to every invocation (space-separated). */
         var extraArgs by string("")
     }

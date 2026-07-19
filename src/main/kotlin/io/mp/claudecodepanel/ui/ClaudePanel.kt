@@ -21,18 +21,29 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
-import com.intellij.ui.RoundedLineBorder
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
-import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.activity.ActivityInterpreter
 import io.mp.claudecodepanel.activity.AgentActivityEvent
+import io.mp.claudecodepanel.activity.ErrorObserved
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
+import io.mp.claudecodepanel.theme.ClaudeIcons
+import io.mp.claudecodepanel.theme.ClaudeUiTokens
+import io.mp.claudecodepanel.ui.components.EmptyStatePanel
+import io.mp.claudecodepanel.ui.state.ComposerModel
+import io.mp.claudecodepanel.ui.state.LayoutProfile
+import io.mp.claudecodepanel.ui.state.PermissionModes
+import io.mp.claudecodepanel.ui.state.ResponsiveLayout
+import io.mp.claudecodepanel.ui.state.StatusKind
+import io.mp.claudecodepanel.ui.state.StatusModel
+import io.mp.claudecodepanel.ui.state.StatusView
+import io.mp.claudecodepanel.ui.state.TranscriptPresenter
+import io.mp.claudecodepanel.ui.state.WorkspaceMode
+import io.mp.claudecodepanel.ui.state.WorkspaceModes
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -44,24 +55,22 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Rectangle
 import java.awt.RenderingHints
-import java.awt.event.FocusAdapter
-import java.awt.event.FocusEvent
-import java.awt.event.KeyAdapter
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.time.Instant
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.DefaultListCellRenderer
+import javax.swing.Icon
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JComponent
-import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JTextArea
 import javax.swing.JTextPane
-import javax.swing.ListCellRenderer
+import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
 import javax.swing.Scrollable
 import javax.swing.SwingUtilities
@@ -70,9 +79,6 @@ import javax.swing.text.BadLocationException
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
-
-private val ACCENT = JBColor(Color(0xC2, 0x55, 0x2E), Color(0xE8, 0x8A, 0x6B))
-private val STOP_RED = JBColor(Color(0xC0, 0x39, 0x2B), Color(0xE0, 0x6C, 0x5F))
 
 private const val PRIME_PROMPT =
     "Get up to speed on this project AND make sure its Claude/internal docs are complete.\n\n" +
@@ -98,33 +104,41 @@ private const val PRIME_PROMPT =
         "vs. already found."
 
 /**
- * Native Swing chat panel for Claude Code. Each assistant turn is a vertical stack of block
- * components: streaming text (light markdown), collapsible extended-thinking, and collapsible
- * tool cards (icon + summary; expand to see command/diff and result). User turns are rounded
- * bubbles. The composer mirrors Claude Code's (attach / actions / mode chip / circular send).
+ * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
+ * workspace (transcript / activity map / split), a coordinated [ClaudeStatusStrip], and the
+ * [ClaudeComposerPanel]. Stream parsing feeds both the transcript blocks and a normalised activity
+ * stream shared by the activity map and the status model.
  */
 class ClaudePanel(private val project: Project, parent: Disposable) : Disposable {
 
     val component: JComponent
     private val session: ClaudeSession = ClaudeSession(project) { line -> onLine(line) }
     private val interpreter = ActivityInterpreter()
-    // Parented to the tool window's Disposable (not `this`): this is a field initializer that runs
-    // before ClaudePanel registers itself, so registering under `this` would leak an unregistered parent.
     private val activityMap = ActivityMapPanel(project, parent)
-    private val mapSplitter = JBSplitter(true, 0.60f)
-    private val centerHost = JPanel(BorderLayout())
-    private val mapButton = JButton()
 
-    /** How the transcript and the activity map share the center area. */
+    private val statusModel = StatusModel()
+    private val composerModel = ComposerModel()
+    private val transcriptPresenter = TranscriptPresenter()
+
+    private val mapSplitter = JBSplitter(false, 0.58f)
+    private val centerHost = JPanel(BorderLayout())
+    private val chatHost = JPanel(BorderLayout())
+
+    private lateinit var header: ClaudeToolHeader
+    private lateinit var composer: ClaudeComposerPanel
+    private lateinit var statusStrip: ClaudeStatusStrip
+    private lateinit var emptyState: EmptyStatePanel
+
     private enum class ViewMode { CHAT, SPLIT, MAP }
-    private var viewMode = initialViewMode()
+    private var viewMode = ViewMode.SPLIT
+    private var lastProfile: LayoutProfile? = null
 
     private val transcript = object : JPanel(), Scrollable {
         init {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = true
-            background = editorBg()
-            border = JBUI.Borders.empty(10, 10)
+            background = ClaudeUiTokens.surface()
+            border = JBUI.Borders.empty(12, 14)
         }
         override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
         override fun getScrollableUnitIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(20)
@@ -133,17 +147,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun getScrollableTracksViewportHeight() = false
     }
     private val scroll = JBScrollPane(transcript)
-    private val statusLabel = JBLabel(" ")
-    private val input = JBTextArea(2, 10)
-    private val primeButton = JButton("Catch up")
-    private val detailsButton = JButton()
-    private val newButton = JButton("New")
-    private val settingsButton = JButton("⚙")
-    private val modelCombo = JComboBox(arrayOf("", "opus", "sonnet", "haiku"))
-    private val modeChip = JButton()
-    private val sendCircle = RoundButton("↑")
-    private val spinner = AsyncProcessIcon("claude-running")
-    private val composerBox = RoundedPanel()
 
     private val hand = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
 
@@ -173,24 +176,20 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
+    private var completionMeta: String? = null
     private val turns = ArrayList<AssistantTurn>()
 
-    private data class Mode(val value: String, val title: String, val desc: String, val glyph: String)
-    private val modes = listOf(
-        Mode("default", "Manual", "Claude will ask for approval before making each edit", "✋"),
-        Mode("acceptEdits", "Edit automatically", "Claude will edit your selected text or the whole file", "✎"),
-        Mode("plan", "Plan", "Claude will explore the code and present a plan before editing", "▤"),
-        Mode("auto", "Auto", "Claude approves actions that pass a safety check and pauses for anything risky (needs Sonnet/Opus)", "⚡"),
-        Mode("bypassPermissions", "Bypass permissions", "Claude won't ask before running potentially dangerous commands", "⚠"),
-    )
+    private val modes = PermissionModes.all
 
     init {
         Disposer.register(parent, this)
-        Disposer.register(this, spinner)
         initStyles()
+        viewMode = initialViewMode()
         component = build()
         applyConfigToUi()
-        addInfo("Ask Claude to build a feature, explain code, or fix a bug in this project.", false)
+        installEmptyState()
+        installResponsive()
+        refreshStatus()
     }
 
     // ---------- UI ----------
@@ -198,158 +197,143 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun build(): JComponent {
         val root = JPanel(BorderLayout())
 
-        val bar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4))
-        val brand = JBLabel("✱ Claude Code")
-        brand.foreground = ACCENT
-        brand.border = JBUI.Borders.emptyRight(8)
-        bar.add(brand)
-        modelCombo.renderer = labelRenderer { if (it.isNullOrEmpty()) "Default model" else cap(it) }
-        modelCombo.addActionListener { ClaudeSettings.getInstance().state.model = (modelCombo.selectedItem as? String) ?: "" }
-        primeButton.toolTipText = "Have Claude read this project's docs (CLAUDE.md, README, docs/…) and summarize — handy at the start of a session"
-        primeButton.addActionListener { primeProject() }
-        detailsButton.toolTipText = "Show/hide thinking and tool-call details in the transcript"
-        detailsButton.addActionListener { setShowDetails(!showDetails) }
-        updateDetailsButton()
-        newButton.addActionListener { session.newConversation() }
-        settingsButton.toolTipText = "Claude Code settings"
-        settingsButton.addActionListener { openSettings() }
-        mapButton.toolTipText = "Choose layout: Chat, Split, or Map (the Agent Activity Map)"
-        mapButton.addActionListener { showViewMenu(mapButton) }
-        bar.add(modelCombo); bar.add(primeButton); bar.add(detailsButton); bar.add(mapButton); bar.add(newButton); bar.add(settingsButton)
-        root.add(bar, BorderLayout.NORTH)
+        header = ClaudeToolHeader(
+            initialMode = toWorkspace(viewMode),
+            onWorkspace = { mode -> setWorkspace(if (mode == WorkspaceMode.CHAT) ViewMode.CHAT else ViewMode.MAP) },
+            onToggleSplit = { toggleSplit() },
+            onNew = { session.newConversation() },
+            onMore = { anchor -> showMoreMenu(anchor) },
+        )
+        root.add(header, BorderLayout.NORTH)
 
-        scroll.border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
+        scroll.border = BorderFactory.createEmptyBorder()
         scroll.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-        scroll.viewport.background = editorBg()
+        scroll.viewport.background = ClaudeUiTokens.surface()
+        chatHost.add(scroll, BorderLayout.CENTER)
         mapSplitter.setHonorComponentsMinimumSize(false)
-        updateMapButton()
         installCenter()
         root.add(centerHost, BorderLayout.CENTER)
 
+        composer = ClaudeComposerPanel(
+            model = composerModel,
+            onSend = { text -> doSend(text) },
+            onStop = { stopRequest() },
+            onAttach = { attachFile() },
+            onSlash = { anchor -> showSlashMenu(anchor) },
+            onModeMenu = { anchor -> showModesPopup(anchor) },
+        )
+        statusStrip = ClaudeStatusStrip(this)
+
         val south = JPanel(BorderLayout())
-        statusLabel.foreground = UIUtil.getContextHelpForeground()
-        statusLabel.border = JBUI.Borders.empty(2, 12)
-        south.add(statusLabel, BorderLayout.NORTH)
-        south.add(buildComposer(), BorderLayout.CENTER)
+        south.add(statusStrip, BorderLayout.NORTH)
+        south.add(composer, BorderLayout.CENTER)
         root.add(south, BorderLayout.SOUTH)
+
+        updateModeChip()
+        installShortcuts(root)
         return root
     }
 
-    private fun buildComposer(): JComponent {
-        composerBox.layout = BorderLayout()
-        composerBox.border = JBUI.Borders.empty(8, 12, 6, 8)
+    private fun installEmptyState() {
+        emptyState = EmptyStatePanel(
+            icon = ClaudeIcons.brand,
+            heading = "What are we working on?",
+            description = "Ask about this project, or start from one of these.",
+            actions = listOf(
+                "Explain the current file" to { doSend("Explain what the currently open file does and how it fits into this project.") },
+                "Fix an issue" to { starter("Fix this bug: ") },
+                "Plan a feature" to { starter("Plan a feature: ") },
+                "Catch up on this project" to { primeProject() },
+            ),
+        )
+        showEmptyState(transcriptPresenter.showEmptyState)
+    }
 
-        input.isOpaque = false
-        input.lineWrap = true
-        input.wrapStyleWord = true
-        input.border = JBUI.Borders.empty()
-        input.emptyText.text = "Message Claude…   (⏎ send · ⇧⏎ newline)"
-        input.addKeyListener(object : KeyAdapter() {
-            override fun keyPressed(e: KeyEvent) {
-                if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) { e.consume(); doSend() }
-            }
+    private fun starter(prefix: String) {
+        composer.insertContextText(prefix)
+        composer.requestInputFocus()
+    }
+
+    private fun installShortcuts(root: JComponent) {
+        // Escape stops an in-flight request; does not hijack editor shortcuts.
+        root.registerKeyboardAction(
+            { if (running) stopRequest() },
+            KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+            JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT,
+        )
+    }
+
+    private fun installResponsive() {
+        component.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) = applyProfile()
         })
-        input.addFocusListener(object : FocusAdapter() {
-            override fun focusGained(e: FocusEvent) { composerBox.focused = true; composerBox.repaint() }
-            override fun focusLost(e: FocusEvent) { composerBox.focused = false; composerBox.repaint() }
-        })
-        val inputScroll = JBScrollPane(input)
-        inputScroll.isOpaque = false
-        inputScroll.viewport.isOpaque = false
-        inputScroll.border = JBUI.Borders.empty()
-        inputScroll.preferredSize = Dimension(10, JBUI.scale(46))
-        val inputRow = JPanel(BorderLayout())
-        inputRow.isOpaque = false
-        inputRow.add(inputScroll, BorderLayout.CENTER)
-        val mic = JBLabel("🎤")
-        mic.foreground = UIUtil.getContextHelpForeground()
-        mic.toolTipText = "Voice input isn't available in this panel"
-        mic.border = JBUI.Borders.empty(1, 6, 0, 2)
-        val micWrap = JPanel(BorderLayout()); micWrap.isOpaque = false; micWrap.add(mic, BorderLayout.NORTH)
-        inputRow.add(micWrap, BorderLayout.EAST)
-        composerBox.add(inputRow, BorderLayout.CENTER)
+        SwingUtilities.invokeLater { applyProfile() }
+    }
 
-        val actions = JPanel(BorderLayout())
-        actions.isOpaque = false
-        actions.border = JBUI.Borders.emptyTop(6)
-
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        left.isOpaque = false
-        left.add(flatGlyph("+", "Attach a file as an @mention") { attachFile() })
-        left.add(boxedGlyph("/", "Actions") { b -> showSlashMenu(b) })
-        spinner.isVisible = false
-        spinner.suspend()
-        left.add(spinner)
-        actions.add(left, BorderLayout.WEST)
-
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
-        right.isOpaque = false
-        styleChip(modeChip)
-        modeChip.addActionListener { showModesPopup(modeChip) }
-        right.add(modeChip)
-        sendCircle.toolTipText = "Send"
-        sendCircle.addActionListener { if (running) { session.stop(); setStatus("Stopping…") } else doSend() }
-        right.add(sendCircle)
-        actions.add(right, BorderLayout.EAST)
-
-        composerBox.add(actions, BorderLayout.SOUTH)
-
-        val wrap = JPanel(BorderLayout())
-        wrap.border = JBUI.Borders.empty(6, 10, 10, 10)
-        wrap.add(composerBox, BorderLayout.CENTER)
-        return wrap
+    private fun applyProfile() {
+        // Ignore pre-layout (0/near-0 width) passes so we don't transiently downgrade the layout.
+        if (component.width < JBUI.scale(80)) return
+        val scale = JBUI.scale(1000) / 1000f
+        val profile = ResponsiveLayout.profile(component.width, scale)
+        header.applyProfile(profile)
+        activityMap.applyProfile(profile)
+        // Narrow panels can't split — fall back to the activity view.
+        if (profile == LayoutProfile.NARROW && viewMode == ViewMode.SPLIT) setWorkspace(ViewMode.MAP)
+        // Constrain the transcript to a comfortable reading width once wide.
+        val maxW = ResponsiveLayout.maxReadableWidth(profile)
+        val hpad = if (maxW != Int.MAX_VALUE) {
+            ((scroll.viewport.width - JBUI.scale(maxW)) / 2).coerceIn(JBUI.scale(14), JBUI.scale(400))
+        } else JBUI.scale(14)
+        transcript.border = JBUI.Borders.empty(12, hpad)
+        if (profile != lastProfile) { lastProfile = profile; transcript.revalidate(); transcript.repaint() }
     }
 
     private fun initStyles() {
         val base = UIUtil.getLabelFont()
         val mono = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
-        val fg = UIUtil.getLabelForeground()
-        val muted = UIUtil.getContextHelpForeground()
-
+        val fg = ClaudeUiTokens.textPrimary()
+        val muted = ClaudeUiTokens.textSecondary()
         StyleConstants.setFontFamily(sNormal, base.family); StyleConstants.setFontSize(sNormal, base.size); StyleConstants.setForeground(sNormal, fg)
         clone(sMuted, sNormal); StyleConstants.setForeground(sMuted, muted)
         clone(sBold, sNormal); StyleConstants.setBold(sBold, true)
-        clone(sError, sNormal); StyleConstants.setForeground(sError, STOP_RED)
+        clone(sError, sNormal); StyleConstants.setForeground(sError, ClaudeUiTokens.error())
         StyleConstants.setFontFamily(sCode, mono.family); StyleConstants.setFontSize(sCode, base.size); StyleConstants.setForeground(sCode, fg)
         clone(sDiffAdd, sCode); StyleConstants.setBackground(sDiffAdd, JBColor(Color(0xDD, 0xF4, 0xE4), Color(0x1E, 0x3A, 0x28)))
         clone(sDiffDel, sCode); StyleConstants.setBackground(sDiffDel, JBColor(Color(0xFB, 0xE4, 0xE1), Color(0x3A, 0x22, 0x22)))
     }
 
     private fun clone(dst: SimpleAttributeSet, src: SimpleAttributeSet) { dst.addAttributes(src) }
-    private fun editorBg(): Color = EditorColorsManager.getInstance().globalScheme.defaultBackground
-    private fun cardBg(): Color = shift(editorBg(), 10, -6)
-    private fun shift(b: Color, dark: Int, light: Int): Color {
-        val d = if ((b.red * 0.299 + b.green * 0.587 + b.blue * 0.114) < 128) dark else light
-        return Color(clampc(b.red + d), clampc(b.green + d), clampc(b.blue + d))
-    }
-    private fun clampc(v: Int) = if (v < 0) 0 else if (v > 255) 255 else v
-    private fun mutedFg(): Color = UIUtil.getContextHelpForeground()
+    private fun cardBg(): Color = ClaudeUiTokens.elevatedSurface()
+    private fun mutedFg(): Color = ClaudeUiTokens.textSecondary()
 
     // ---------- transcript rows ----------
 
     private fun addRow(c: JComponent) {
         transcript.add(c)
-        transcript.add(Box.createVerticalStrut(JBUI.scale(8)))
+        transcript.add(Box.createVerticalStrut(JBUI.scale(10)))
         scrollToBottomSoon()
     }
 
     private fun addInfo(text: String, err: Boolean) {
         val ta = plainArea(text)
         ta.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC)
-        ta.foreground = if (err) STOP_RED else mutedFg()
+        ta.foreground = if (err) ClaudeUiTokens.error() else mutedFg()
         val r = fullWidth(JPanel(BorderLayout())); r.border = JBUI.Borders.empty(2, 4); r.add(ta, BorderLayout.CENTER)
         addRow(r)
     }
 
-    private fun addUserBubble(text: String) {
+    private fun addUserBubble(text: String, attachments: List<String>) {
         val bubble = Bubble()
         bubble.border = JBUI.Borders.empty(9, 12)
-        val role = JBLabel("You")
-        role.foreground = ACCENT
-        role.font = role.font.deriveFont(Font.BOLD, JBUI.scale(11f))
-        role.border = JBUI.Borders.emptyBottom(3)
-        bubble.add(role, BorderLayout.NORTH)
-        bubble.add(plainArea(text), BorderLayout.CENTER)
+        val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
+        col.add(fullWidth(plainArea(text)))
+        if (attachments.isNotEmpty()) {
+            val ctx = plainArea("Context: " + attachments.joinToString(", ") { basename(it) })
+            ctx.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+            ctx.foreground = mutedFg()
+            col.add(fullWidth(ctx))
+        }
+        bubble.add(col, BorderLayout.CENTER)
         addRow(bubble)
     }
 
@@ -358,7 +342,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         ta.isEditable = false; ta.lineWrap = true; ta.wrapStyleWord = true; ta.isOpaque = false
         ta.border = JBUI.Borders.empty()
         ta.font = UIUtil.getLabelFont()
-        ta.foreground = UIUtil.getLabelForeground()
+        ta.foreground = ClaudeUiTokens.textPrimary()
         return ta
     }
 
@@ -370,28 +354,25 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         return p
     }
 
-    /** Makes a component fill the transcript width in the vertical BoxLayout. */
     private fun <T : JComponent> fullWidth(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; c.isOpaque = false; return c }
-
     private fun click(run: () -> Unit) = object : MouseAdapter() { override fun mouseClicked(e: MouseEvent) { run() } }
 
     // ---------- compose actions ----------
 
-    private fun doSend() {
+    private fun doSend(rawText: String) {
         if (running) return
-        val text = input.text.trim()
+        val text = rawText.trim()
         if (text.isEmpty()) return
+        val attachments = composerModel.attachments
+        val message = composerModel.buildMessage(rawText)
         finalizeCurrent(); inAssistant = false; curTurn = null
-        addUserBubble(text)
+        addUserBubble(text, attachments)
+        transcriptPresenter.onUserMessage(); showEmptyState(false)
         feed(interpreter.taskStarted(text))
-        session.sendUserMessage(text)
-        input.text = ""
-        setRunning(true); setStatus("Sending…")
-    }
-
-    private fun insertText(s: String) {
-        input.insert(s, input.caretPosition.coerceIn(0, input.document.length))
-        input.requestFocusInWindow()
+        statusModel.taskStarted(); refreshStatus()
+        session.sendUserMessage(message)
+        composer.clearInput(); composerModel.clearAttachments(); composer.refreshChips()
+        setRunning(true)
     }
 
     private fun attachFile() {
@@ -399,31 +380,63 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val file = FileChooser.chooseFile(descriptor, project, null) ?: return
         val base = project.basePath
         val rel = if (base != null && file.path.startsWith(base)) file.path.substring(base.length).trimStart('/') else file.path
-        insertText("@$rel ")
+        composerModel.addAttachment(rel)
+        composer.refreshChips()
     }
 
     private fun primeProject() {
         if (running) return
         finalizeCurrent(); inAssistant = false; curTurn = null
-        addUserBubble("📖 Catch up on this project — read the docs, generate any missing recommended ones (CLAUDE.md, ARCHITECTURE, conventions), and summarize.")
+        addUserBubble("Catch up on this project — read the docs, generate any missing recommended ones (CLAUDE.md, ARCHITECTURE, conventions), and summarize.", emptyList())
+        transcriptPresenter.onUserMessage(); showEmptyState(false)
         feed(interpreter.taskStarted("Catch up on this project and complete its docs"))
+        statusModel.taskStarted(); refreshStatus()
         session.sendUserMessage(PRIME_PROMPT)
-        setRunning(true); setStatus("Reading project docs…")
+        setRunning(true)
     }
 
-    // ---------- "/" actions + modes ----------
+    private fun stopRequest() {
+        if (!running) return
+        session.stop()
+        header.setSessionState(StatusKind.WORKING, "Stopping")
+    }
+
+    // ---------- menus ----------
 
     private fun showSlashMenu(anchor: Component) {
         val group = DefaultActionGroup()
         group.add(Separator.create("Context"))
         group.add(action("Catch up on project") { primeProject() })
         group.add(action("Attach file…") { attachFile() })
+        group.add(Separator.create("Conversation"))
         group.add(action("Clear conversation") { session.newConversation() })
-        group.add(Separator.create("Model"))
-        group.add(action("Switch model…") { showModelMenu(anchor) })
+        popup("Actions", group, anchor)
+    }
+
+    private fun showMoreMenu(anchor: Component) {
+        val group = DefaultActionGroup()
+        group.add(action("Catch up on project") { primeProject() })
+        group.add(action(if (showDetails) "Hide technical details" else "Show technical details") { setShowDetails(!showDetails) })
+        group.add(Separator.getInstance())
+        val modelGroup = DefaultActionGroup("Model", true)
+        listOf("" to "Default", "opus" to "Opus", "sonnet" to "Sonnet", "haiku" to "Haiku").forEach { (v, label) ->
+            modelGroup.add(action(label + if ((ClaudeSettings.getInstance().state.model ?: "") == v) "   ✓" else "") { setModel(v) })
+        }
+        group.add(modelGroup)
+        group.add(Separator.getInstance())
+        group.add(action("Clear conversation") { session.newConversation() })
+        group.add(action("Activity map preferences…") { openSettings() })
         group.add(action("Settings…") { openSettings() })
+        popup("More", group, anchor)
+    }
+
+    private fun setModel(value: String) {
+        ClaudeSettings.getInstance().state.model = value
+    }
+
+    private fun popup(title: String, group: DefaultActionGroup, anchor: Component) {
         JBPopupFactory.getInstance()
-            .createActionGroupPopup("Actions", group, SimpleDataContext.getProjectContext(project),
+            .createActionGroupPopup(title, group, SimpleDataContext.getProjectContext(project),
                 JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, true)
             .showUnderneathOf(anchor)
     }
@@ -432,45 +445,30 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun actionPerformed(e: AnActionEvent) { run() }
     }
 
-    private fun showModelMenu(anchor: Component) {
-        val group = DefaultActionGroup()
-        listOf("" to "Default", "opus" to "Opus", "sonnet" to "Sonnet", "haiku" to "Haiku").forEach { (v, label) ->
-            group.add(action(label) {
-                ClaudeSettings.getInstance().state.model = v
-                SwingUtilities.invokeLater { modelCombo.selectedItem = v }
-            })
-        }
-        JBPopupFactory.getInstance()
-            .createActionGroupPopup("Model", group, SimpleDataContext.getProjectContext(project),
-                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, true)
-            .showUnderneathOf(anchor)
-    }
-
     private fun showModesPopup(anchor: Component) {
         JBPopupFactory.getInstance()
             .createPopupChooserBuilder(modes)
-            .setTitle("Modes")
+            .setTitle("Permission mode")
             .setRenderer(modeRenderer())
             .setItemChosenCallback { m -> setMode(m.value) }
             .createPopup()
             .showUnderneathOf(anchor)
     }
 
-    private fun modeRenderer(): ListCellRenderer<Mode> = ListCellRenderer { _, value, _, selected, _ ->
+    private fun modeRenderer(): javax.swing.ListCellRenderer<PermissionModes.Info> = javax.swing.ListCellRenderer { _, value, _, selected, _ ->
         val panel = JPanel(BorderLayout(10, 0))
         panel.isOpaque = true
         panel.background = if (selected) UIUtil.getListSelectionBackground(true) else UIUtil.getListBackground()
         panel.border = JBUI.Borders.empty(5, 9)
-        val fg = if (selected) UIUtil.getListSelectionForeground(true) else UIUtil.getLabelForeground()
-        val glyph = JBLabel(value.glyph); glyph.foreground = if (selected) fg else ACCENT
-        panel.add(glyph, BorderLayout.WEST)
+        val fg = if (selected) UIUtil.getListSelectionForeground(true) else ClaudeUiTokens.textPrimary()
         val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
-        val cur = ClaudeSettings.getInstance().state.permissionMode ?: "acceptEdits"
-        val title = JBLabel(value.title + if (value.value == cur) "   ✓" else "")
-        title.foreground = fg; title.font = title.font.deriveFont(Font.BOLD)
-        val desc = JBLabel(value.desc)
-        desc.foreground = if (selected) fg else UIUtil.getContextHelpForeground()
-        desc.font = desc.font.deriveFont(JBUI.scale(11f))
+        val cur = ClaudeSettings.getInstance().state.permissionMode ?: "auto"
+        val title = JBLabel(value.shortName + if (value.value == cur) "   ✓" else "")
+        title.foreground = if (value.dangerous && !selected) ClaudeUiTokens.warning() else fg
+        title.font = title.font.deriveFont(Font.BOLD)
+        val desc = JBLabel(value.description)
+        desc.foreground = if (selected) fg else ClaudeUiTokens.textSecondary()
+        desc.font = desc.font.deriveFont(JBUI.scaleFontSize(11f).toFloat())
         col.add(title); col.add(desc)
         panel.add(col, BorderLayout.CENTER)
         panel
@@ -478,9 +476,59 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun setMode(value: String) { ClaudeSettings.getInstance().state.permissionMode = value; updateModeChip() }
     private fun updateModeChip() {
-        val cur = ClaudeSettings.getInstance().state.permissionMode ?: "acceptEdits"
-        val m = modes.firstOrNull { it.value == cur } ?: modes[1]
-        modeChip.text = m.glyph + "  " + m.title + "  ▾"
+        val m = PermissionModes.byValue(ClaudeSettings.getInstance().state.permissionMode)
+        composer.setMode(m.shortName, m.dangerous)
+    }
+
+    // ---------- workspace ----------
+
+    private fun toWorkspace(v: ViewMode): WorkspaceMode = when (v) {
+        ViewMode.CHAT -> WorkspaceMode.CHAT
+        ViewMode.SPLIT -> WorkspaceMode.SPLIT
+        ViewMode.MAP -> WorkspaceMode.ACTIVITY
+    }
+
+    private fun initialViewMode(): ViewMode {
+        val s = ClaudeSettings.getInstance().state
+        return when (WorkspaceModes.fromSettings(s.showActivityMap, s.activityViewMode)) {
+            WorkspaceMode.CHAT -> ViewMode.CHAT
+            WorkspaceMode.SPLIT -> ViewMode.SPLIT
+            WorkspaceMode.ACTIVITY -> ViewMode.MAP
+        }
+    }
+
+    private fun setWorkspace(mode: ViewMode) {
+        viewMode = mode
+        val s = ClaudeSettings.getInstance().state
+        val ws = toWorkspace(mode)
+        s.showActivityMap = WorkspaceModes.toShowActivityMap(ws)
+        s.activityViewMode = WorkspaceModes.toViewMode(ws)
+        header.setWorkspace(ws)
+        installCenter()
+    }
+
+    private fun toggleSplit() {
+        setWorkspace(if (viewMode == ViewMode.SPLIT) ViewMode.MAP else ViewMode.SPLIT)
+    }
+
+    private fun installCenter() {
+        centerHost.removeAll()
+        when (viewMode) {
+            ViewMode.CHAT -> centerHost.add(chatHost, BorderLayout.CENTER)
+            ViewMode.MAP -> centerHost.add(activityMap.component, BorderLayout.CENTER)
+            ViewMode.SPLIT -> {
+                mapSplitter.firstComponent = chatHost
+                mapSplitter.secondComponent = activityMap.component
+                centerHost.add(mapSplitter, BorderLayout.CENTER)
+            }
+        }
+        SwingUtilities.invokeLater { centerHost.revalidate(); centerHost.repaint() }
+    }
+
+    private fun showEmptyState(show: Boolean) {
+        chatHost.removeAll()
+        chatHost.add(if (show) emptyState else scroll, BorderLayout.CENTER)
+        chatHost.revalidate(); chatHost.repaint()
     }
 
     // ---------- event intake ----------
@@ -507,11 +555,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onPanel(o: JsonObject) {
         when (o.str("subtype")) {
-            "started" -> { setRunning(true); setStatus("Starting Claude…") }
+            "started" -> setRunning(true)
             "cleared" -> clearAll()
             "config" -> applyConfigToUi()
-            "error" -> { addInfo(o.str("text") ?: "Error", true); setRunning(false) }
-            "exited" -> { finalizeCurrent(); inAssistant = false; setRunning(false); val c = o.intOrNull("code"); if (c != null && c != 0) setStatus("Claude exited (code $c)") }
+            "error" -> { addInfo(o.str("text") ?: "Error", true); noteError(o.str("text") ?: "Error"); setRunning(false) }
+            "exited" -> { finalizeCurrent(); inAssistant = false; setRunning(false); val c = o.intOrNull("code"); if (c != null && c != 0) noteError("Claude exited (code $c)") }
             "stderr" -> {}
         }
     }
@@ -519,8 +567,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onSystem(o: JsonObject) {
         when (o.str("subtype")) {
             "init" -> setRunning(true)
-            "status" -> if (o.str("status") == "requesting") { setStatus("Thinking…"); feed(interpreter.status("Thinking")) }
-            "thinking_tokens" -> setStatus("Thinking… (" + (o.intOrNull("estimated_tokens") ?: 0) + " tokens)")
+            "status" -> if (o.str("status") == "requesting") feed(interpreter.status("Thinking"))
         }
     }
 
@@ -535,7 +582,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun beginAssistant() {
         finalizeCurrent()
-        setStatus("")
         val turn = AssistantTurn()
         curTurn = turn
         turns.add(turn)
@@ -622,22 +668,20 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onResult(o: JsonObject) {
         finalizeCurrent(); inAssistant = false; setRunning(false)
         val isErr = o.has("is_error") && o.get("is_error").let { it.isJsonPrimitive && it.asBoolean }
-        feed(interpreter.taskDone(o.str("result") ?: "", isErr))
         val parts = ArrayList<String>()
         o.dblOrNull("total_cost_usd")?.let { parts.add("$" + String.format("%.4f", it)) }
         o.dblOrNull("duration_ms")?.let { parts.add(String.format("%.1fs", it / 1000)) }
         o.intOrNull("num_turns")?.let { parts.add("$it turn" + if (it > 1) "s" else "") }
-        setStatus(parts.joinToString("   ·   "))
-        if (o.has("is_error") && o.get("is_error").let { it.isJsonPrimitive && it.asBoolean }) {
-            o.str("result")?.let { addInfo(it, true) }
-        }
+        completionMeta = parts.joinToString("   ·   ").ifBlank { null }
+        feed(interpreter.taskDone(o.str("result") ?: "", isErr))
+        if (isErr) o.str("result")?.let { addInfo(it, true) }
     }
 
-    // ---------- tool body rendering (into a card's styled pane) ----------
+    // ---------- tool body rendering ----------
 
     private fun renderToolBody(name: String, id: String?, input: JsonObject?, card: ToolCard) {
         target = card.bodyDoc
-        card.setSummary(renderToolContent(name, input ?: JsonObject()))
+        card.setDetails(name, input ?: JsonObject(), renderToolContent(name, input ?: JsonObject()))
         target = null
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
         if (id != null) { renderedTools.add(id); toolCardsById[id] = card }
@@ -670,7 +714,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 summary = (todos?.size() ?: 0).toString() + " items"
                 todos?.forEach { t ->
                     val to = t.asJsonObject
-                    val mark = when (to.str("status")) { "completed" -> "✓ "; "in_progress" -> "▸ "; else -> "• " }
+                    val mark = when (to.str("status")) { "completed" -> "[x] "; "in_progress" -> "[~] "; else -> "[ ] " }
                     insert(mark + (to.str("content") ?: "") + "\n", sMuted)
                 }
             }
@@ -700,13 +744,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             req.getAsJsonArray("permission_suggestions").toString() else null
         val block = ApprovalBlock(
             title, toolName, input,
-            onAllow = { session.respondAllow(reqId, inputJson, null) },
-            onAllowAlways = if (suggestions != null) ({ session.respondAllow(reqId, inputJson, suggestions) }) else null,
-            onDeny = { session.respondDeny(reqId, "Denied by user") },
+            onAllow = { session.respondAllow(reqId, inputJson, null); resolvePermission() },
+            onAllowAlways = if (suggestions != null) ({ session.respondAllow(reqId, inputJson, suggestions); resolvePermission() }) else null,
+            onDeny = { session.respondDeny(reqId, "Denied by user"); resolvePermission() },
         )
         turn.addBlock(block)
+        statusModel.permissionRequested(); refreshStatus()
         scrollToBottomSoon()
     }
+
+    private fun resolvePermission() { statusModel.permissionResolved(); refreshStatus() }
 
     private fun renderDiff(oldStr: String, newStr: String) {
         for (r in lineDiff(oldStr, newStr)) {
@@ -753,33 +800,78 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         try { d.insertString(d.length, text, style) } catch (e: BadLocationException) {}
     }
 
-    // ---------- helpers ----------
+    // ---------- status / running ----------
 
     private fun setRunning(v: Boolean) {
         running = v
         SwingUtilities.invokeLater {
-            spinner.isVisible = v
-            if (v) spinner.resume() else spinner.suspend()
-            if (v) { sendCircle.text = "■"; sendCircle.setBg(STOP_RED); sendCircle.toolTipText = "Stop" }
-            else { sendCircle.text = "↑"; sendCircle.setBg(ACCENT); sendCircle.toolTipText = "Send" }
+            composer.setRunning(v)
+            refreshStatus()
         }
     }
-    private fun setStatus(text: String) { SwingUtilities.invokeLater { statusLabel.text = if (text.isEmpty()) " " else text } }
+
+    /** Push normalised activity events into both the map and the status model. */
+    private fun feed(events: List<AgentActivityEvent>) {
+        if (events.isEmpty()) return
+        activityMap.apply(events)
+        for (e in events) statusModel.apply(e)
+        refreshStatus()
+    }
+
+    private fun noteError(text: String) {
+        statusModel.apply(ErrorObserved(null, text, Instant.now()))
+        refreshStatus()
+    }
+
+    private fun refreshStatus() {
+        val view = statusModel.view
+        val meta = if (running) modelLabel() else completionMeta
+        statusStrip.update(view, meta)
+        header.setSessionState(coarseKind(view), coarseLabel(view))
+    }
+
+    private fun modelLabel(): String {
+        val m = ClaudeSettings.getInstance().state.model ?: ""
+        return if (m.isBlank()) "" else m.replaceFirstChar { it.uppercase() }
+    }
+
+    private fun coarseKind(v: StatusView): StatusKind = when (v.kind) {
+        StatusKind.READY -> StatusKind.READY
+        StatusKind.ERROR -> StatusKind.ERROR
+        StatusKind.PERMISSION -> StatusKind.PERMISSION
+        StatusKind.WARNING -> StatusKind.WARNING
+        StatusKind.SUCCESS, StatusKind.COMPLETED -> StatusKind.SUCCESS
+        else -> StatusKind.WORKING
+    }
+
+    private fun coarseLabel(v: StatusView): String = when (v.kind) {
+        StatusKind.READY -> "Ready"
+        StatusKind.ERROR -> "Error"
+        StatusKind.PERMISSION -> "Waiting for approval"
+        StatusKind.WARNING -> "Stopped"
+        StatusKind.SUCCESS, StatusKind.COMPLETED -> "Ready"
+        else -> "Working"
+    }
+
+    // ---------- lifecycle ----------
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); renderedTools.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock(); setStatus("")
+        toolCardsById.clear(); renderedTools.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        completionMeta = null
         interpreter.reset(); activityMap.clearSession()
+        statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
-        addInfo("New conversation.", false)
+        showEmptyState(true)
+        refreshStatus()
     }
 
     private fun applyConfigToUi() {
-        val s = ClaudeSettings.getInstance().state
         SwingUtilities.invokeLater {
-            modelCombo.selectedItem = s.model ?: ""; updateModeChip()
+            updateModeChip()
             val desired = initialViewMode()
-            if (desired != viewMode) setViewMode(desired)
+            if (desired != viewMode) setWorkspace(desired) else header.setWorkspace(toWorkspace(viewMode))
+            statusStrip.setReduceMotion(ClaudeSettings.getInstance().state.activityReduceMotion)
         }
     }
 
@@ -789,65 +881,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         showDetails = v
         ClaudeSettings.getInstance().state.showDetails = v
         turns.forEach { it.applyDetails(v) }
-        updateDetailsButton()
         relayout()
     }
-    private fun updateDetailsButton() {
-        detailsButton.text = if (showDetails) "Hide details" else "Details"
-    }
-
-    private fun initialViewMode(): ViewMode {
-        val s = ClaudeSettings.getInstance().state
-        if (!s.showActivityMap) return ViewMode.CHAT
-        return when (s.activityViewMode) {
-            "map" -> ViewMode.MAP
-            "chat" -> ViewMode.CHAT
-            else -> ViewMode.SPLIT
-        }
-    }
-
-    private fun setViewMode(mode: ViewMode) {
-        viewMode = mode
-        val s = ClaudeSettings.getInstance().state
-        s.showActivityMap = mode != ViewMode.CHAT
-        s.activityViewMode = when (mode) { ViewMode.CHAT -> "chat"; ViewMode.SPLIT -> "split"; ViewMode.MAP -> "map" }
-        updateMapButton()
-        installCenter()
-    }
-
-    private fun showViewMenu(anchor: Component) {
-        val group = DefaultActionGroup()
-        val current = viewMode
-        fun item(mode: ViewMode, label: String) = action(label + if (mode == current) "   ✓" else "") { setViewMode(mode) }
-        group.add(item(ViewMode.CHAT, "Chat only"))
-        group.add(item(ViewMode.SPLIT, "Split (chat + map)"))
-        group.add(item(ViewMode.MAP, "Map only"))
-        JBPopupFactory.getInstance()
-            .createActionGroupPopup("Layout", group, SimpleDataContext.getProjectContext(project),
-                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, true)
-            .showUnderneathOf(anchor)
-    }
-
-    private fun updateMapButton() {
-        mapButton.text = when (viewMode) { ViewMode.CHAT -> "◧ Chat"; ViewMode.SPLIT -> "◫ Split"; ViewMode.MAP -> "◩ Map" }
-    }
-
-    private fun installCenter() {
-        centerHost.removeAll()
-        when (viewMode) {
-            ViewMode.CHAT -> centerHost.add(scroll, BorderLayout.CENTER)
-            ViewMode.MAP -> centerHost.add(activityMap.component, BorderLayout.CENTER)
-            ViewMode.SPLIT -> {
-                mapSplitter.firstComponent = scroll
-                mapSplitter.secondComponent = activityMap.component
-                centerHost.add(mapSplitter, BorderLayout.CENTER)
-            }
-        }
-        SwingUtilities.invokeLater { centerHost.revalidate(); centerHost.repaint() }
-    }
-
-    /** Push normalised activity events into the map (no-op when the batch is empty). */
-    private fun feed(events: List<AgentActivityEvent>) { if (events.isNotEmpty()) activityMap.apply(events) }
 
     private fun scrollToBottomSoon() {
         if (pendingScroll) return
@@ -860,11 +895,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
     private fun relayout() { SwingUtilities.invokeLater { transcript.revalidate(); transcript.repaint() } }
 
-    private fun labelRenderer(mapper: (String?) -> String) = object : DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, sel: Boolean, focus: Boolean): Component =
-            super.getListCellRendererComponent(list, mapper(value as? String), index, sel, focus)
-    }
-    private fun cap(s: String) = if (s.isEmpty()) s else s.substring(0, 1).uppercase() + s.substring(1)
+    private fun basename(p: String): String { val q = p.replace('\\', '/').trimEnd('/'); val i = q.lastIndexOf('/'); return if (i >= 0) q.substring(i + 1) else q }
     private fun shortPath(p: String?): String { if (p.isNullOrEmpty()) return ""; return if (p.length > 72) "…" + p.substring(p.length - 71) else p }
     private fun oneLine(s: String, max: Int): String { val one = s.replace("\n", " ").trim(); return if (one.length > max) one.substring(0, max) + "…" else one }
     private fun truncate(t: String): String {
@@ -908,42 +939,31 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun JsonObject.objOrNull(k: String): JsonObject? = if (has(k) && get(k).isJsonObject) getAsJsonObject(k) else null
     private fun parseObj(s: String): JsonObject? = try { if (s.isBlank()) null else JsonParser.parseString(s).asJsonObject } catch (e: Exception) { null }
 
-    private fun styleChip(b: JButton) {
-        b.isContentAreaFilled = false; b.isFocusPainted = false; b.isOpaque = false
-        b.border = BorderFactory.createCompoundBorder(RoundedLineBorder(JBColor.border(), JBUI.scale(12)), JBUI.Borders.empty(3, 9))
-        b.foreground = UIUtil.getLabelForeground()
-        b.font = b.font.deriveFont(JBUI.scale(12f))
-        b.cursor = hand
+    // ---------- tool presentation ----------
+
+    private fun toolAction(name: String): String = when (name) {
+        "Read" -> "Read"; "Edit", "MultiEdit", "NotebookEdit" -> "Edited"; "Write" -> "Created"
+        "Bash" -> "Ran"; "Grep", "Glob", "WebSearch" -> "Searched"; "WebFetch" -> "Fetched"
+        "TodoWrite" -> "Planned"; else -> humanizeTool(name)
     }
 
-    private fun flatGlyph(glyph: String, tip: String, onClick: (JButton) -> Unit): JButton {
-        val b = JButton(glyph)
-        b.toolTipText = tip
-        b.isContentAreaFilled = false; b.isBorderPainted = false; b.isFocusPainted = false; b.isOpaque = false
-        b.foreground = UIUtil.getContextHelpForeground()
-        b.font = b.font.deriveFont(JBUI.scale(16f))
-        b.border = JBUI.Borders.empty(2, 5)
-        b.cursor = hand
-        b.addActionListener { onClick(b) }
-        return b
+    private fun toolIcon(name: String): Icon = when (name) {
+        "Read" -> ClaudeIcons.read
+        "Edit", "MultiEdit", "Write", "NotebookEdit" -> ClaudeIcons.edit
+        "Bash" -> ClaudeIcons.command
+        "Grep", "Glob", "WebSearch" -> ClaudeIcons.search
+        "WebFetch" -> ClaudeIcons.web
+        "TodoWrite" -> ClaudeIcons.diamond
+        else -> ClaudeIcons.diamond
     }
 
-    private fun boxedGlyph(glyph: String, tip: String, onClick: (JButton) -> Unit): JButton {
-        val b = JButton(glyph)
-        b.toolTipText = tip
-        b.isContentAreaFilled = false; b.isFocusPainted = false; b.isOpaque = false; b.isBorderPainted = true
-        b.foreground = UIUtil.getContextHelpForeground()
-        b.font = b.font.deriveFont(JBUI.scale(13f))
-        b.border = BorderFactory.createCompoundBorder(RoundedLineBorder(JBColor.border(), JBUI.scale(8)), JBUI.Borders.empty(2, 7))
-        b.cursor = hand
-        b.addActionListener { onClick(b) }
-        return b
+    private fun humanizeTool(name: String): String {
+        val short = name.substringAfterLast("__")
+        return short.replace('_', ' ').replaceFirstChar { it.uppercase() }
     }
 
-    private fun iconFor(name: String): String = when (name) {
-        "Bash" -> "$"; "Edit", "MultiEdit", "Write" -> "✎"; "Read" -> "▤"
-        "Grep", "Glob", "WebSearch" -> "⌕"; "WebFetch" -> "↗"; "TodoWrite" -> "☑"; else -> "▶"
-    }
+    /** The component keyboard focus should land on when the tool window activates. */
+    fun preferredFocusComponent(): JComponent = composer.inputComponent()
 
     override fun dispose() { session.dispose() }
 
@@ -960,18 +980,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val detailKids = ArrayList<Component>()
         init {
             layout = BorderLayout()
-            border = JBUI.Borders.empty(2, 4, 4, 4)
+            border = JBUI.Borders.empty(2, 2, 6, 2)
             val role = JBLabel("Claude")
-            role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scale(11f)); role.border = JBUI.Borders.emptyBottom(2)
+            role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat()); role.border = JBUI.Borders.emptyBottom(3)
             add(role, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
             add(body, BorderLayout.CENTER)
             refreshVisibility()
         }
         fun addBlock(c: JComponent) {
-            val strut = Box.createVerticalStrut(JBUI.scale(4))
+            val strut = Box.createVerticalStrut(JBUI.scale(5))
             body.add(fullWidth(c)); body.add(strut)
-            // Text and approval prompts are always shown; thinking/tool cards are "details".
             if (c is TextBlock || c is ApprovalBlock) textCount++
             if (c is ThinkingBlock || c is ToolCard) {
                 c.isVisible = showDetails; strut.isVisible = showDetails
@@ -980,7 +999,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             refreshVisibility(); relayout()
         }
         fun applyDetails(show: Boolean) { detailKids.forEach { it.isVisible = show }; refreshVisibility() }
-        // In compact mode a turn that produced only thinking/tools collapses away entirely.
         private fun refreshVisibility() { isVisible = showDetails || textCount > 0 }
     }
 
@@ -1000,66 +1018,80 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun ins(d: StyledDocument, t: String, s: AttributeSet) { try { d.insertString(d.length, t, s) } catch (e: BadLocationException) {} }
     }
 
+    /** Extended thinking, rendered subtly under "Processing details" (only when details are on). */
     private inner class ThinkingBlock : Block() {
-        private val header = JBLabel("▸ ✱ Thinking")
+        private val header = JBLabel("Processing details")
         private val area = plainArea("")
         private var open = false
+        private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
         init {
             layout = BorderLayout()
-            header.foreground = mutedFg(); header.cursor = hand; header.border = JBUI.Borders.empty(1, 0)
-            header.font = header.font.deriveFont(Font.ITALIC)
-            header.addMouseListener(click { toggle() })
+            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)); head.isOpaque = false; head.cursor = hand
+            header.foreground = mutedFg(); header.font = header.font.deriveFont(Font.ITALIC)
+            head.add(chevron); head.add(header)
+            head.addMouseListener(click { toggle() })
             area.foreground = mutedFg(); area.font = area.font.deriveFont(Font.ITALIC); area.isVisible = false
-            area.border = JBUI.Borders.empty(1, 12, 2, 0)
-            add(header, BorderLayout.NORTH); add(area, BorderLayout.CENTER)
+            area.border = JBUI.Borders.empty(2, 16, 2, 0)
+            add(head, BorderLayout.NORTH); add(area, BorderLayout.CENTER)
         }
         fun append(t: String) { area.text = area.text + t; scrollToBottomSoon() }
-        private fun toggle() { open = !open; area.isVisible = open; header.text = (if (open) "▾" else "▸") + " ✱ Thinking"; relayout() }
+        private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
     }
 
+    /** A compact activity row: semantic icon + human action + target, with a result-state icon. */
     private inner class ToolCard(name: String) : Block() {
         private val bodyPane = styledPane()
         val bodyDoc: StyledDocument get() = bodyPane.styledDocument
-        private val summary = JBLabel("")
-        private val chevron = JBLabel("▸")
+        private val actionLabel = JBLabel(name)
+        private val targetLabel = JBLabel("")
+        private val iconLabel = JBLabel(toolIcon(name).let { (it as? io.mp.claudecodepanel.theme.VectorIcon)?.withColor { ClaudeUiTokens.textSecondary() } ?: it })
+        private val stateLabel = JBLabel("")
+        private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
         private val bodyWrap = JPanel(BorderLayout())
         private var open = false
         init {
             layout = BorderLayout()
             border = JBUI.Borders.empty(1, 0)
-            val head = JPanel(BorderLayout(6, 0)); head.isOpaque = false; head.border = JBUI.Borders.empty(5, 8); head.cursor = hand
-            val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)); left.isOpaque = false
-            val icon = JBLabel(iconFor(name)); icon.foreground = ACCENT; icon.font = icon.font.deriveFont(Font.BOLD)
-            val title = JBLabel(name); title.font = title.font.deriveFont(Font.BOLD)
-            left.add(icon); left.add(title)
+            val head = JPanel(BorderLayout(JBUI.scale(6), 0)); head.isOpaque = false; head.border = JBUI.Borders.empty(6, 8); head.cursor = hand
+            val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
+            actionLabel.font = actionLabel.font.deriveFont(Font.BOLD)
+            actionLabel.foreground = ClaudeUiTokens.textPrimary()
+            targetLabel.foreground = mutedFg()
+            left.add(iconLabel); left.add(actionLabel); left.add(targetLabel)
             head.add(left, BorderLayout.WEST)
-            summary.foreground = mutedFg(); head.add(summary, BorderLayout.CENTER)
-            chevron.foreground = mutedFg(); head.add(chevron, BorderLayout.EAST)
+            val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)); right.isOpaque = false
+            right.add(stateLabel); right.add(chevron)
+            head.add(right, BorderLayout.EAST)
             head.addMouseListener(click { toggle() })
             add(head, BorderLayout.NORTH)
-            bodyWrap.isOpaque = false; bodyWrap.border = JBUI.Borders.empty(0, 10, 6, 8); bodyWrap.add(bodyPane, BorderLayout.CENTER)
+            bodyWrap.isOpaque = false; bodyWrap.border = JBUI.Borders.empty(0, 12, 6, 8); bodyWrap.add(bodyPane, BorderLayout.CENTER)
             bodyWrap.isVisible = false
             add(bodyWrap, BorderLayout.CENTER)
         }
-        fun setSummary(s: String) { summary.text = s; relayout() }
+        fun setDetails(name: String, input: JsonObject, summary: String) {
+            actionLabel.text = toolAction(name)
+            targetLabel.text = summary
+            relayout()
+        }
         fun addResult(text: String, isErr: Boolean) {
             target = bodyDoc
             if (bodyDoc.length > 0) insert("\n", sMuted)
-            insert(if (isErr) "⚠ " else "↳ ", if (isErr) sError else sMuted)
+            insert(if (isErr) "! " else "» ", if (isErr) sError else sMuted)
             insert(truncate(text).ifBlank { if (isErr) "(error)" else "(no output)" } + "\n", sMuted)
             target = null
+            stateLabel.icon = if (isErr) ClaudeIcons.errorCircle.withSize(13) else ClaudeIcons.check.withSize(13)
             if (isErr) expand()
             relayout()
         }
         fun expand() { if (!open) toggle() }
-        private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.text = if (open) "▾" else "▸"; relayout() }
+        private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = JBUI.scale(12)
+            val arc = ClaudeUiTokens.radiusMd()
             g2.color = cardBg()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = JBColor.border()
+            g2.color = ClaudeUiTokens.subtleBorder()
             g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)
@@ -1071,13 +1103,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         title: String, toolName: String, input: JsonObject,
         onAllow: () -> Unit, onAllowAlways: (() -> Unit)?, onDeny: () -> Unit,
     ) : Block() {
-        private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
         private val decided = JBLabel("")
         init {
             layout = BorderLayout()
-            border = JBUI.Borders.empty(8, 10)
-            val head = JBLabel("🔒 $title")
-            head.foreground = ACCENT; head.font = head.font.deriveFont(Font.BOLD); head.border = JBUI.Borders.emptyBottom(5)
+            border = JBUI.Borders.empty(9, 11)
+            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(5), 0)); head.isOpaque = false; head.border = JBUI.Borders.emptyBottom(5)
+            head.add(JBLabel(ClaudeIcons.warningTriangle.withSize(14)))
+            val titleLabel = JBLabel(title)
+            titleLabel.foreground = ClaudeUiTokens.accent(); titleLabel.font = titleLabel.font.deriveFont(Font.BOLD)
+            head.add(titleLabel)
             add(head, BorderLayout.NORTH)
 
             val pane = styledPane()
@@ -1086,11 +1121,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             add(mid, BorderLayout.CENTER)
 
             buttons.isOpaque = false
-            val allow = JButton("Allow"); allow.addActionListener { onAllow(); resolve("✓ Allowed") }; buttons.add(allow)
+            val allow = JButton("Allow"); allow.addActionListener { onAllow(); resolve("Allowed") }; buttons.add(allow)
             if (onAllowAlways != null) {
-                val aa = JButton("Allow always"); aa.addActionListener { onAllowAlways(); resolve("✓ Always allowed") }; buttons.add(aa)
+                val aa = JButton("Allow always"); aa.addActionListener { onAllowAlways(); resolve("Always allowed") }; buttons.add(aa)
             }
-            val deny = JButton("Deny"); deny.addActionListener { onDeny(); resolve("✗ Denied") }; buttons.add(deny)
+            val deny = JButton("Deny"); deny.addActionListener { onDeny(); resolve("Denied") }; buttons.add(deny)
             decided.foreground = mutedFg()
             val south = JPanel(BorderLayout()); south.isOpaque = false
             south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
@@ -1100,48 +1135,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = JBUI.scale(12)
-            g2.color = shift(editorBg(), 24, -16)
+            val arc = ClaudeUiTokens.radiusMd()
+            g2.color = ClaudeUiTokens.overlaySurface()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = ACCENT
-            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.dispose()
-            super.paintComponent(g)
-        }
-    }
-
-    // ---------- custom-painted composer widgets ----------
-
-    private inner class RoundButton(glyph: String) : JButton(glyph) {
-        private var bg: Color = ACCENT
-        init {
-            isContentAreaFilled = false; isBorderPainted = false; isFocusPainted = false; isOpaque = false
-            foreground = Color.WHITE
-            val d = Dimension(JBUI.scale(30), JBUI.scale(30)); preferredSize = d; minimumSize = d; maximumSize = d
-            font = font.deriveFont(Font.BOLD, JBUI.scale(14f)); cursor = hand
-        }
-        fun setBg(c: Color) { bg = c; repaint() }
-        override fun paintComponent(g: Graphics) {
-            val g2 = g.create() as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g2.color = bg
-            val s = minOf(width, height) - 1
-            g2.fillOval((width - s) / 2, (height - s) / 2, s, s)
-            g2.dispose()
-            super.paintComponent(g)
-        }
-    }
-
-    private inner class RoundedPanel : JPanel() {
-        var focused = false
-        init { isOpaque = false }
-        override fun paintComponent(g: Graphics) {
-            val g2 = g.create() as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = JBUI.scale(16)
-            g2.color = shift(editorBg(), 16, -10)
-            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = if (focused) ACCENT else JBColor.border()
+            g2.color = ClaudeUiTokens.accent()
             g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)
@@ -1149,15 +1146,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     private inner class Bubble : JPanel(BorderLayout()) {
-        init { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT }
+        init { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT; border = JBUI.Borders.empty(9, 12) }
         override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = JBUI.scale(14)
+            val arc = ClaudeUiTokens.radiusMd()
             g2.color = cardBg()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = JBColor.border()
+            g2.color = ClaudeUiTokens.subtleBorder()
             g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)
