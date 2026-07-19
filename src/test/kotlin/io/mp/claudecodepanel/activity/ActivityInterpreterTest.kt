@@ -3,6 +3,7 @@ package io.mp.claudecodepanel.activity
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -128,5 +129,27 @@ class ActivityInterpreterTest {
         // After reset the result can't be correlated, so no test summary is produced from the id.
         val ev = interp.toolResult("x", "3 tests completed, 0 failed", isError = false)
         assertTrue(ev.none { it is TestReported })
+    }
+
+    @Test fun gradleNonZeroExitReportsBuildFailureWithoutSummary() {
+        interp.toolUse("g1", "Bash", obj("""{"command":"./gradlew assembleDebug"}"""))
+        // A failure that prints no parseable "BUILD FAILED" line — the non-zero exit is the only signal.
+        val ev = interp.toolResult("g1", "Execution failed for task ':app:processDebug'.", isError = true)
+        assertFalse(ev.filterIsInstance<BuildReported>().single().success)
+        assertTrue("no redundant generic error node", ev.none { it is ErrorObserved })
+    }
+
+    @Test fun gradleExitZeroWithoutSummaryReportsNothing() {
+        interp.toolUse("g3", "Bash", obj("""{"command":"./gradlew tasks"}"""))
+        // Exit 0, no build summary — must NOT fabricate a success or failure.
+        val ev = interp.toolResult("g3", "Available tasks:\nassemble", isError = false)
+        assertTrue(ev.none { it is BuildReported })
+    }
+
+    @Test fun genericBashErrorStaysGenericError() {
+        interp.toolUse("b9", "Bash", obj("""{"command":"ls /nope"}"""))
+        val ev = interp.toolResult("b9", "ls: /nope: No such file or directory", isError = true)
+        assertTrue(ev.none { it is BuildReported })
+        assertTrue(ev.any { it is ErrorObserved })
     }
 }

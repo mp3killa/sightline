@@ -159,8 +159,12 @@ the XML sibling), and the two formats disagree on paths (relative vs absolute) a
 report paths are now **normalised to absolute** before dedup — a finding attaches to the same file node
 an edit created.
 
+**Done (exit-status correlation):** a non-zero exit on a Gradle/test command with no parseable
+"BUILD FAILED" line now still emits `BuildReported(success = false)` (some AGP/Gradle failures print no
+summary), and the generic error-node fallback is suppressed when the failure is already represented as a
+build/test failure or compiler diagnostic. Success is never fabricated from exit 0. Unit-tested.
+
 **Remaining:**
-- Task exit-status correlation (map non-zero exit → build failure even without a parseable summary).
 - emulator/device launch outcomes; `logcat` crash extraction.
 - `PRODUCED` correlation is sequential (best-effort); parallel tool_use in one turn could mis-link —
   revisit if/when the CLI emits parallel results, ideally threading the tool_use_id into result events.

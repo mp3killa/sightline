@@ -95,15 +95,19 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
 
         // Command/build/test output is the richest post-hoc signal.
         if (p != null && (p.kind == Kind.BASH || p.kind == Kind.GRADLE || p.kind == Kind.TEST)) {
-            OutputParsers.parseTestSummary(text)?.let {
-                out.add(TestReported(it.passed, it.failed, it.failedNames, now))
-            }
+            val testSummary = OutputParsers.parseTestSummary(text)
+            testSummary?.let { out.add(TestReported(it.passed, it.failed, it.failedNames, now)) }
             for (d in OutputParsers.parseCompilerDiagnostics(text)) {
                 if (d.isError) out.add(ErrorObserved(d.path, d.message, now))
                 else out.add(WarningObserved(d.path, d.message, now))
             }
-            OutputParsers.parseBuildOutcome(text)?.let { ok ->
-                out.add(BuildReported(ok, firstLine(text), now))
+            val outcome = OutputParsers.parseBuildOutcome(text)
+            when {
+                outcome != null -> out.add(BuildReported(outcome, firstLine(text), now))
+                // Exit-status correlation: a non-zero exit on a build/test command with no parseable
+                // BUILD result is still a failure (some Gradle/AGP failures print no "BUILD FAILED" line).
+                isError && (p.kind == Kind.GRADLE || p.kind == Kind.TEST) && testSummary == null ->
+                    out.add(BuildReported(false, firstLine(text).ifBlank { "Build failed" }, now))
             }
         }
 
@@ -117,9 +121,12 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
         }
 
         if (isError) {
-            // Attribute the failure to the file we know this tool touched, if any.
-            val path = p?.path
-            if (out.none { it is ErrorObserved }) out.add(ErrorObserved(path, firstLine(text), now))
+            // Attribute the failure to the file this tool touched — unless it is already represented as a
+            // build/test failure or a compiler diagnostic (so we don't add a redundant generic error node).
+            val alreadyRepresented = out.any { it is ErrorObserved } ||
+                out.any { it is BuildReported && !it.success } ||
+                out.any { it is TestReported && it.failed > 0 }
+            if (!alreadyRepresented) out.add(ErrorObserved(p?.path, firstLine(text), now))
         }
         return out
     }
