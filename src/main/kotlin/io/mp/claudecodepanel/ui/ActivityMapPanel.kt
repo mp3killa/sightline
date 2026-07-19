@@ -43,6 +43,7 @@ import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
+import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.HierarchyEvent
@@ -108,6 +109,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private var reduceMotion = ClaudeSettings.getInstance().state.activityReduceMotion
     // Session-only view toggle: fold finished command/test/gradle history into its clusters to declutter.
     private var collapseHistory = false
+    // Aggregate ids the user expanded in place (their folded members are shown again). Cleared with the toggle.
+    private val expandedAggregates = LinkedHashSet<String>()
     private var profile = LayoutProfile.MEDIUM
 
     private val timer = Timer(33) { step() }
@@ -272,6 +275,31 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun setCollapseHistory(value: Boolean) {
         collapseHistory = value
+        if (!value) expandedAggregates.clear()
+        ensurePositions(); refreshHeader(); canvas.repaint()
+    }
+
+    private fun collapseKeepIds(): Set<String> {
+        val keep = LinkedHashSet<String>()
+        keep.add(ActivityGraph.TASK_ID)
+        graph.focus.nodeId?.let { keep.add(it) }
+        selectedId?.let { keep.add(it) }
+        return keep
+    }
+
+    /** The active fold plan (honours [expandedAggregates]); drives which member nodes are hidden. */
+    private fun collapsePlan(): ClusterCollapser.Plan =
+        if (!collapseHistory) ClusterCollapser.Plan.EMPTY
+        else ClusterCollapser.plan(graph.nodes.filter { !it.hidden }, keepIds = collapseKeepIds(), expanded = expandedAggregates)
+
+    /** Every foldable cluster (ignoring current expansion) — one chip is drawn per entry. */
+    private fun allAggregates(): List<ClusterCollapser.Aggregate> =
+        if (!collapseHistory) emptyList()
+        else ClusterCollapser.plan(graph.nodes.filter { !it.hidden }, keepIds = collapseKeepIds(), expanded = emptySet()).aggregates
+
+    /** Expand a folded cluster in place, or re-collapse an expanded one. */
+    private fun toggleAggregate(id: String) {
+        if (!expandedAggregates.add(id)) expandedAggregates.remove(id)
         ensurePositions(); refreshHeader(); canvas.repaint()
     }
 
@@ -446,13 +474,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         selectedId?.let { must.add(it) }
         // Fold finished command/test/gradle history into its clusters when the user turns collapse on;
         // the task, current focus, selection, pinned nodes and anything still failing/active never fold.
-        val folded = if (collapseHistory) ClusterCollapser.plan(all, keepIds = must).hiddenIds else emptySet()
-        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY && it.id !in folded }.sortedByDescending { it.lastSeenAt }
+        val plan = collapsePlan()
+        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY && it.id !in plan.hiddenIds }.sortedByDescending { it.lastSeenAt }
         val cap = visibleCap()
         val chosen = LinkedHashSet<String>(must)
         for (n in nonCat) { if (chosen.size >= cap) break; chosen.add(n.id) }
         val childCats = chosen.mapNotNull { graph.node(it)?.category?.name }.toSet()
         for (n in matched) if (n.type == ActivityNodeType.CATEGORY && n.category.name in childCats) chosen.add(n.id)
+        // Keep a fully-folded cluster's category visible so its chip has an anchor to hang under.
+        for (agg in plan.aggregates) chosen.add("cat:${agg.category.name}")
         return chosen
     }
 
@@ -627,6 +657,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         var dragging = false
         var draggedId: String? = null
         var hoveredId: String? = null
+        // Screen rects of the collapse "N commands" chips, recorded each paint for click hit-testing.
+        val aggregateChipBounds = HashMap<String, Rectangle>()
         private var panning = false
         private var lastDrag: Point? = null
 
@@ -640,6 +672,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 override fun mousePressed(e: MouseEvent) {
                     requestFocusInWindow()
                     lastDrag = e.point
+                    aggregateChipBounds.entries.firstOrNull { it.value.contains(e.point) }?.let { toggleAggregate(it.key); return }
                     val hit = hitTest(e.point)
                     if (hit != null) { draggedId = hit; dragging = true; selectNode(hit) }
                     else { panning = true; if (e.clickCount == 1) selectNode(null) }
@@ -840,8 +873,36 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 }
             }
 
+            drawAggregateChips(g2, ids)
             drawFocusOverlay(g2)
             g2.dispose()
+        }
+
+        /** A "N commands" chip under each foldable cluster; click toggles expand-in-place ([toggleAggregate]). */
+        private fun drawAggregateChips(g2: Graphics2D, ids: Set<String>) {
+            aggregateChipBounds.clear()
+            if (!collapseHistory) return
+            g2.font = UIUtil.getLabelFont().deriveFont(JBUIScale.scale(10.5f))
+            val fm = g2.fontMetrics
+            for (agg in allAggregates()) {
+                val catId = "cat:${agg.category.name}"
+                if (catId !in ids) continue
+                val pos = positions[catId] ?: continue
+                val s = worldToScreen(pos)
+                val expanded = agg.id in expandedAggregates
+                val padX = JBUI.scale(7); val padY = JBUI.scale(3)
+                val w = fm.stringWidth(agg.label) + padX * 2
+                val h = fm.height + padY * 2
+                val x = s.x - w / 2
+                val y = s.y + radiusOf(graph.node(catId)).toInt() + JBUI.scale(7)
+                g2.color = if (expanded) withAlpha(accent(), 0.16f) else withAlpha(ClaudeUiTokens.elevatedSurface(), 0.95f)
+                g2.fillRoundRect(x, y, w, h, JBUI.scale(9), JBUI.scale(9))
+                g2.color = if (expanded) accent() else ClaudeUiTokens.border()
+                g2.drawRoundRect(x, y, w, h, JBUI.scale(9), JBUI.scale(9))
+                g2.color = if (expanded) accent() else ClaudeUiTokens.textSecondary()
+                g2.drawString(agg.label, x + padX, y + padY + fm.ascent)
+                aggregateChipBounds[agg.id] = Rectangle(x, y, w, h)
+            }
         }
 
         /** Compact translucent focus card, top-left; hidden when there is no meaningful focus. */

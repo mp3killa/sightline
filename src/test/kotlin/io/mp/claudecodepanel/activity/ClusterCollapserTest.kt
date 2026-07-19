@@ -74,6 +74,18 @@ class ClusterCollapserTest {
         assertTrue(plan.isEmpty)
     }
 
+    @Test fun expandingOneClusterLeavesOthersFolded() {
+        val nodes = commands(4) +
+            (0 until 4).map { node("test:$it", ActivityNodeType.TEST, category = ActivityCategory.TESTING, state = ActivityNodeState.PASSED) }
+        val cmdAgg = ClusterCollapser.aggregateId(ActivityCategory.SHELL, ActivityNodeType.COMMAND)
+        val plan = ClusterCollapser.plan(nodes, minGroup = 4, expanded = setOf(cmdAgg))
+        // Commands expanded → their members visible; the test cluster stays folded.
+        assertEquals(1, plan.aggregates.size)
+        assertEquals(ActivityNodeType.TEST, plan.aggregates.single().type)
+        assertTrue(plan.hiddenIds.none { it.startsWith("cmd:") })
+        assertTrue(plan.hiddenIds.any { it.startsWith("test:") })
+    }
+
     @Test fun doesNotFoldNonRepetitiveTypes() {
         // Files are never aggregated even when many pile up — only command/test/gradle history is.
         val files = (0 until 10).map { node("file:$it", ActivityNodeType.FILE, category = ActivityCategory.UI_COMPOSE, state = ActivityNodeState.COMPLETED) }
