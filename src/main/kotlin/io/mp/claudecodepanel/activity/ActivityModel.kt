@@ -99,7 +99,23 @@ data class RelationshipEvidence(
     val explanation: String,
     val sourcePath: String? = null,
     val sourceSymbol: String? = null,
-)
+) {
+    companion object {
+        /**
+         * The stronger of two evidences for the *same* relationship — several observations can justify
+         * one edge, so this ranks/merges them. [EvidenceSource] is declared strongest→weakest, so a lower
+         * ordinal wins; ties break on higher [confidence]. Null means "no claim".
+         */
+        fun stronger(a: RelationshipEvidence?, b: RelationshipEvidence?): RelationshipEvidence? {
+            if (a == null) return b
+            if (b == null) return a
+            return when {
+                a.source.ordinal != b.source.ordinal -> if (a.source.ordinal < b.source.ordinal) a else b
+                else -> if (a.confidence >= b.confidence) a else b
+            }
+        }
+    }
+}
 
 data class ActivityEdge(
     val id: String,

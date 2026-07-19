@@ -51,6 +51,28 @@ class ProjectStructureEnricherTest : BasePlatformTestCase() {
         )
     }
 
+    fun testNavGraphDestinationsResolveToScreenFiles() {
+        myFixture.addFileToProject("com/example/HomeFragment.java", "package com.example; public class HomeFragment {}")
+        myFixture.addFileToProject("com/example/DetailActivity.java", "package com.example; public class DetailActivity {}")
+        val nav = myFixture.addFileToProject(
+            "res/navigation/nav_graph.xml",
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <navigation xmlns:android="http://schemas.android.com/apk/res/android">
+                <fragment android:id="@+id/home" android:name="com.example.HomeFragment" />
+                <activity android:id="@+id/detail" android:name="com.example.DetailActivity" />
+            </navigation>
+            """.trimIndent(),
+        )
+        val rels = enrich(nav.virtualFile).filterIsInstance<StructuralRelation>()
+        assertTrue("navigates to HomeFragment", rels.any {
+            it.relation == StructuralRelationKind.NAVIGATES_TO && it.targetLabel == "HomeFragment"
+        })
+        assertTrue("navigates to DetailActivity", rels.any {
+            it.relation == StructuralRelationKind.NAVIGATES_TO && it.targetLabel == "DetailActivity"
+        })
+    }
+
     fun testLibraryOrImplicitSupertypesAreNotLinked() {
         // A plain class (implicit java.lang.Object superclass) must not produce a hierarchy edge.
         val plain = myFixture.addFileToProject("com/example/Plain.java", "package com.example; public class Plain {}")

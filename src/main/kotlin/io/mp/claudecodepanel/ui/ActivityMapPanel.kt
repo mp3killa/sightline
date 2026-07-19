@@ -18,6 +18,7 @@ import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.activity.ActivityColorRole
 import io.mp.claudecodepanel.activity.ActivityColorRoles
 import io.mp.claudecodepanel.activity.ActivityGraph
+import io.mp.claudecodepanel.activity.ClusterCollapser
 import io.mp.claudecodepanel.activity.ActivityNode
 import io.mp.claudecodepanel.activity.ActivityNodeState
 import io.mp.claudecodepanel.activity.ActivityNodeType
@@ -102,6 +103,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private var selectedId: String? = null
     private var paused = false
     private var reduceMotion = ClaudeSettings.getInstance().state.activityReduceMotion
+    // Session-only view toggle: fold finished command/test/gradle history into its clusters to declutter.
+    private var collapseHistory = false
     private var profile = LayoutProfile.MEDIUM
 
     private val timer = Timer(33) { step() }
@@ -221,6 +224,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private fun showOverflow(anchor: Component) {
         val group = com.intellij.openapi.actionSystem.DefaultActionGroup()
         group.add(toggle("Reduce motion", reduceMotion) { setReduceMotion(!reduceMotion) })
+        group.add(toggle("Collapse finished history", collapseHistory) { setCollapseHistory(!collapseHistory) })
         group.add(action("Legend…") { showLegend(anchor) })
         group.add(action("About the Activity Map…") { showAbout(anchor) })
         group.add(com.intellij.openapi.actionSystem.Separator.getInstance())
@@ -261,6 +265,11 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         ClaudeSettings.getInstance().state.activityReduceMotion = value
         if (reduceMotion) { timer.stop(); settleSync() } else kick()
         canvas.repaint()
+    }
+
+    private fun setCollapseHistory(value: Boolean) {
+        collapseHistory = value
+        ensurePositions(); refreshHeader(); canvas.repaint()
     }
 
     private fun showLegend(anchor: Component) {
@@ -432,7 +441,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         must.add(ActivityGraph.TASK_ID)
         graph.focus.nodeId?.let { must.add(it) }
         selectedId?.let { must.add(it) }
-        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY }.sortedByDescending { it.lastSeenAt }
+        // Fold finished command/test/gradle history into its clusters when the user turns collapse on;
+        // the task, current focus, selection, pinned nodes and anything still failing/active never fold.
+        val folded = if (collapseHistory) ClusterCollapser.plan(all, keepIds = must).hiddenIds else emptySet()
+        val nonCat = matched.filter { it.type != ActivityNodeType.CATEGORY && it.id !in folded }.sortedByDescending { it.lastSeenAt }
         val cap = visibleCap()
         val chosen = LinkedHashSet<String>(must)
         for (n in nonCat) { if (chosen.size >= cap) break; chosen.add(n.id) }
@@ -679,10 +691,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         }
 
         override fun getToolTipText(event: MouseEvent): String? {
-            val n = hitTest(event.point)?.let { graph.node(it) } ?: return null
+            val id = hitTest(event.point) ?: return null
+            val n = graph.node(id) ?: return null
             val state = n.state.name.lowercase(Locale.ROOT)
             val sub = n.subtitle?.let { " · $it" } ?: ""
-            return "${cleanLabel(n)} — $state$sub"
+            // Surface the strongest relationship provenance ("why") on hover, not only in the inspector.
+            val why = graph.edgesTouching(id).mapNotNull { it.evidence }
+                .minByOrNull { it.source.ordinal }
+                ?.let { "<br>${escapeHtml(it.explanation)} · ${prettyEvidence(it.source)}" } ?: ""
+            return "<html>${escapeHtml("${cleanLabel(n)} — $state$sub")}$why</html>"
         }
 
         fun centerOn(v: Vec) { offset.x = -v.x * scale; offset.y = -v.y * scale; repaint() }
@@ -923,6 +940,13 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             border = JBUI.Borders.empty(8, 10)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS)
             add(body, BorderLayout.NORTH)
+            // Esc clears the selection from anywhere inside the inspector (mirrors the canvas' Esc), so
+            // keyboard users aren't trapped once focus moves off the canvas into the inspector's controls.
+            getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeInspector")
+            actionMap.put("closeInspector", object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent) { selectNode(null) }
+            })
             refresh()
         }
 
@@ -1009,6 +1033,9 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun prettyType(t: ActivityNodeType): String =
         t.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+    private fun escapeHtml(s: String): String =
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private fun prettyEvidence(s: EvidenceSource): String = when (s) {
         EvidenceSource.STRUCTURED_TOOL_EVENT -> "tool event"

@@ -197,6 +197,65 @@ class ActivityGraphTest {
         assertEquals(EvidenceSource.IMPORT, imp.evidence!!.source)
     }
 
+    @Test fun producedEdgeCarriesCommandOutputEvidence() {
+        val g = freshGraph()
+        g.apply(GradleTaskRun("assembleDebug", tick()))
+        g.apply(BuildReported(success = false, summary = "BUILD FAILED", at = tick()))
+        val produced = g.edges.first {
+            it.type == ActivityEdgeType.PRODUCED && it.targetNodeId == "gradle:build"
+        }
+        val ev = produced.evidence!!
+        assertEquals(EvidenceSource.COMMAND_OUTPUT, ev.source)
+        assertTrue(ev.explanation.contains("produced"))
+        assertTrue(ev.explanation.contains("build failure"))
+    }
+
+    @Test fun affectedByEdgeCarriesEvidenceNamingTheFile() {
+        val g = freshGraph()
+        g.apply(FileEdited("/a/Foo.kt", created = false, at = tick()))
+        g.apply(ErrorObserved("/a/Foo.kt", "unresolved reference: bar", tick()))
+        val affected = g.edges.first { it.type == ActivityEdgeType.AFFECTED_BY && it.targetNodeId == "file:/a/Foo.kt" }
+        val ev = affected.evidence!!
+        assertEquals(EvidenceSource.COMMAND_OUTPUT, ev.source)
+        assertTrue(ev.explanation.contains("Foo.kt"))
+    }
+
+    @Test fun strongerEvidenceRanksBySourceThenConfidence() {
+        val psi = RelationshipEvidence(EvidenceSource.PSI_DECLARATION, 0.5f, "implements")
+        val cmd = RelationshipEvidence(EvidenceSource.COMMAND_OUTPUT, 0.99f, "produced")
+        // A structural/PSI fact outranks command-output inference regardless of arrival order or confidence.
+        assertEquals(psi, RelationshipEvidence.stronger(psi, cmd))
+        assertEquals(psi, RelationshipEvidence.stronger(cmd, psi))
+        // Same source → higher confidence wins; null means "no claim".
+        val weak = RelationshipEvidence(EvidenceSource.IMPORT, 0.3f, "imports")
+        val strong = RelationshipEvidence(EvidenceSource.IMPORT, 0.9f, "imports")
+        assertEquals(strong, RelationshipEvidence.stronger(weak, strong))
+        assertEquals(cmd, RelationshipEvidence.stronger(cmd, null))
+        assertNull(RelationshipEvidence.stronger(null, null))
+    }
+
+    @Test fun strongEvidenceSurvivesEdgeReactivationWithoutNewEvidence() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/Impl.kt", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/Impl.kt", "/app/Api.kt", "Api", StructuralRelationKind.IMPLEMENTS, tick()))
+        // Re-touching the same files must not wipe the PSI provenance already on the edge.
+        g.apply(FileRead("/app/Impl.kt", tick()))
+        val edge = g.edgesTouching("file:/app/Impl.kt").first { it.type == ActivityEdgeType.IMPLEMENTS }
+        assertEquals(EvidenceSource.PSI_DECLARATION, edge.evidence!!.source)
+    }
+
+    @Test fun navigationRelationBecomesNavEdgeWithEvidence() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/res/navigation/nav_graph.xml", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/res/navigation/nav_graph.xml", "/app/HomeFragment.kt", "HomeFragment",
+            StructuralRelationKind.NAVIGATES_TO, tick()))
+        val edge = g.edgesTouching("file:/app/res/navigation/nav_graph.xml")
+            .firstOrNull { it.type == ActivityEdgeType.NAVIGATES_TO }
+        assertNotNull(edge)
+        assertEquals(EvidenceSource.PSI_REFERENCE, edge!!.evidence!!.source)
+        assertTrue(edge.evidence!!.explanation.contains("navigates to"))
+    }
+
     @Test fun testRelationAndPackageMetadata() {
         val g = freshGraph()
         g.apply(FileRead("/app/FooTest.kt", tick()))

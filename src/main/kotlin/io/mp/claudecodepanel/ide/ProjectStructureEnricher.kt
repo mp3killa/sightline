@@ -17,6 +17,7 @@ import org.jetbrains.uast.UFile
 import org.jetbrains.uast.toUElementOfType
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.FilePackage
+import io.mp.claudecodepanel.activity.NavGraphParser
 import io.mp.claudecodepanel.activity.SourceStructureParser
 import io.mp.claudecodepanel.activity.StructuralRelation
 import io.mp.claudecodepanel.activity.StructuralRelationKind
@@ -48,7 +49,7 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
      * read (`edited = false`) dedups by modification stamp so repeated reads don't re-run the read action.
      */
     fun enrich(path: String, edited: Boolean, sink: (List<AgentActivityEvent>) -> Unit) {
-        if (!isSource(path)) return
+        if (!isEnrichable(path)) return
         val vf = LocalFileSystem.getInstance().findFileByPath(path) ?: return
         if (edited) {
             enriched.remove(path)
@@ -80,9 +81,11 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
         // Read via PSI (not raw VFS bytes): works for real files and in-memory test fixtures alike, and
         // reuses the PsiFile we need for UAST anyway.
         val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return emptyList()
-        val parsed = SourceStructureParser.parse(psiFile.text, sourcePath)
         val now = Instant.now()
         val fileIndex = ProjectFileIndex.getInstance(project)
+        // Android navigation graph (res/navigation/*.xml): link each destination to its screen file.
+        if (isNavResource(sourcePath)) return computeNav(psiFile.text, sourcePath, now, fileIndex, vf)
+        val parsed = SourceStructureParser.parse(psiFile.text, sourcePath)
         val out = ArrayList<AgentActivityEvent>()
 
         parsed.packageName?.let { pkg ->
@@ -101,6 +104,27 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
             resolveUniqueType(prod, GlobalSearchScope.allScope(project), fileIndex, vf)?.let {
                 out.add(StructuralRelation(sourcePath, it.path, prod, StructuralRelationKind.TESTS, now))
             }
+        }
+        return out
+    }
+
+    /**
+     * Resolves a navigation graph's destinations (`android:name` classes) to project files, emitting a
+     * [StructuralRelationKind.NAVIGATES_TO] per unambiguously-resolved destination. The FQN is declared
+     * explicitly in the resource; we link it to the single project file of that short name (never guess
+     * when ambiguous), so a nav edge always points at a file that really exists.
+     */
+    private fun computeNav(
+        text: String, sourcePath: String, now: Instant, fileIndex: ProjectFileIndex, self: VirtualFile,
+    ): List<AgentActivityEvent> {
+        val out = ArrayList<AgentActivityEvent>()
+        var links = 0
+        for (dest in NavGraphParser.parse(text)) {
+            if (links >= MAX_LINKS) break
+            val shortName = dest.className.substringAfterLast('.')
+            val target = resolveUniqueType(shortName, GlobalSearchScope.allScope(project), fileIndex, self) ?: continue
+            out.add(StructuralRelation(sourcePath, target.path, shortName, StructuralRelationKind.NAVIGATES_TO, now))
+            links++
         }
         return out
     }
@@ -166,6 +190,12 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
     }
 
     private fun isSource(path: String): Boolean = EXTS.any { path.endsWith(".$it") }
+
+    /** An Android navigation graph resource: an XML file under `res/navigation/`. */
+    private fun isNavResource(path: String): Boolean =
+        path.endsWith(".xml") && (path.contains("/navigation/") || path.contains("\\navigation\\"))
+
+    private fun isEnrichable(path: String): Boolean = isSource(path) || isNavResource(path)
 
     private companion object {
         val EXTS = listOf("kt", "kts", "java")

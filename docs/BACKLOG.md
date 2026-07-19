@@ -45,31 +45,34 @@ Claude CLI" wording are all in place — the remaining step is actually submitti
 
 # P1 differentiators — remaining
 
+Most of the P1 tail shipped this cycle (see [../CLAUDE.md](../CLAUDE.md)): Android device / emulator /
+`logcat` diagnostics, navigation-graph enrichment (`NAVIGATES_TO`), the full evidence-provenance
+extension (`COMMAND_OUTPUT` on `PRODUCED`/`AFFECTED_BY`, rank/merge, hover tooltips), the platform-free
+`ClusterCollapser` + a "Collapse finished history" toggle, and inspector Esc. The Chat/Split/Map switch is
+already keyboard-reachable in code (`SegmentedControl` focus + arrows, `IconActionButton` = real `JButton`)
+— it only needs the live eye-pass in the release gate. What's left:
+
 ## Android command interpreter
 
-- emulator / device launch outcomes; `logcat` crash extraction.
 - `PRODUCED` correlation is sequential (best-effort); parallel `tool_use` in one turn could mis-link —
   revisit if/when the CLI emits parallel results, ideally threading the `tool_use_id` into result events.
 
 ## PSI enrichment
 
-- Android resource → referencing source; navigation destination → screen / composable.
+- Android **resource → referencing source** (the reverse lookup, via the resource/reference index — live
+  only; the forward nav-graph → destination direction already ships).
 - Lazy tiers: references/usages on select → call relationships only on explicit "Calls" / blast-radius.
 - A Kotlin `BasePlatformTestCase` (needs the Kotlin plugin on the test classpath) — Kotlin uses the same
-  UAST code path, currently only exercised live in the sandbox.
+  UAST code path, currently only exercised live in the sandbox. Java is covered (imports, hierarchy, and
+  nav-destination resolution).
 
-## Evidence provenance (extend)
+## Cluster collapsing (renderer polish)
 
-- Attach `COMMAND_OUTPUT` evidence to `PRODUCED` / `AFFECTED_BY` edges; rank / merge multiple evidences
-  per relationship; show evidence in tooltips as well as the inspector.
-
-## Cluster collapsing & inspector keyboard
-
-- Collapse: hide low-value labels → collapse historical nodes by category → aggregate repeated
-  command/test nodes → "Show more" → better Fit. (Minimap only if navigation is still hard — the panel
-  already has Fit + node caps, so it isn't the bottleneck.)
-- Esc when focus is in the inspector (not only the canvas); confirm keyboard reach for the
-  Chat/Split/Map switch live.
+- The fold logic + toggle ship and the header "X of Y" count reflects folded history. Remaining is
+  renderer polish: draw the aggregates as **clickable chips** that expand in place (`Plan.expanded`
+  already supports it) and the fuller tier progression (hide low-value labels → collapse historical by
+  category → "Show more" → better Fit). Minimap only if navigation is still hard — Fit + node caps + the
+  new fold mean it isn't the bottleneck.
 
 ---
 

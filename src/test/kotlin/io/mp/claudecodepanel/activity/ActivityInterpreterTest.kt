@@ -73,6 +73,35 @@ class ActivityInterpreterTest {
         assertTrue(res.filterIsInstance<WarningObserved>().any { it.path == "app/src/main/Foo.kt" })
     }
 
+    @Test fun adbInstallFailureBecomesError() {
+        interp.toolUse("i1", "Bash", obj("""{"command":"adb install app-debug.apk"}"""))
+        val ev = interp.toolResult(
+            "i1",
+            "adb: failed to install app-debug.apk: Failure [INSTALL_FAILED_OLDER_SDK: requires newer SDK]",
+            isError = true,
+        )
+        val err = ev.filterIsInstance<ErrorObserved>().single()
+        assertTrue(err.message.contains("INSTALL_FAILED_OLDER_SDK"))
+    }
+
+    @Test fun adbLogcatCrashBecomesError() {
+        interp.toolUse("lc1", "Bash", obj("""{"command":"adb logcat -d"}"""))
+        val log = "E AndroidRuntime: FATAL EXCEPTION: main\n" +
+            "E AndroidRuntime: Process: com.example.app, PID: 1234\n" +
+            "E AndroidRuntime: java.lang.IllegalStateException: bad state\n" +
+            "E AndroidRuntime: \tat com.example.app.Main.onCreate(Main.kt:10)"
+        val ev = interp.toolResult("lc1", log, isError = false)
+        val err = ev.filterIsInstance<ErrorObserved>().single()
+        assertTrue(err.message.contains("IllegalStateException"))
+        assertTrue(err.message.contains("com.example.app"))
+    }
+
+    @Test fun successfulAdbInstallAddsNoDiagnostic() {
+        interp.toolUse("i2", "Bash", obj("""{"command":"adb install app-debug.apk"}"""))
+        val ev = interp.toolResult("i2", "Performing Streamed Install\nSuccess", isError = false)
+        assertTrue(ev.none { it is ErrorObserved })
+    }
+
     @Test fun grepBecomesSearch() {
         val e = interp.toolUse("g", "Grep", obj("""{"pattern":"ViewModel","path":"app/src"}"""))[0] as FileSearched
         assertEquals("ViewModel", e.query)

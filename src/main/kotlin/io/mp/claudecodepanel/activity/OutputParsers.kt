@@ -171,6 +171,112 @@ object OutputParsers {
         return out.take(50)
     }
 
+    // ---- Android device / emulator / logcat ----
+
+    /** The outcome of an `adb install` (or `pm install`): success, or a failure with its reason code. */
+    data class InstallOutcome(val success: Boolean, val reason: String?)
+
+    /** A crash pulled from logcat / instrumentation output. [exceptionClass] is a fully-qualified name. */
+    data class LogcatCrash(
+        val exceptionClass: String,
+        val message: String?,
+        val process: String?,
+        val isAnr: Boolean = false,
+    ) {
+        /** A compact, human phrase for the diagnostics node — short class + message + process. */
+        fun summary(): String {
+            val where = process?.let { " in $it" } ?: ""
+            if (isAnr) return "ANR$where"
+            val shortClass = exceptionClass.substringAfterLast('.')
+            val msg = message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""
+            return "$shortClass$msg$where"
+        }
+    }
+
+    // "Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: ...]" (adb) or a bare "Failure [CODE]".
+    private val installFailure = Regex("Failure\\s*\\[([A-Z_]+)(?::\\s*([^\\]]*))?\\]")
+    // A qualified exception/error class, optionally followed by its message. At least one package
+    // segment is required so prose ("an exception happened") can never match.
+    private val qualifiedThrowable = Regex("((?:[\\w$]+\\.)+[\\w$]*(?:Exception|Error))(?::\\s*(.*))?")
+    private val processLine = Regex("Process:\\s*([\\w.]+)")
+    // A Java/Kotlin stack-trace frame: "at com.example.Foo.bar(Foo.kt:12)".
+    private val stackFrame = Regex("\\bat\\s+[\\w$.]+\\(")
+
+    /**
+     * Reads the outcome of an app install from `adb install` / `pm install` output. Null when the text
+     * is not an install result. A `Failure [CODE]` (or `adb: failed to install`) is a failure with the
+     * reason code; a lone `Success` line is success.
+     */
+    fun parseInstallOutcome(text: String): InstallOutcome? {
+        installFailure.find(text)?.let { m ->
+            val code = m.groupValues[1]
+            val extra = m.groupValues.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }
+            return InstallOutcome(false, if (extra != null) "$code: $extra" else code)
+        }
+        if (text.contains("adb: failed to install") || text.contains("INSTALL_FAILED", ignoreCase = false)) {
+            return InstallOutcome(false, "install failed")
+        }
+        if (Regex("(?m)^\\s*Success\\s*$").containsMatchIn(text)) return InstallOutcome(true, null)
+        return null
+    }
+
+    /**
+     * A device/emulator launch or command error, or null. Recognises the common `adb`/`am start`/
+     * emulator failure lines (`no devices/emulators found`, `device offline`, `Error: Activity class …`,
+     * emulator `PANIC:` / `ERROR:`), so a failed launch surfaces instead of looking like it worked.
+     */
+    fun deviceLaunchError(text: String): String? {
+        Regex("(?m)^\\s*(?:emulator:\\s*)?(?:PANIC|ERROR):\\s*(.+)$").find(text)?.let { return "Emulator: ${it.groupValues[1].trim()}" }
+        if (Regex("error:\\s*no devices?/emulators? found", RegexOption.IGNORE_CASE).containsMatchIn(text)) return "No device or emulator connected"
+        if (Regex("error:\\s*device\\s+(?:'[^']*'\\s+)?offline", RegexOption.IGNORE_CASE).containsMatchIn(text)) return "Device offline"
+        if (Regex("error:\\s*more than one device", RegexOption.IGNORE_CASE).containsMatchIn(text)) return "More than one device/emulator"
+        Regex("Error:\\s*Activity class \\{([^}]*)\\} does not exist").find(text)?.let { return "Activity not found: ${it.groupValues[1]}" }
+        return null
+    }
+
+    /**
+     * Extracts app crashes (`FATAL EXCEPTION`) and ANRs from logcat / instrumentation output. Very
+     * conservative: an entry is only produced for an explicit `FATAL EXCEPTION` block (with a qualified
+     * throwable) or an `ANR in <pkg>` line — never inferred from prose or ordinary stack traces.
+     */
+    fun parseLogcatCrashes(text: String): List<LogcatCrash> {
+        val lines = text.split('\n')
+        val out = ArrayList<LogcatCrash>()
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            when {
+                line.contains("FATAL EXCEPTION") -> {
+                    var process: String? = null
+                    var crash: LogcatCrash? = null
+                    val limit = minOf(lines.size, i + 8)
+                    var j = i + 1
+                    while (j < limit) {
+                        val l = lines[j]
+                        processLine.find(l)?.let { process = it.groupValues[1] }
+                        if (crash == null) {
+                            qualifiedThrowable.find(l)?.let { m ->
+                                crash = LogcatCrash(m.groupValues[1], m.groupValues.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }, null)
+                            }
+                        }
+                        // stop once we've seen the exception and reached the first stack-trace frame
+                        if (crash != null && stackFrame.containsMatchIn(l)) break
+                        j++
+                    }
+                    crash?.let { out.add(it.copy(process = process)) }
+                    i = j + 1
+                }
+                line.contains("ANR in ") -> {
+                    val proc = Regex("ANR in ([\\w.]+)").find(line)?.groupValues?.get(1)
+                    out.add(LogcatCrash("ANR", null, proc, isAnr = true))
+                    i++
+                }
+                else -> i++
+            }
+        }
+        return out.distinctBy { it.exceptionClass + "|" + (it.process ?: "") + "|" + (it.message ?: "") }.take(20)
+    }
+
     /**
      * Diagnostics from static-analysis tools (detekt / ktlint / Android lint), which print
      * `path:line[:col]: message` — often without a severity keyword. Conservative: only lines whose

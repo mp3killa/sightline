@@ -116,4 +116,58 @@ class OutputParsersTest {
     @Test fun analysisParserIgnoresProse() {
         assertTrue(OutputParsers.parseAnalysisDiagnostics("Running detekt on the project now, 3:15 remaining").isEmpty())
     }
+
+    // ---- Android device / emulator / logcat ----
+
+    @Test fun parsesInstallSuccessAndFailure() {
+        assertEquals(true, OutputParsers.parseInstallOutcome("Performing Streamed Install\nSuccess")!!.success)
+        val fail = OutputParsers.parseInstallOutcome(
+            "adb: failed to install app.apk: Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: not enough space]",
+        )!!
+        assertFalse(fail.success)
+        assertTrue(fail.reason!!.contains("INSTALL_FAILED_INSUFFICIENT_STORAGE"))
+        assertNull(OutputParsers.parseInstallOutcome("just some unrelated output"))
+    }
+
+    @Test fun detectsDeviceAndEmulatorLaunchErrors() {
+        assertEquals("No device or emulator connected", OutputParsers.deviceLaunchError("error: no devices/emulators found"))
+        assertEquals("Device offline", OutputParsers.deviceLaunchError("error: device offline"))
+        assertTrue(OutputParsers.deviceLaunchError("PANIC: Cannot find AVD system path")!!.startsWith("Emulator:"))
+        assertTrue(OutputParsers.deviceLaunchError("Error: Activity class {com.x/.Main} does not exist.")!!.contains("com.x/.Main"))
+        assertNull(OutputParsers.deviceLaunchError("Starting: Intent { act=android.intent.action.MAIN }"))
+    }
+
+    @Test fun extractsFatalExceptionFromLogcat() {
+        val log = """
+            2026-07-19 10:00:00.000  1234  1234 E AndroidRuntime: FATAL EXCEPTION: main
+            2026-07-19 10:00:00.000  1234  1234 E AndroidRuntime: Process: com.example.app, PID: 1234
+            2026-07-19 10:00:00.000  1234  1234 E AndroidRuntime: java.lang.NullPointerException: Attempt to read from null array
+            2026-07-19 10:00:00.000  1234  1234 E AndroidRuntime: 	at com.example.app.MainActivity.onCreate(MainActivity.kt:42)
+        """.trimIndent()
+        val crashes = OutputParsers.parseLogcatCrashes(log)
+        assertEquals(1, crashes.size)
+        assertEquals("java.lang.NullPointerException", crashes[0].exceptionClass)
+        assertEquals("com.example.app", crashes[0].process)
+        assertTrue(crashes[0].summary().startsWith("NullPointerException"))
+        assertTrue(crashes[0].summary().contains("com.example.app"))
+    }
+
+    @Test fun extractsAnrFromLogcat() {
+        val crashes = OutputParsers.parseLogcatCrashes("E ActivityManager: ANR in com.example.app (com.example.app/.MainActivity)")
+        assertEquals(1, crashes.size)
+        assertTrue(crashes[0].isAnr)
+        assertEquals("com.example.app", crashes[0].process)
+        assertEquals("ANR in com.example.app", crashes[0].summary())
+    }
+
+    @Test fun logcatCrashParserIgnoresOrdinaryStackTracesAndProse() {
+        // A stack frame with no FATAL EXCEPTION header must not fabricate a crash.
+        assertTrue(OutputParsers.parseLogcatCrashes("\tat com.example.app.Foo.bar(Foo.kt:10)").isEmpty())
+        assertTrue(OutputParsers.parseLogcatCrashes("The app threw an exception earlier today").isEmpty())
+    }
+
+    @Test fun deduplicatesRepeatedCrashes() {
+        val block = "E AndroidRuntime: FATAL EXCEPTION: main\nE AndroidRuntime: Process: com.x, PID: 1\nE AndroidRuntime: java.lang.IllegalStateException: boom\nE AndroidRuntime: \tat com.x.A.b(A.kt:1)\n"
+        assertEquals(1, OutputParsers.parseLogcatCrashes(block + block).size)
+    }
 }

@@ -188,7 +188,7 @@ class ActivityGraph(
             if (e.failed > 0) ActivityNodeState.FAILED else ActivityNodeState.PASSED,
             if (e.failed > 0) "Tests failed" else "Tests passed", now)
         nodesMap[suiteId]?.let { nodesMap[suiteId] = it.copy(subtitle = "${e.passed} passed · ${e.failed} failed") }
-        linkProduced(suiteId, now)
+        linkProduced(suiteId, now, "test results (${e.passed} passed · ${e.failed} failed)")
         val cat = ensureCategory(ActivityCategory.TESTING, now)
         for (fname in e.failedNames.take(20)) {
             val id = "test:${hash(fname)}"
@@ -208,7 +208,7 @@ class ActivityGraph(
             category = ActivityCategory.GRADLE_BUILD, confidence = 1f, now = now, subtitle = e.summary)
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.5f)
         setFocus(if (e.success) "Build succeeded" else "Build failed", "build", e.summary, id, now)
-        linkProduced(id, now)
+        linkProduced(id, now, if (e.success) "a successful build" else "a build failure")
         return id
     }
 
@@ -220,10 +220,11 @@ class ActivityGraph(
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.5f)
         e.path?.let { p ->
             val fileId = "file:${ActivityClassifier.normalizePath(p)}"
-            if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.7f)
+            if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.7f,
+                evidence = affectedEvidence(p, e.message, e.confidence))
         }
         setFocus("Error", trim(e.message, 44), e.path, id, now)
-        linkProduced(id, now)
+        linkProduced(id, now, "an error")
         return id
     }
 
@@ -235,12 +236,20 @@ class ActivityGraph(
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.4f)
         e.path?.let { p ->
             val fileId = "file:${ActivityClassifier.normalizePath(p)}"
-            if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.5f)
+            if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.5f,
+                evidence = affectedEvidence(p, e.message, e.confidence))
         }
         setFocus("Warning", trim(e.message, 44), e.path, id, now)
-        linkProduced(id, now)
+        linkProduced(id, now, "a warning")
         return id
     }
+
+    /** Provenance for an error/warning → file link: the diagnostic text reported against that file. */
+    private fun affectedEvidence(path: String, message: String, confidence: Float): RelationshipEvidence =
+        RelationshipEvidence(
+            EvidenceSource.COMMAND_OUTPUT, confidence,
+            explanation = "${ActivityClassifier.basename(path)}: ${trim(message, 44)}", sourcePath = path,
+        )
 
     private fun webNode(e: WebActivity, now: Instant): String {
         val id = "web:${hash(e.label)}"
@@ -283,11 +292,21 @@ class ActivityGraph(
         return id
     }
 
-    /** Links the command/gradle/test node that just ran to a result node it produced. */
-    private fun linkProduced(resultId: String, now: Instant) {
+    /**
+     * Links the command/gradle/test node that just ran to a result node it produced, tagging the edge
+     * with [EvidenceSource.COMMAND_OUTPUT] provenance ("<command> produced <what>") so the inspector can
+     * say why the two are connected instead of asserting it bare.
+     */
+    private fun linkProduced(resultId: String, now: Instant, what: String) {
         val src = lastCommandNodeId ?: return
         if (src == resultId || !nodesMap.containsKey(src)) return
-        edge(src, resultId, ActivityEdgeType.PRODUCED, now, weight = 0.5f)
+        val cmd = nodesMap[src]
+        val label = cmd?.subtitle?.takeIf { it.isNotBlank() } ?: cmd?.label ?: "command"
+        val ev = RelationshipEvidence(
+            EvidenceSource.COMMAND_OUTPUT, confidence = 0.9f,
+            explanation = "${trim(label, 40)} produced $what", sourcePath = cmd?.path,
+        )
+        edge(src, resultId, ActivityEdgeType.PRODUCED, now, weight = 0.5f, evidence = ev)
     }
 
     /**
@@ -305,6 +324,7 @@ class ActivityGraph(
             StructuralRelationKind.TESTS -> ActivityEdgeType.TESTS
             StructuralRelationKind.EXTENDS -> ActivityEdgeType.EXTENDS
             StructuralRelationKind.IMPLEMENTS -> ActivityEdgeType.IMPLEMENTS
+            StructuralRelationKind.NAVIGATES_TO -> ActivityEdgeType.NAVIGATES_TO
         }
         edge(srcId, tgtId, type, now, weight = 0.4f, bump = false, evidence = structuralEvidence(e))
     }
@@ -317,6 +337,8 @@ class ActivityGraph(
             StructuralRelationKind.EXTENDS -> EvidenceSource.PSI_DECLARATION to "extends"
             StructuralRelationKind.IMPLEMENTS -> EvidenceSource.PSI_DECLARATION to "implements"
             StructuralRelationKind.TESTS -> EvidenceSource.NAMING_HEURISTIC to "tests"
+            // The nav graph explicitly declares the destination class (android:name), resolved to a file.
+            StructuralRelationKind.NAVIGATES_TO -> EvidenceSource.PSI_REFERENCE to "navigates to"
         }
         return RelationshipEvidence(source, e.confidence, "$symbol $verb ${e.targetLabel}", e.sourcePath, symbol)
     }
@@ -417,7 +439,9 @@ class ActivityGraph(
             existing.copy(
                 weight = if (bump) minOf(4f, existing.weight + 0.15f) else existing.weight,
                 lastActivatedAt = now,
-                evidence = evidence ?: existing.evidence,
+                // Multiple observations can justify the same edge; keep the strongest so the inspector
+                // shows the most authoritative "why" (a PSI/import fact outranks command-output inference).
+                evidence = RelationshipEvidence.stronger(existing.evidence, evidence),
             )
         }
     }

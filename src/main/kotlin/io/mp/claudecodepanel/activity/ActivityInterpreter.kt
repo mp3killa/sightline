@@ -111,6 +111,19 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
             }
         }
 
+        // Android device commands (adb / emulator): install failures, launch errors and app crashes
+        // surface as diagnostics. Crash/error parsing is conservative (needs an explicit FATAL/ANR/
+        // Failure marker), so a plain successful install or logcat dump adds nothing.
+        if (p != null && p.kind == Kind.BASH && p.command != null && OutputParsers.adbAction(p.command) != null) {
+            if (OutputParsers.adbAction(p.command).let { it == "install" || it == "install-multiple" }) {
+                OutputParsers.parseInstallOutcome(text)?.takeIf { !it.success }?.let {
+                    out.add(ErrorObserved(null, "Install failed: ${it.reason ?: "unknown"}", now))
+                }
+            }
+            OutputParsers.deviceLaunchError(text)?.let { out.add(ErrorObserved(null, it, now)) }
+            for (crash in OutputParsers.parseLogcatCrashes(text)) out.add(ErrorObserved(null, crash.summary(), now))
+        }
+
         // Static-analysis output (lint/detekt/ktlint): attach findings to the files they name.
         if (p != null && p.kind == Kind.ANALYSIS) {
             for (d in OutputParsers.parseAnalysisDiagnostics(text)) {
