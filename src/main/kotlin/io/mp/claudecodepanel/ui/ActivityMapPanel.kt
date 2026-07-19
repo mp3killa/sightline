@@ -42,18 +42,22 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.RenderingHints
+import java.awt.event.ActionEvent
 import java.awt.event.HierarchyEvent
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.time.Duration
 import java.time.Instant
 import java.util.Locale
+import javax.swing.AbstractAction
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
 import javax.swing.JComponent
+import javax.swing.KeyStroke
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListCellRenderer
@@ -386,6 +390,18 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         canvas.repaint()
     }
 
+    /** Keyboard selection: step through visible, selectable nodes in a stable order and centre on them. */
+    private fun cycleSelection(dir: Int) {
+        val ordered = graph.nodes
+            .filter { !it.hidden && it.type != ActivityNodeType.CATEGORY }
+            .sortedBy { it.firstSeenAt }
+        if (ordered.isEmpty()) return
+        val idx = ordered.indexOfFirst { it.id == selectedId }
+        val next = if (idx < 0) 0 else (((idx + dir) % ordered.size) + ordered.size) % ordered.size
+        selectNode(ordered[next].id, center = true)
+        canvas.requestFocusInWindow()
+    }
+
     /** Places the inspector: side drawer (medium/wide) or full replacement (narrow). */
     private fun updateLayout() {
         val hasSelection = selectedId?.let { graph.node(it) } != null
@@ -602,8 +618,12 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         init {
             isOpaque = true
             background = canvasBg()
+            isFocusable = true
+            getAccessibleContext()?.accessibleName = A11yNames.ACTIVITY_GRAPH
+            installKeyboardNav()
             val mouse = object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) {
+                    requestFocusInWindow()
                     lastDrag = e.point
                     val hit = hitTest(e.point)
                     if (hit != null) { draggedId = hit; dragging = true; selectNode(hit) }
@@ -639,6 +659,23 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             }
             addMouseListener(mouse); addMouseMotionListener(mouse); addMouseWheelListener(mouse)
             ToolTipManager.sharedInstance().registerComponent(this)
+        }
+
+        /**
+         * Keyboard access (a11y): Tab focuses the canvas, then arrows move the selection, Enter opens the
+         * selected file, Esc clears it. No delete binding — selection is non-destructive.
+         */
+        private fun installKeyboardNav() {
+            val im = getInputMap(JComponent.WHEN_FOCUSED)
+            val am = actionMap
+            fun bind(name: String, keys: List<KeyStroke>, run: () -> Unit) {
+                keys.forEach { im.put(it, name) }
+                am.put(name, object : AbstractAction() { override fun actionPerformed(e: ActionEvent) { run() } })
+            }
+            bind("nav.next", listOf(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0))) { cycleSelection(1) }
+            bind("nav.prev", listOf(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0))) { cycleSelection(-1) }
+            bind("nav.open", listOf(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0))) { selectedId?.let { openNode(graph.node(it)) } }
+            bind("nav.clear", listOf(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0))) { selectNode(null) }
         }
 
         override fun getToolTipText(event: MouseEvent): String? {

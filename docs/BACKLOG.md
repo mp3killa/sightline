@@ -211,11 +211,16 @@ edges; rank/merge multiple evidences per relationship; show evidence in tooltips
 
 ## 9. Cluster collapsing & basic keyboard access
 
-- Collapse: hide low-value labels → collapse historical nodes by category → aggregate repeated
-  command/test nodes → "Show more" → better Fit. (Minimap only if navigation is still hard — the panel
-  already has Fit + node caps, so it isn't the bottleneck.)
-- Keyboard (pre-public): Tab into graph, Esc closes inspector, Enter opens selected file, no accidental
-  delete, keyboard access to Chat/Activity switch and approval actions.
+**Done (keyboard access):** the graph canvas is focusable (`A11yNames.ACTIVITY_GRAPH`) — Tab focuses it,
+arrows step the selection through visible nodes (stable order, centres on each), Enter opens the selected
+file, Esc clears the selection/inspector. No delete binding (selection is non-destructive). Approval and
+AskUserQuestion controls are already real focusable buttons/radios/checkboxes.
+
+**Remaining (cluster collapsing — benefits from live visual iteration):** hide low-value labels → collapse
+historical nodes by category → aggregate repeated command/test nodes → "Show more" → better Fit. (Minimap
+only if navigation is still hard — the panel already has Fit + node caps, so it isn't the bottleneck.)
+Also: Esc when focus is in the inspector (not only the canvas); keyboard reach for the Chat/Split/Map
+switch confirmed live.
 
 ---
 

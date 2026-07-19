@@ -23,4 +23,5 @@ object A11yNames {
     const val WORKSPACE_CHAT = "sightline.workspace.chat"
     const val WORKSPACE_ACTIVITY = "sightline.workspace.activity"
     const val TOOL_WINDOW_ROOT = "sightline.toolWindow.root"
+    const val ACTIVITY_GRAPH = "sightline.activity.graph"
 }
