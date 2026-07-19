@@ -22,14 +22,43 @@ class BuildReportScanner {
         if (files.isEmpty()) return emptyList()
 
         val summaries = ArrayList<OutputParsers.TestSummary>()
+        val toParse = preferXmlOverSarif(files)
         val diagnostics = ArrayList<OutputParsers.Diagnostic>()
-        for (f in files) {
+        for (f in toParse) {
             val text = readTextBounded(f) ?: continue
             val res = ReportParsers.parseReportFile(f.name, text)
             res.tests?.let { summaries.add(it) }
             diagnostics.addAll(res.diagnostics)
         }
-        return buildEvents(summaries, diagnostics, now)
+        return buildEvents(root, summaries, diagnostics, now)
+    }
+
+    /**
+     * A tool that emits the same report as both XML and SARIF (Android lint writes
+     * `lint-results-debug.xml` and `lint-results-debug.sarif`) would otherwise be read twice — and the
+     * two formats disagree on line numbers, so dedup can't collapse them. Drop the SARIF when an
+     * identically-named XML sibling exists; keep SARIF only where it's the sole format.
+     */
+    private fun preferXmlOverSarif(files: List<File>): List<File> {
+        val xmlKeys = files.asSequence()
+            .filter { it.name.endsWith(".xml", ignoreCase = true) }
+            .map { it.parent + "/" + it.nameWithoutExtension }
+            .toHashSet()
+        return files.filter { f ->
+            !(f.name.endsWith(".sarif", ignoreCase = true) && (f.parent + "/" + f.nameWithoutExtension) in xmlKeys)
+        }
+    }
+
+    /**
+     * Resolves a report-relative path to an absolute one against the project root (absolute paths are
+     * kept). Real tools disagree: Android lint's XML uses project-relative paths while its SARIF uses
+     * absolute ones — normalising both lets the same finding dedup and attach to the same file node.
+     */
+    private fun normalizePath(root: File, raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val f = File(raw)
+        val abs = if (f.isAbsolute) f else File(root, raw)
+        return try { abs.canonicalPath } catch (e: Exception) { abs.path }
     }
 
     /** Only worth scanning after a Gradle / test / static-analysis command. */
@@ -38,6 +67,7 @@ class BuildReportScanner {
             OutputParsers.analysisTool(command) != null
 
     private fun buildEvents(
+        root: File,
         summaries: List<OutputParsers.TestSummary>,
         diagnostics: List<OutputParsers.Diagnostic>,
         now: Instant,
@@ -49,10 +79,13 @@ class BuildReportScanner {
             val names = summaries.flatMap { it.failedNames }.distinct().take(50)
             if (passed > 0 || failed > 0) out.add(TestReported(passed, failed, names, now))
         }
+        // Normalise paths first, so the same finding emitted in two report formats (lint's relative XML
+        // + absolute SARIF) collapses to one event and attaches to the same file node.
         val seen = HashSet<String>()
         for (d in diagnostics) {
-            if (!seen.add("${d.path}|${d.line}|${d.message}")) continue
-            out.add(if (d.isError) ErrorObserved(d.path, d.message, now) else WarningObserved(d.path, d.message, now))
+            val path = normalizePath(root, d.path)
+            if (!seen.add("$path|${d.line}|${d.message}")) continue
+            out.add(if (d.isError) ErrorObserved(path, d.message, now) else WarningObserved(path, d.message, now))
             if (out.size >= MAX_EVENTS) break
         }
         return out

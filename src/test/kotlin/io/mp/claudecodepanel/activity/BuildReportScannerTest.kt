@@ -45,7 +45,9 @@ class BuildReportScannerTest {
         val test = events.filterIsInstance<TestReported>().single()
         assertEquals(1, test.passed)
         assertEquals(1, test.failed)
-        assertTrue(events.filterIsInstance<WarningObserved>().any { it.path == "app/src/main/Foo.kt" })
+        // Paths are normalised to absolute so a finding attaches to the same node an edit would create.
+        val expected = File(root, "app/src/main/Foo.kt").canonicalPath
+        assertTrue(events.filterIsInstance<WarningObserved>().any { it.path == expected })
     }
 
     @Test fun ignoresStaleReportsFromEarlierRuns() {
@@ -62,6 +64,27 @@ class BuildReportScannerTest {
         write("app/build/test-results/test/TEST-Foo.xml", """<testsuite tests="1" failures="0" errors="0" skipped="0"/>""")
         assertTrue(scanner.scan(root, "ls -la", System.currentTimeMillis() - 5000, now).isEmpty())
         assertTrue(scanner.scan(root, "git status", System.currentTimeMillis() - 5000, now).isEmpty())
+    }
+
+    @Test fun prefersXmlOverSiblingSarifAndNormalisesPaths() {
+        // Android lint writes the same run as lint-results-debug.{xml,sarif}; the XML uses a
+        // project-relative path, the SARIF an absolute one and a different line — reading both would
+        // double-report. Verified against real lint output: the SARIF sibling is dropped, the
+        // relative path is resolved to absolute so the finding attaches to one file node.
+        write(
+            "app/build/reports/lint-results-debug.xml",
+            """<issues><issue severity="Warning" message="Redundant label">
+                 <location file="app/src/main/AndroidManifest.xml" line="5"/></issue></issues>""",
+        )
+        write(
+            "app/build/reports/lint-results-debug.sarif",
+            """{"runs":[{"results":[{"level":"warning","message":{"text":"Redundant label"},
+               "locations":[{"physicalLocation":{"artifactLocation":{"uri":"/abs/AndroidManifest.xml"},"region":{"startLine":9}}}]}]}]}""",
+        )
+        val events = scanner.scan(root, "./gradlew lintDebug", System.currentTimeMillis() - 5000, now)
+        val warns = events.filterIsInstance<WarningObserved>()
+        assertEquals(1, warns.size)
+        assertEquals(File(root, "app/src/main/AndroidManifest.xml").canonicalPath, warns[0].path)
     }
 
     @Test fun ignoresNonReportFilesAndPrunedDirs() {

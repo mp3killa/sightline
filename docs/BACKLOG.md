@@ -141,13 +141,17 @@ bounded walk of `build/test-results` + `build/reports`, only files newer than th
 pooled thread and feeds `TestReported`/`ErrorObserved`/`WarningObserved` — richer and more reliable
 than console scraping. All unit-tested (temp-dir fixtures, stale-file + prune cases).
 
+Live-verified against real Gradle output (Android lint XML + SARIF, JUnit XML) — which surfaced and
+fixed two real-world issues fixtures missed: lint emits the **same run as both XML and SARIF** (prefer
+the XML sibling), and the two formats disagree on paths (relative vs absolute) and line numbers, so
+report paths are now **normalised to absolute** before dedup — a finding attaches to the same file node
+an edit created.
+
 **Remaining:**
 - Task exit-status correlation (map non-zero exit → build failure even without a parseable summary).
 - emulator/device launch outcomes; `logcat` crash extraction.
 - `PRODUCED` correlation is sequential (best-effort); parallel tool_use in one turn could mis-link —
   revisit if/when the CLI emits parallel results, ideally threading the tool_use_id into result events.
-- Report paths are used as reported (relative vs absolute) — normalise against content roots so a
-  finding always attaches to the same file node an edit created.
 
 ## 7. PSI Phase 2a — cheap, reliable relationships only
 
