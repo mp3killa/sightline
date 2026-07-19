@@ -42,6 +42,12 @@ dependencies {
         // for precise class-hierarchy (extends/implements) resolution across Kotlin & Java via UAST.
         // Always present in Android Studio; the plugin declares <depends>com.intellij.modules.java</depends>.
         bundledPlugin("com.intellij.java")
+
+        // The Kotlin plugin puts the Kotlin UAST provider on the classpath so the enricher's Kotlin path
+        // is covered by a BasePlatformTestCase (Kotlin uses the same UAST code as Java). The main plugin
+        // does NOT declare a runtime <depends> on it — it only calls language-neutral UAST — so this is
+        // effectively test-scoped. Always bundled in Android Studio / IntelliJ IDEA.
+        bundledPlugin("org.jetbrains.kotlin")
     }
 
     // Bundled into the plugin: used to parse the CLI's streaming-JSON events.
