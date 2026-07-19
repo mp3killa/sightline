@@ -16,7 +16,8 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | File | Role |
 |---|---|
 | `ClaudeToolWindowFactory.kt` | Registers the right-dock "Claude" tool window |
-| `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering. Feeds every observable tool/stream event into the activity map. |
+| `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering. Feeds every observable tool/stream event into the activity map. Assistant text renders through `ui/markdown/` (below). Auto-scroll follows the bottom only while the user is near it (`ScrollFollow`); scrolling up pauses following. |
+| `ui/markdown/*.kt` | Platform-free, unit-tested **Markdown rendering** for assistant messages: `MarkdownModel` (block/inline model), `MarkdownDocParser` (adapter over the platform-bundled `org.intellij.markdown` GFM parser → model; no added dependency; graceful plain-text fallback; explicit `> [!WARNING]` callouts, never inferred), `FileRefDetector` (conservative file-reference detection + a pure `linkify` transform gated by an injected resolver — never guesses). `BlockRenderer` is the thin Swing half: theme-aware components for headings/paragraphs/lists (incl. task lists)/GFM tables/fenced code (Copy + h-scroll)/quotes/callouts, with inline bold/italic/strikethrough/code/links. Replaces the old regex renderer. |
 | `ui/ActivityMapPanel.kt` | The **Agent Activity Map**: force-directed Swing graph, current-focus card, node details (open/reveal/pin/hide), timeline, filter combo, legend, and pause/reduce-motion/fit/clear controls. Renders only; theme-aware colours. |
 | `activity/*.kt` | Platform-free, unit-tested core of the map: `AgentActivityEvent` (normalised event model), `ActivityModel` (graph data model — node/edge/category/state/timeline types; `RelationshipEvidence.stronger` ranks/merges evidence), `ActivityInterpreter` (raw tool events → normalised events), `ActivityGraph` (reducer → nodes/edges/clusters/focus/timeline), `ActivityClassifier` (path → cluster), `OutputParsers` (Gradle/compiler/test + adb/lint/detekt/ktlint **console** output, plus Android **device** signals — `adb install` outcome, emulator/device launch errors, and `logcat` crash/ANR extraction), `NavGraphParser` (Android nav-graph destinations → `NAVIGATES_TO`), `ClusterCollapser` (fold repeated finished command/test/gradle history into per-cluster aggregates), `ReportParsers` + `BuildReportScanner` (**structured report files** — JUnit/detekt/ktlint/lint XML + SARIF, read off-EDT after a build/test command), `SourceStructureParser` (package/type-imports/test-target from source text), `ActivityColorRole` (state → theme role), `ActivityMapRenderer` (headless PNG preview). The graph links a command/gradle/test node to the results it produced (`PRODUCED` edge, tagged with `COMMAND_OUTPUT` evidence) and touched files to imported/tested/navigated project files (`IMPORTS`/`TESTS`/`EXTENDS`/`IMPLEMENTS`/`NAVIGATES_TO` edges); error/warning→file (`AFFECTED_BY`) edges also carry `COMMAND_OUTPUT` evidence. Structural edges carry `RelationshipEvidence` (`EvidenceSource` + human explanation) so the inspector **and hover tooltip** show **why** a relationship exists. |
 | `process/ClaudeSession.kt` | Owns one persistent `claude -p` process; stdin/stdout stream-json plumbing; control-protocol responses; `--mcp-config` wiring |
@@ -53,8 +54,12 @@ using plain `java.awt` (no platform deps), so the map can be eyeballed without l
 animated, so the preview is representative, not pixel-identical.)
 
 The transcript is a `Scrollable` `JPanel` (BoxLayout Y) of block components. Each assistant turn is
-an `AssistantTurn` holding `TextBlock` (streamed markdown), `ThinkingBlock` (collapsible),
-`ToolCard` (collapsible, icon + summary + diff/result), `ApprovalBlock`, and `AskUserQuestionBlock`.
+an `AssistantTurn` holding `TextBlock`, `ThinkingBlock` (collapsible),
+`ToolCard` (collapsible, icon + summary + diff/result), `ApprovalBlock`, `AskUserQuestionBlock`, and a
+subtle run-metadata **footer** (`Completed · 51.6s · 13 turns · $0.404` via `CompletionSummary`; this is
+where cost/duration/turns live — never the status strip, which shows only concise session state).
+`TextBlock` streams plain text token-by-token and, at `content_block_stop`, swaps to the
+`ui/markdown/` component tree (falling back to plain text on any parse/render failure).
 "Details" toggle hides thinking/tool cards (compact mode); approval **and question** blocks always stay
 visible (they block the turn). User turns are rounded `Bubble`s.
 
