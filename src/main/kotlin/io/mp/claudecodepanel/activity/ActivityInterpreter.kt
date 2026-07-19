@@ -84,7 +84,24 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
             "TodoWrite" -> out.add(StatusUpdated("Planning", todoSummary(inp), now, confidence = 0.6f))
             else -> interpretMcp(id, name, inp, now, out, ::remember)
         }
-        return out
+        return out.map { stampProducer(it, id) }
+    }
+
+    /**
+     * Stamps the originating tool_use [id] onto command/result events so the graph can correlate a
+     * result to the *exact* command that produced it, even when tool calls interleave — instead of
+     * assuming the most recent command. A no-op for events that carry no correlation.
+     */
+    private fun stampProducer(e: AgentActivityEvent, id: String?): AgentActivityEvent = when {
+        id == null -> e
+        e is CommandRun && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is GradleTaskRun && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is TestStarted && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is TestReported && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is BuildReported && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is ErrorObserved && e.toolUseId == null -> e.copy(toolUseId = id)
+        e is WarningObserved && e.toolUseId == null -> e.copy(toolUseId = id)
+        else -> e
     }
 
     /** A tool_result block, correlated to its tool_use by [id]. Parses command output. */
@@ -141,7 +158,7 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
                 out.any { it is TestReported && it.failed > 0 }
             if (!alreadyRepresented) out.add(ErrorObserved(p?.path, firstLine(text), now))
         }
-        return out
+        return out.map { stampProducer(it, id) }
     }
 
     // ---- helpers ----

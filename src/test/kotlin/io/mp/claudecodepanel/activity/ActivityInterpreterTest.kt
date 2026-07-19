@@ -102,6 +102,13 @@ class ActivityInterpreterTest {
         assertTrue(ev.none { it is ErrorObserved })
     }
 
+    @Test fun commandAndResultCarryToolUseIdForCorrelation() {
+        val use = interp.toolUse("tb", "Bash", obj("""{"command":"./gradlew assembleDebug"}"""))
+        assertEquals("tb", use.filterIsInstance<GradleTaskRun>().single().toolUseId)
+        val res = interp.toolResult("tb", "BUILD SUCCESSFUL in 3s", isError = false)
+        assertEquals("tb", res.filterIsInstance<BuildReported>().single().toolUseId)
+    }
+
     @Test fun grepBecomesSearch() {
         val e = interp.toolUse("g", "Grep", obj("""{"pattern":"ViewModel","path":"app/src"}"""))[0] as FileSearched
         assertEquals("ViewModel", e.query)

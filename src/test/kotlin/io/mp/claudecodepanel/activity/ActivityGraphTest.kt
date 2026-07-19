@@ -139,6 +139,33 @@ class ActivityGraphTest {
         })
     }
 
+    @Test fun producedLinksExactProducerAcrossInterleavedCommands() {
+        val g = freshGraph()
+        g.apply(GradleTaskRun("assembleDebug", tick(), toolUseId = "toolu_A"))
+        g.apply(CommandRun("./gradlew lint", "lint", tick(), toolUseId = "toolu_B"))
+        // A's build result arrives AFTER command B started — it must credit A's node, not the latest command.
+        g.apply(BuildReported(success = true, summary = "BUILD SUCCESSFUL", at = tick(), toolUseId = "toolu_A"))
+        assertTrue(g.edges.any {
+            it.sourceNodeId == "gradle:assembleDebug" && it.targetNodeId == "gradle:build" &&
+                it.type == ActivityEdgeType.PRODUCED
+        })
+        val cmdB = g.nodes.first { it.type == ActivityNodeType.COMMAND }.id
+        assertFalse(g.edges.any {
+            it.sourceNodeId == cmdB && it.targetNodeId == "gradle:build" && it.type == ActivityEdgeType.PRODUCED
+        })
+    }
+
+    @Test fun producedFallsBackToSequentialWhenNoToolUseId() {
+        // Without a correlation id, the most-recent command is credited (the prior sequential behaviour).
+        val g = freshGraph()
+        g.apply(GradleTaskRun("assembleDebug", tick()))
+        g.apply(BuildReported(success = true, summary = "BUILD SUCCESSFUL", at = tick()))
+        assertTrue(g.edges.any {
+            it.sourceNodeId == "gradle:assembleDebug" && it.targetNodeId == "gradle:build" &&
+                it.type == ActivityEdgeType.PRODUCED
+        })
+    }
+
     @Test fun structuralImportLinksTouchedFileToResolvedTarget() {
         val g = freshGraph()
         g.apply(FileEdited("/app/ui/LoginViewModel.kt", created = false, at = tick()))

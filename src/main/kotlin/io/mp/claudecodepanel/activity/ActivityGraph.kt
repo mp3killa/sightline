@@ -29,6 +29,10 @@ class ActivityGraph(
     // it (command → PRODUCED → result). Only command-type events update this, so interleaved reads
     // don't disturb the correlation; the sequential tool model keeps it accurate in the common case.
     private var lastCommandNodeId: String? = null
+    // tool_use_id → the command/gradle/test node it created. A result carrying the same id links to the
+    // exact producer even when tool calls interleave (parallel-safe); absent id falls back to sequential.
+    // Bounded (oldest evicted) and cleared with the session.
+    private val producerByToolUse = LinkedHashMap<String, String>()
     var focus: Focus = Focus("Idle", "Agent active", "Waiting for contextual activity…", null, clock())
         private set
 
@@ -40,12 +44,14 @@ class ActivityGraph(
     companion object {
         const val TASK_ID = "task:root"
         const val PATCH_ID = "patch:session"
+        private const val MAX_PRODUCERS = 500
     }
 
     fun clear() {
         nodesMap.clear(); edgesMap.clear(); timelineList.clear()
         lastFocusNodeId = null
         lastCommandNodeId = null
+        producerByToolUse.clear()
         focus = Focus("Idle", "Agent active", "Waiting for contextual activity…", null, clock())
     }
 
@@ -96,9 +102,9 @@ class ActivityGraph(
             }
             is FileSearched -> searchNode(event, now)
             is SymbolInspected -> symbolNode(event, now)
-            is CommandRun -> commandNode(event, now).also { lastCommandNodeId = it }
-            is GradleTaskRun -> gradleNode(event.task, now, event.confidence).also { lastCommandNodeId = it }
-            is TestStarted -> testSuiteNode(event.target, ActivityNodeState.TESTING, "Testing", now).also { lastCommandNodeId = it }
+            is CommandRun -> commandNode(event, now).also { markProducer(it, event.toolUseId) }
+            is GradleTaskRun -> gradleNode(event.task, now, event.confidence).also { markProducer(it, event.toolUseId) }
+            is TestStarted -> testSuiteNode(event.target, ActivityNodeState.TESTING, "Testing", now).also { markProducer(it, event.toolUseId) }
             is TestReported -> testReport(event, now)
             is BuildReported -> buildNode(event, now)
             is ErrorObserved -> errorNode(event, now)
@@ -188,7 +194,7 @@ class ActivityGraph(
             if (e.failed > 0) ActivityNodeState.FAILED else ActivityNodeState.PASSED,
             if (e.failed > 0) "Tests failed" else "Tests passed", now)
         nodesMap[suiteId]?.let { nodesMap[suiteId] = it.copy(subtitle = "${e.passed} passed · ${e.failed} failed") }
-        linkProduced(suiteId, now, "test results (${e.passed} passed · ${e.failed} failed)")
+        linkProduced(suiteId, now, "test results (${e.passed} passed · ${e.failed} failed)", e.toolUseId)
         val cat = ensureCategory(ActivityCategory.TESTING, now)
         for (fname in e.failedNames.take(20)) {
             val id = "test:${hash(fname)}"
@@ -208,7 +214,7 @@ class ActivityGraph(
             category = ActivityCategory.GRADLE_BUILD, confidence = 1f, now = now, subtitle = e.summary)
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.5f)
         setFocus(if (e.success) "Build succeeded" else "Build failed", "build", e.summary, id, now)
-        linkProduced(id, now, if (e.success) "a successful build" else "a build failure")
+        linkProduced(id, now, if (e.success) "a successful build" else "a build failure", e.toolUseId)
         return id
     }
 
@@ -224,7 +230,7 @@ class ActivityGraph(
                 evidence = affectedEvidence(p, e.message, e.confidence))
         }
         setFocus("Error", trim(e.message, 44), e.path, id, now)
-        linkProduced(id, now, "an error")
+        linkProduced(id, now, "an error", e.toolUseId)
         return id
     }
 
@@ -240,7 +246,7 @@ class ActivityGraph(
                 evidence = affectedEvidence(p, e.message, e.confidence))
         }
         setFocus("Warning", trim(e.message, 44), e.path, id, now)
-        linkProduced(id, now, "a warning")
+        linkProduced(id, now, "a warning", e.toolUseId)
         return id
     }
 
@@ -292,13 +298,28 @@ class ActivityGraph(
         return id
     }
 
+    /** Records the node a command/gradle/test event created — both as the sequential fallback and, when
+     * the tool_use id is known, in the id→node index so a later result links to the exact producer. */
+    private fun markProducer(nodeId: String, toolUseId: String?) {
+        lastCommandNodeId = nodeId
+        if (toolUseId == null) return
+        producerByToolUse[toolUseId] = nodeId
+        // Bound the index: drop the oldest correlations once past the cap.
+        while (producerByToolUse.size > MAX_PRODUCERS) {
+            val it = producerByToolUse.keys.iterator()
+            if (it.hasNext()) { it.next(); it.remove() } else break
+        }
+    }
+
     /**
-     * Links the command/gradle/test node that just ran to a result node it produced, tagging the edge
-     * with [EvidenceSource.COMMAND_OUTPUT] provenance ("<command> produced <what>") so the inspector can
-     * say why the two are connected instead of asserting it bare.
+     * Links the command/gradle/test node that produced [resultId] to it, tagging the edge with
+     * [EvidenceSource.COMMAND_OUTPUT] provenance ("<command> produced <what>") so the inspector can say
+     * why the two are connected. The producer is the node correlated by [toolUseId] when known (exact,
+     * interleave-safe), otherwise the most recent command (sequential fallback).
      */
-    private fun linkProduced(resultId: String, now: Instant, what: String) {
-        val src = lastCommandNodeId ?: return
+    private fun linkProduced(resultId: String, now: Instant, what: String, toolUseId: String? = null) {
+        val src = toolUseId?.let { producerByToolUse[it] }?.takeIf { nodesMap.containsKey(it) }
+            ?: lastCommandNodeId ?: return
         if (src == resultId || !nodesMap.containsKey(src)) return
         val cmd = nodesMap[src]
         val label = cmd?.subtitle?.takeIf { it.isNotBlank() } ?: cmd?.label ?: "command"

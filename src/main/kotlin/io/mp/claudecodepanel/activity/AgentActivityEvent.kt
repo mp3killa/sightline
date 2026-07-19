@@ -58,23 +58,28 @@ data class SymbolInspected(
     override val confidence: Float = 1f,
 ) : AgentActivityEvent
 
+// [toolUseId] correlates a command to the result it produces, so the graph links the exact producer
+// even when tool calls interleave — not just the most recent command. Null falls back to sequential.
 data class CommandRun(
     val command: String,
     val description: String?,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class GradleTaskRun(
     val task: String,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class TestStarted(
     val target: String?,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class TestReported(
@@ -83,6 +88,7 @@ data class TestReported(
     val failedNames: List<String>,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class BuildReported(
@@ -90,6 +96,7 @@ data class BuildReported(
     val summary: String?,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class ErrorObserved(
@@ -97,6 +104,7 @@ data class ErrorObserved(
     val message: String,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class WarningObserved(
@@ -104,6 +112,7 @@ data class WarningObserved(
     val message: String,
     override val at: Instant,
     override val confidence: Float = 1f,
+    val toolUseId: String? = null,
 ) : AgentActivityEvent
 
 data class WebActivity(
