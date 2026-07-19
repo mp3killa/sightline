@@ -997,8 +997,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     /** Kick off background structure enrichment for a file Claude just read/edited. */
     private fun maybeEnrich(e: AgentActivityEvent) {
-        val path = when (e) { is FileRead -> e.path; is FileEdited -> e.path; else -> return }
-        structureEnricher.enrich(path) { evs -> feed(evs) }
+        when (e) {
+            is FileRead -> structureEnricher.enrich(e.path, edited = false) { evs -> feed(evs) }
+            is FileEdited -> structureEnricher.enrich(e.path, edited = true) { evs -> feed(evs) }
+            else -> return
+        }
     }
 
     private fun noteError(text: String) {

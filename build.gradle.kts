@@ -1,5 +1,7 @@
 import org.gradle.process.CommandLineArgumentProvider
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -84,12 +86,24 @@ intellijPlatform {
         }
     }
 
-    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier against the
-    // recommended IDE builds for our since/until range (checks for internal-API usage and binary
-    // incompatibilities). Downloads those IDEs on first run, so it is not part of the default build.
+    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier (internal-API usage,
+    // binary compatibility). The plugin only uses platform APIs + com.intellij.java (no Android-plugin
+    // APIs), so IntelliJ IDEA Community is a valid — and more portable — verification target.
+    //
+    // CONSTRAINT (2026-07): our local() Android Studio 2026.1 is a *preview* platform (build **261**) that
+    // runs ahead of every released IntelliJ IDE — the latest published IC is 2025.3 / build **253**. So
+    // there is no downloadable IC at 261 yet, and this `select` currently resolves nothing ("No IDE
+    // resolved"). It becomes runnable when either (a) IC build 261 ships, or (b) the compatibility floor
+    // (sinceBuild, below) is lowered to a released platform for wider Marketplace reach — a publication
+    // decision. Until then the config is correct but the verifier can't fetch a matching IDE.
     pluginVerification {
         ides {
-            recommended()
+            select {
+                types = listOf(IntelliJPlatformType.IntellijIdeaCommunity)
+                channels = listOf(ProductRelease.Channel.RELEASE)
+                sinceBuild = "261"
+                untilBuild = "261.*"
+            }
         }
     }
 }

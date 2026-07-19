@@ -36,22 +36,39 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ProjectStructureEnricher(private val project: Project, private val parent: Disposable) {
 
-    private val enriched = ConcurrentHashMap.newKeySet<String>()
+    // path -> modification stamp last enriched: an unchanged file isn't re-read on every tool_result,
+    // but an edited one is picked up again (new imports / supertypes).
+    private val enriched = ConcurrentHashMap<String, Long>()
 
     fun reset() = enriched.clear()
 
-    fun enrich(path: String, sink: (List<AgentActivityEvent>) -> Unit) {
-        if (!isSource(path) || !enriched.add(path)) return
-        ReadAction.nonBlocking<List<AgentActivityEvent>> { compute(path) }
+    /**
+     * Enrich a touched file. [edited] = Claude just wrote it — its Edit/Write tools change the file
+     * **on disk** (not through the IDE), so we async-refresh the VFS and re-enrich unconditionally; a
+     * read (`edited = false`) dedups by modification stamp so repeated reads don't re-run the read action.
+     */
+    fun enrich(path: String, edited: Boolean, sink: (List<AgentActivityEvent>) -> Unit) {
+        if (!isSource(path)) return
+        val vf = LocalFileSystem.getInstance().findFileByPath(path) ?: return
+        if (edited) {
+            enriched.remove(path)
+            vf.refresh(true, false) {
+                enriched[path] = vf.modificationStamp
+                submitEnrich(vf, path, sink)
+            }
+        } else {
+            val stamp = vf.modificationStamp
+            if (enriched.put(path, stamp) == stamp) return // already enriched at this version
+            submitEnrich(vf, path, sink)
+        }
+    }
+
+    private fun submitEnrich(vf: VirtualFile, path: String, sink: (List<AgentActivityEvent>) -> Unit) {
+        ReadAction.nonBlocking<List<AgentActivityEvent>> { computeFor(vf, path) }
             .inSmartMode(project)
             .expireWith(parent)
             .finishOnUiThread(ModalityState.any()) { events -> if (events.isNotEmpty()) sink(events) }
             .submit(AppExecutorUtil.getAppExecutorService())
-    }
-
-    private fun compute(path: String): List<AgentActivityEvent> {
-        val vf = LocalFileSystem.getInstance().findFileByPath(path) ?: return emptyList()
-        return computeFor(vf, path)
     }
 
     /**

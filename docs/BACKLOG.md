@@ -115,9 +115,15 @@ Independent of features; gates the listing. Missed until now.
 - **Trademark / naming.** A third-party plugin on Anthropic's "Claude" mark driving their CLI can draw
   Marketplace-review or vendor objection. Decide early (e.g. "Panel for Claude Code", clearly *unofficial*,
   "requires the separately-installed Claude CLI + subscription"). Highest-leverage — can invalidate the listing.
-- **Compatibility range + `verifyPlugin`.** The build targets `local(Android Studio)` (build 261) — fine
-  for dev, wrong for a portable artifact. Set real `sinceBuild`/`untilBuild`; pass the IntelliJ Plugin
-  Verifier (no internal-API usage, binary compat across the range).
+- **Compatibility range + `verifyPlugin`.** `verifyPlugin` is wired (targets IntelliJ IDEA Community in
+  the build range — the plugin uses only platform + `com.intellij.java`, no Android-plugin APIs). **Blocked
+  by a platform-version reality (found 2026-07):** the local Android Studio 2026.1 is a *preview* platform
+  (build **261**) ahead of every released IntelliJ IDE — latest published IC is **2025.3 / build 253**. So
+  no downloadable IC 261 exists and the verifier can't fetch a matching IDE. **Decision needed:** keep
+  `sinceBuild=261` (installable on canary AS only; verifier waits for IC 261) **or** lower the floor to a
+  released platform (e.g. 253/251) for wider Marketplace reach + an immediate verifier run — needs the
+  target-audience call and back-compat testing. The code deliberately avoids 261-only APIs, so lowering is
+  expected to be clean, but must be verified.
 - **Plugin metadata.** `<vendor>`, real `<description>` + `<change-notes>`, plugin icon, honest
   "requires Claude CLI" wording.
 
@@ -176,9 +182,13 @@ runtime. Tested by `SourceStructureParserTest` (package/type/test-target), `Acti
 reduction, background-only), and **`ProjectStructureEnricherTest` — a real `BasePlatformTestCase`** over
 a live Java project (extends/implements/imports/package resolution; library roots not linked).
 
+**Done (incremental re-enrichment):** enrichment is keyed by modification stamp — a read dedups by stamp,
+but an **edit re-enriches** (Claude's Edit/Write change the file on disk, so the enricher async-refreshes
+the VFS then re-runs, picking up new imports/supertypes). Idempotent: the graph keys edges by
+(src, tgt, type). `ProjectStructureEnricher.enrich(path, edited, sink)`.
+
 **Remaining:**
 - Android resource → referencing source; navigation destination → screen/composable.
-- Cache by modification stamp (currently once-per-path-per-session; re-enrich on edit).
 - Lazy tiers: references/usages on select → call relationships only on explicit "Calls" / blast-radius.
 - A Kotlin `BasePlatformTestCase` (needs the Kotlin plugin on the test classpath) — Kotlin uses the same
   UAST code path, currently only exercised live in the sandbox.
