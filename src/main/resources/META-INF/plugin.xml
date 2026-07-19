@@ -1,0 +1,37 @@
+<idea-plugin>
+    <id>io.mp.claudecodepanel</id>
+    <name>Claude Code Panel</name>
+    <version>0.5.2</version>
+    <vendor email="mp3killa@gmail.com">mp</vendor>
+
+    <description><![CDATA[
+        A graphical <b>Claude Code</b> chat panel for Android Studio and IntelliJ-based IDEs,
+        inspired by the VS Code Claude Code experience. It drives your locally installed
+        <code>claude</code> CLI over its streaming-JSON protocol and renders the conversation —
+        streaming replies, extended thinking, tool calls, edits, and results — in a native
+        Swing tool window with message bubbles and a Claude Code-style composer.
+        <br/><br/>
+        <b>Requires the Claude Code CLI</b> to be installed (the <code>claude</code> command).
+        This plugin is an independent wrapper and is not affiliated with Anthropic.
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <b>0.1.0</b> — Initial release: streaming chat panel, extended-thinking &amp; tool-call
+        rendering, edit/diff previews, model &amp; permission-mode selectors, and session resume.
+    ]]></change-notes>
+
+    <!-- Only the platform module: loads in Android Studio and every IntelliJ-based IDE. -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Claude"
+                    anchor="right"
+                    factoryClass="io.mp.claudecodepanel.ClaudeToolWindowFactory"
+                    icon="/icons/claudeToolWindow.svg"/>
+        <applicationService serviceImplementation="io.mp.claudecodepanel.settings.ClaudeSettings"/>
+        <applicationConfigurable parentId="tools"
+                                 id="io.mp.claudecodepanel.settings"
+                                 displayName="Claude Code Panel"
+                                 instance="io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable"/>
+    </extensions>
+</idea-plugin>
