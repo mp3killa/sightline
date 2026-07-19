@@ -206,12 +206,12 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             canvas.repaint()
         }
         controls.add(reduceMotionButton)
-        controls.add(smallButton("Fit") { fit() })
-        val legendBtn = JButton("Legend"); legendBtn.margin = JBUI.insets(2, 6)
+        controls.add(smallButton("Fit", "Zoom to fit all nodes in view") { fit() })
+        val legendBtn = JButton("Legend"); legendBtn.margin = JBUI.insets(2, 8)
         legendBtn.toolTipText = "What the node colours mean"
         legendBtn.addActionListener { showLegend(legendBtn) }
         controls.add(legendBtn)
-        controls.add(smallButton("Clear") { clearSession() })
+        controls.add(smallButton("Clear", "Clear the activity map for this session") { clearSession() })
         header.add(controls)
         return header
     }
@@ -267,9 +267,13 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         return scroll
     }
 
-    private fun smallButton(text: String, run: () -> Unit): JButton {
-        val b = JButton(text); b.putClientProperty("JButton.buttonType", "square")
-        b.margin = JBUI.insets(2, 6); b.addActionListener { run() }
+    // NB: no "JButton.buttonType=square" — on the IntelliJ/macOS L&F that renders an icon-style
+    // square button and drops the text label, leaving a blank box.
+    private fun smallButton(text: String, tooltip: String, run: () -> Unit): JButton {
+        val b = JButton(text)
+        b.toolTipText = tooltip
+        b.margin = JBUI.insets(2, 8)
+        b.addActionListener { run() }
         return b
     }
 
@@ -761,11 +765,11 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 val actions = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)); actions.isOpaque = false
                 actions.alignmentX = Component.LEFT_ALIGNMENT
                 if (n.path != null) {
-                    actions.add(smallButton("Open") { openNode(n) })
-                    actions.add(smallButton("Reveal") { revealNode(n) })
+                    actions.add(smallButton("Open", "Open this file in the editor") { openNode(n) })
+                    actions.add(smallButton("Reveal", "Reveal this file in the Project view") { revealNode(n) })
                 }
-                actions.add(smallButton(if (n.pinned) "Unpin" else "Pin") { graph.setPinned(n.id, !n.pinned); refresh(); canvas.repaint() })
-                actions.add(smallButton("Hide") { graph.setHidden(n.id, true); selectNode(null) })
+                actions.add(smallButton(if (n.pinned) "Unpin" else "Pin", "Keep this node from being evicted") { graph.setPinned(n.id, !n.pinned); refresh(); canvas.repaint() })
+                actions.add(smallButton("Hide", "Hide this node from the map") { graph.setHidden(n.id, true); selectNode(null) })
                 body.add(actions)
             }
             body.revalidate(); body.repaint()
