@@ -51,6 +51,7 @@ import javax.swing.JPanel
 import javax.swing.JToggleButton
 import javax.swing.ListCellRenderer
 import javax.swing.Timer
+import javax.swing.ToolTipManager
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -231,11 +232,14 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun refreshFocusCard() {
         val f = graph.focus
-        focusVerb.text = f.verb
-        focusLabel.text = f.label
+        focusVerb.text = f.verb.ifBlank { "Agent Activity Map" }
+        focusLabel.text = f.label.ifBlank { " " }
         focusDetail.text = f.detail ?: " "
-        val shown = visibleNodeIds().size
-        countLabel.text = "$shown / ${graph.nodes.count { it.type != ActivityNodeType.CATEGORY }} nodes"
+        // Count non-structural (non-category) nodes consistently, so "shown" is never > "total".
+        val visible = visibleNodeIds()
+        val total = graph.nodes.count { it.type != ActivityNodeType.CATEGORY }
+        val shown = visible.count { graph.node(it)?.type != ActivityNodeType.CATEGORY }
+        countLabel.text = if (shown < total) "$shown of $total nodes" else "$total nodes"
     }
 
     private fun selectNode(id: String?, center: Boolean = false) {
@@ -485,6 +489,14 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 }
             }
             addMouseListener(mouse); addMouseMotionListener(mouse); addMouseWheelListener(mouse)
+            ToolTipManager.sharedInstance().registerComponent(this)
+        }
+
+        override fun getToolTipText(event: MouseEvent): String? {
+            val n = hitTest(event.point)?.let { graph.node(it) } ?: return null
+            val state = n.state.name.lowercase(Locale.ROOT)
+            val sub = n.subtitle?.let { " · $it" } ?: ""
+            return "${n.label} — $state$sub"
         }
 
         fun centerOn(v: Vec) { offset.x = -v.x * scale; offset.y = -v.y * scale; repaint() }
@@ -591,9 +603,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     g2.drawOval((s.x - sr).toInt(), (s.y - sr).toInt(), (sr * 2).toInt(), (sr * 2).toInt())
                     g2.stroke = BasicStroke(1f)
                 }
-                // Labels: always for task/category/focus/selected, otherwise only when zoomed in enough.
-                val showLabel = n.type == ActivityNodeType.TASK || n.type == ActivityNodeType.CATEGORY ||
-                    id == focusId || id == selectedId || (scale >= 0.75 && r >= 6)
+                // Labels: always for task/category/patch/error/focus/selected, else only when zoomed in.
+                val alwaysLabel = n.type == ActivityNodeType.TASK || n.type == ActivityNodeType.CATEGORY ||
+                    n.type == ActivityNodeType.PATCH || n.type == ActivityNodeType.ERROR
+                val showLabel = alwaysLabel || id == focusId || id == selectedId || (scale >= 0.75 && r >= 6)
                 if (showLabel) {
                     g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUI.scale(11f) else JBUI.scale(10.5f))
                     g2.color = withAlpha(UIUtil.getLabelForeground(), (0.55 + fresh * 0.45).toFloat())

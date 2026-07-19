@@ -73,8 +73,10 @@ class ActivityGraph(
                     category = ActivityCategory.UNKNOWN, confidence = 1f, now = now, subtitle = "Current request")
                 setFocus("Starting", trim(label, 48), null, TASK_ID, now); null // task node is not part of sequential trail
             }
-            is StatusUpdated -> { setFocus(event.verb, focus.label, event.detail, focus.nodeId, now, record = false); return null }
-            is ToolInvoked -> { setFocus("Using ${event.summary}", focus.label, null, focus.nodeId, now, record = false); return null }
+            // General status/tool verbs describe the agent's overall state, not an action on the
+            // last-touched file — so they don't carry that file's label (avoids "Thinking Foo.kt").
+            is StatusUpdated -> { setFocus(event.verb, event.detail ?: "", null, focus.nodeId, now, record = false); return null }
+            is ToolInvoked -> { setFocus("Using ${event.summary}", "", null, focus.nodeId, now, record = false); return null }
             is FileRead -> fileNode(event.path, ActivityNodeState.READING, "Reading", event.confidence, now)
             is FileEdited -> {
                 val state = when { event.deleted -> ActivityNodeState.DELETED; event.created -> ActivityNodeState.CREATED; else -> ActivityNodeState.EDITING }

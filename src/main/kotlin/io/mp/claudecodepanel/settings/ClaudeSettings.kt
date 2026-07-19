@@ -36,6 +36,9 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Show the live Agent Activity Map (graph of observable tool activity) while Claude works. */
         var showActivityMap by property(true)
 
+        /** Layout of the transcript vs. the activity map: "chat" | "split" | "map". */
+        var activityViewMode by string("split")
+
         /** Static activity-map layout with no pulsing/animation (lower CPU). */
         var activityReduceMotion by property(false)
 

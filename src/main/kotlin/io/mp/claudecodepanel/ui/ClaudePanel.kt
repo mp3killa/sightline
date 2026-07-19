@@ -112,8 +112,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // before ClaudePanel registers itself, so registering under `this` would leak an unregistered parent.
     private val activityMap = ActivityMapPanel(project, parent)
     private val mapSplitter = JBSplitter(true, 0.60f)
+    private val centerHost = JPanel(BorderLayout())
     private val mapButton = JButton()
-    private var mapVisible = ClaudeSettings.getInstance().state.showActivityMap
+
+    /** How the transcript and the activity map share the center area. */
+    private enum class ViewMode { CHAT, SPLIT, MAP }
+    private var viewMode = initialViewMode()
 
     private val transcript = object : JPanel(), Scrollable {
         init {
@@ -209,19 +213,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         newButton.addActionListener { session.newConversation() }
         settingsButton.toolTipText = "Claude Code settings"
         settingsButton.addActionListener { openSettings() }
-        mapButton.toolTipText = "Show/hide the live Agent Activity Map (graph of observable tool activity)"
-        mapButton.addActionListener { setMapVisible(!mapVisible) }
+        mapButton.toolTipText = "Choose layout: Chat, Split, or Map (the Agent Activity Map)"
+        mapButton.addActionListener { showViewMenu(mapButton) }
         bar.add(modelCombo); bar.add(primeButton); bar.add(detailsButton); bar.add(mapButton); bar.add(newButton); bar.add(settingsButton)
         root.add(bar, BorderLayout.NORTH)
 
         scroll.border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
         scroll.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         scroll.viewport.background = editorBg()
-        mapSplitter.firstComponent = scroll
         mapSplitter.setHonorComponentsMinimumSize(false)
         updateMapButton()
         installCenter()
-        root.add(mapSplitter, BorderLayout.CENTER)
+        root.add(centerHost, BorderLayout.CENTER)
 
         val south = JPanel(BorderLayout())
         statusLabel.foreground = UIUtil.getContextHelpForeground()
@@ -775,7 +778,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val s = ClaudeSettings.getInstance().state
         SwingUtilities.invokeLater {
             modelCombo.selectedItem = s.model ?: ""; updateModeChip()
-            if (s.showActivityMap != mapVisible) setMapVisible(s.showActivityMap)
+            val desired = initialViewMode()
+            if (desired != viewMode) setViewMode(desired)
         }
     }
 
@@ -792,16 +796,54 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         detailsButton.text = if (showDetails) "Hide details" else "Details"
     }
 
-    private fun setMapVisible(v: Boolean) {
-        mapVisible = v
-        ClaudeSettings.getInstance().state.showActivityMap = v
+    private fun initialViewMode(): ViewMode {
+        val s = ClaudeSettings.getInstance().state
+        if (!s.showActivityMap) return ViewMode.CHAT
+        return when (s.activityViewMode) {
+            "map" -> ViewMode.MAP
+            "chat" -> ViewMode.CHAT
+            else -> ViewMode.SPLIT
+        }
+    }
+
+    private fun setViewMode(mode: ViewMode) {
+        viewMode = mode
+        val s = ClaudeSettings.getInstance().state
+        s.showActivityMap = mode != ViewMode.CHAT
+        s.activityViewMode = when (mode) { ViewMode.CHAT -> "chat"; ViewMode.SPLIT -> "split"; ViewMode.MAP -> "map" }
         updateMapButton()
         installCenter()
     }
-    private fun updateMapButton() { mapButton.text = if (mapVisible) "Hide map" else "Activity map" }
+
+    private fun showViewMenu(anchor: Component) {
+        val group = DefaultActionGroup()
+        val current = viewMode
+        fun item(mode: ViewMode, label: String) = action(label + if (mode == current) "   ✓" else "") { setViewMode(mode) }
+        group.add(item(ViewMode.CHAT, "Chat only"))
+        group.add(item(ViewMode.SPLIT, "Split (chat + map)"))
+        group.add(item(ViewMode.MAP, "Map only"))
+        JBPopupFactory.getInstance()
+            .createActionGroupPopup("Layout", group, SimpleDataContext.getProjectContext(project),
+                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, true)
+            .showUnderneathOf(anchor)
+    }
+
+    private fun updateMapButton() {
+        mapButton.text = when (viewMode) { ViewMode.CHAT -> "◧ Chat"; ViewMode.SPLIT -> "◫ Split"; ViewMode.MAP -> "◩ Map" }
+    }
+
     private fun installCenter() {
-        mapSplitter.secondComponent = if (mapVisible) activityMap.component else null
-        SwingUtilities.invokeLater { mapSplitter.revalidate(); mapSplitter.repaint() }
+        centerHost.removeAll()
+        when (viewMode) {
+            ViewMode.CHAT -> centerHost.add(scroll, BorderLayout.CENTER)
+            ViewMode.MAP -> centerHost.add(activityMap.component, BorderLayout.CENTER)
+            ViewMode.SPLIT -> {
+                mapSplitter.firstComponent = scroll
+                mapSplitter.secondComponent = activityMap.component
+                centerHost.add(mapSplitter, BorderLayout.CENTER)
+            }
+        }
+        SwingUtilities.invokeLater { centerHost.revalidate(); centerHost.repaint() }
     }
 
     /** Push normalised activity events into the map (no-op when the batch is empty). */

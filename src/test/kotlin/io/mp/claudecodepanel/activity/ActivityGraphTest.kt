@@ -98,6 +98,15 @@ class ActivityGraphTest {
         assertNotNull(edge)
     }
 
+    @Test fun statusVerbDoesNotCarryLastFileLabel() {
+        val g = freshGraph()
+        g.apply(FileRead("/a/Foo.kt", tick()))
+        assertEquals("Foo.kt", g.focus.label)
+        g.apply(StatusUpdated("Thinking", null, tick()))
+        assertEquals("Thinking", g.focus.verb)
+        assertTrue(g.focus.label.isBlank())
+    }
+
     @Test fun clearResetsEverything() {
         val g = freshGraph()
         g.apply(FileRead("/a/Foo.kt", tick()))
