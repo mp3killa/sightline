@@ -76,10 +76,18 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew test                 # the ~130 headless unit tests
 ./gradlew buildPlugin          # the distributable zip
-./gradlew runIdeTestBridge     # sandbox AS with the test bridge ENABLED (-Dsightline.testBridge=true)
-./gradlew runIde               # sandbox AS, bridge OFF (production-like)
+./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)
+./gradlew runIde -PtestBridge  # sandbox AS with the test bridge ENABLED (sets SIGHTLINE_TEST_BRIDGE=true)
 ./gradlew verifyPlugin         # Marketplace API-compat check (downloads IDEs; slow)
 ```
+
+**runIde launch fix (baked into build.gradle):** gradle-plugin 2.6.0 puts AS 2026.1's boot-classpath jar
+at the wrong path for a macOS `.app` bundle — `<app>/lib/nio-fs.jar` instead of
+`<app>/Contents/lib/nio-fs.jar` — so `-Djava.nio.file.spi.DefaultFileSystemProvider=…MultiRouting…`
+can't resolve and the VM dies at init ("Failure when starting JFR on_create_vm"). `build.gradle.kts`
+adds the correct `-Xbootclasspath/a:…/Contents/lib/nio-fs.jar` to every `RunIdeTask`. `-PtestBridge`
+passes the bridge flag as the env var `SIGHTLINE_TEST_BRIDGE=true` (not a JVM arg, though either works).
+Verified: sandbox boots, `Loaded custom plugins: Sightline for Claude Code`, `TestBridgeGuard` live.
 
 ### Verifying the report scanner against real Gradle output (do this after parser changes)
 

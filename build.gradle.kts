@@ -1,4 +1,6 @@
+import org.gradle.process.CommandLineArgumentProvider
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -87,12 +89,19 @@ intellijPlatform {
     }
 }
 
-// Sandbox IDE with the sandbox-only test bridge enabled (`-Dsightline.testBridge=true`), so a UI
-// driver can inspect/resolve pending approvals & diffs and capture the tool window. NEVER enabled in
-// the Marketplace build. Launch: `./gradlew runIdeTestBridge`. See docs/TESTING.md.
-intellijPlatformTesting.runIde.register("runIdeTestBridge") {
-    task {
-        systemProperty("sightline.testBridge", "true")
-        systemProperty("idea.trust.all.projects", "true")
+tasks.withType<RunIdeTask>().configureEach {
+    // WORKAROUND (dev only, never affects the built plugin): gradle-plugin 2.6.0 doesn't add AS 2026.1's
+    // required boot-classpath entry for nio-fs.jar, so the platform's
+    // `-Djava.nio.file.spi.DefaultFileSystemProvider=…MultiRoutingFileSystemProvider` can't be loaded and
+    // VM init dies (ClassNotFound; "Failure when starting JFR on_create_vm"). AS's own product-info adds
+    // `-Xbootclasspath/a:$APP/Contents/lib/nio-fs.jar` — mirror that.
+    val nioFs = file("/Applications/Android Studio.app/Contents/lib/nio-fs.jar")
+    if (nioFs.exists()) {
+        jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Xbootclasspath/a:${nioFs.absolutePath}") })
+    }
+    // Enable the sandbox-only test bridge with `-PtestBridge` (passed as an env var; TestBridgeGuard
+    // reads SIGHTLINE_TEST_BRIDGE or -Dsightline.testBridge). Never set in the Marketplace build.
+    if (providers.gradleProperty("testBridge").isPresent) {
+        environment("SIGHTLINE_TEST_BRIDGE", "true")
     }
 }

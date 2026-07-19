@@ -17,7 +17,10 @@ import javax.swing.JComponent
  * screenshot tools are never present in production `tools/list`.
  */
 object TestBridgeGuard {
-    fun isEnabled(): Boolean = java.lang.Boolean.getBoolean("sightline.testBridge")
+    // Accept either the JVM system property or a process env var. The env var is how `runIde -PtestBridge`
+    // passes it, because adding a JVM arg to that task drops the 2026.1 platform's bootclasspath.
+    fun isEnabled(): Boolean =
+        java.lang.Boolean.getBoolean("sightline.testBridge") || System.getenv("SIGHTLINE_TEST_BRIDGE") == "true"
 }
 
 /** A tool result that may carry a PNG image in addition to text. */
