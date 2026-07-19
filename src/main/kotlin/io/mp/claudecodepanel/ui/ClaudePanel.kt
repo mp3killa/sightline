@@ -12,6 +12,7 @@ import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.fileChooser.FileChooser
@@ -52,6 +53,8 @@ import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
 import io.mp.claudecodepanel.theme.ClaudeIcons
 import io.mp.claudecodepanel.theme.ClaudeUiTokens
 import io.mp.claudecodepanel.ui.components.EmptyStatePanel
+import io.mp.claudecodepanel.ui.markdown.BlockRenderer
+import io.mp.claudecodepanel.ui.markdown.MarkdownDocParser
 import io.mp.claudecodepanel.ui.state.CompletionSummary
 import io.mp.claudecodepanel.ui.state.ComposerModel
 import io.mp.claudecodepanel.ui.state.LayoutProfile
@@ -220,6 +223,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
+    private val markdownRenderer = BlockRenderer { openMarkdownLink(it) }
     private val turns = ArrayList<AssistantTurn>()
 
     private val modes = PermissionModes.all
@@ -403,6 +407,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun <T : JComponent> fullWidth(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; c.isOpaque = false; return c }
     private fun click(run: () -> Unit) = object : MouseAdapter() { override fun mouseClicked(e: MouseEvent) { run() } }
+
+    /** Opens a Markdown hyperlink: real URLs in the browser. Project-file references are added in Phase 2. */
+    private fun openMarkdownLink(href: String) {
+        if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:")) {
+            runCatching { BrowserUtil.browse(href) }
+        }
+    }
 
     // ---------- compose actions ----------
 
@@ -1232,20 +1243,47 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun refreshVisibility() { isVisible = showDetails || textCount > 0 }
     }
 
+    /**
+     * A streamed assistant text block. While tokens arrive it shows plain styled text in [stream]; on
+     * `content_block_stop` (finalize) it parses the completed Markdown and swaps to a rendered component
+     * tree ([blocks]). Any parser/renderer failure falls back to the previous regex renderer, so a
+     * malformed or half-formed message is always readable — the response is never dropped.
+     */
     private inner class TextBlock : Block() {
-        private val pane = styledPane()
-        val doc: StyledDocument get() = pane.styledDocument
+        private val stream = styledPane()
+        private val blocks = JPanel()
         private val sb = StringBuilder()
-        init { layout = BorderLayout(); add(pane, BorderLayout.CENTER) }
-        fun append(t: String) { sb.append(t); ins(doc, t, sNormal); scrollToBottomSoon() }
-        fun finalizeMarkdown() {
-            val raw = sb.toString()
-            try { doc.remove(0, doc.length) } catch (e: BadLocationException) {}
-            target = doc; insertMarkdown(raw); target = null
-            relayout()
+        private var showingBlocks = false
+        init {
+            layout = BorderLayout()
+            blocks.layout = BoxLayout(blocks, BoxLayout.Y_AXIS); blocks.isOpaque = false; blocks.alignmentX = Component.LEFT_ALIGNMENT
+            add(stream, BorderLayout.CENTER)
         }
-        fun setMarkdown(t: String) { sb.setLength(0); sb.append(t); try { doc.remove(0, doc.length) } catch (e: Exception) {}; target = doc; insertMarkdown(t); target = null; relayout() }
-        private fun ins(d: StyledDocument, t: String, s: AttributeSet) { try { d.insertString(d.length, t, s) } catch (e: BadLocationException) {} }
+        fun append(t: String) {
+            sb.append(t)
+            if (showingBlocks) { showStream(); insStream(sb.toString()) } else insStream(t)
+            scrollToBottomSoon()
+        }
+        fun finalizeMarkdown() = renderMarkdown(sb.toString())
+        fun setMarkdown(t: String) { sb.setLength(0); sb.append(t); renderMarkdown(t) }
+
+        private fun renderMarkdown(raw: String) {
+            try {
+                val comps = markdownRenderer.render(MarkdownDocParser.parse(raw))
+                blocks.removeAll()
+                comps.forEach { blocks.add(fullWidth(it)) }
+                if (!showingBlocks) { remove(stream); add(blocks, BorderLayout.CENTER); showingBlocks = true }
+                relayout()
+            } catch (e: Exception) {
+                thisLogger().warn("Markdown render failed (${e.javaClass.simpleName}); showing plain text")
+                if (showingBlocks) showStream()
+                clearStream(); target = stream.styledDocument; insertMarkdown(raw); target = null
+                relayout()
+            }
+        }
+        private fun showStream() { remove(blocks); add(stream, BorderLayout.CENTER); showingBlocks = false; clearStream() }
+        private fun clearStream() { try { stream.styledDocument.remove(0, stream.styledDocument.length) } catch (e: Exception) {} }
+        private fun insStream(t: String) { try { stream.styledDocument.insertString(stream.styledDocument.length, t, sNormal) } catch (e: BadLocationException) {} }
     }
 
     /** Extended thinking, rendered subtly under "Processing details" (only when details are on). */
