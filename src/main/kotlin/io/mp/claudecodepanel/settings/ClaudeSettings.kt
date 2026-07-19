@@ -33,6 +33,18 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Run the `ide` MCP server so Claude sees the editor selection and opens diffs natively. */
         var ideIntegration by property(true)
 
+        /** Show the live Agent Activity Map (graph of observable tool activity) while Claude works. */
+        var showActivityMap by property(true)
+
+        /** Static activity-map layout with no pulsing/animation (lower CPU). */
+        var activityReduceMotion by property(false)
+
+        /** Max nodes rendered in the activity map at once. */
+        var activityMaxNodes by property(200)
+
+        /** Max nodes retained in a session before the oldest non-pinned ones are evicted. */
+        var activityMaxRetained by property(500)
+
         /** Advanced: extra CLI args appended to every invocation (space-separated). */
         var extraArgs by string("")
     }

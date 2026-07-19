@@ -12,11 +12,25 @@ It drives the CLI over its streaming-JSON protocol and renders everything in **n
 | File | Role |
 |---|---|
 | `ClaudeToolWindowFactory.kt` | Registers the right-dock "Claude" tool window |
-| `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering |
+| `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering. Feeds every observable tool/stream event into the activity map. |
+| `ui/ActivityMapPanel.kt` | The **Agent Activity Map**: force-directed Swing graph, current-focus card, node details (open/reveal), timeline, filters/controls. Renders only; theme-aware colours. |
+| `activity/*.kt` | Platform-free, unit-tested core of the map: event model (`AgentActivityEvent`), `ActivityInterpreter` (raw tool events → normalised events), `ActivityGraph` (reducer → nodes/edges/clusters/focus/timeline), `ActivityClassifier` (path → cluster), `OutputParsers` (Gradle/compiler/test output), `ActivityColorRole` (state → theme role) |
 | `process/ClaudeSession.kt` | Owns one persistent `claude -p` process; stdin/stdout stream-json plumbing; control-protocol responses; `--mcp-config` wiring |
 | `process/ClaudePathResolver.kt` | Finds the `claude` binary in GUI-launched IDEs (login-shell PATH) |
 | `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, …) |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI |
+
+### Agent Activity Map (v0.6.0)
+
+Replaces the generic "Thinking…" indicator with a live graph of **observable** agent activity
+(never the model's hidden reasoning). Pipeline: `ClaudePanel` hooks — `renderToolBody` (tool_use),
+`onUser` (tool_result), `onSystem` (status), `taskStarted`/`taskDone` — call `ActivityInterpreter`,
+which emits `AgentActivityEvent`s that `ActivityGraph` reduces into nodes/edges/clusters. The
+`activity/` package has **no IntelliJ-platform imports**, so it's covered by plain JUnit4 tests in
+`src/test` (interpreter, reducer, classifier, parsers, colour roles, and a full 9-step sequence).
+Structured tool events are high-confidence; text/heuristic guesses are lower-confidence and drawn
+subtler. Prose is **never** mined for file names. The map physics run on a Swing `Timer` that only
+ticks while the component is showing and auto-suspends when idle; "reduce motion" settles statically.
 
 The transcript is a `Scrollable` `JPanel` (BoxLayout Y) of block components. Each assistant turn is
 an `AssistantTurn` holding `TextBlock` (streamed markdown), `ThinkingBlock` (collapsible),
@@ -57,4 +71,6 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - `interactiveApproval` (default on) → `--permission-prompt-tool stdio` + control protocol.
 - `ideIntegration` (default on) → runs `IdeServer` and passes it via `--mcp-config` (ws).
 - `showDetails` (default off) → compact vs detailed transcript.
+- `showActivityMap` (default on) → show the Agent Activity Map; `activityReduceMotion`,
+  `activityMaxNodes` (visible cap, default 200), `activityMaxRetained` (session cap, default 500).
 - Permission mode chip composes with the above (Manual prompts all, acceptEdits only commands, …).

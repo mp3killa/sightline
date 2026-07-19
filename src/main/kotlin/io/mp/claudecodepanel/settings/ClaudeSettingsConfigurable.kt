@@ -3,6 +3,7 @@ package io.mp.claudecodepanel.settings
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
+import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
@@ -75,6 +76,32 @@ class ClaudeSettingsConfigurable : Configurable {
                 checkBox("IDE integration (share editor selection, open diffs in the native viewer)")
                     .bindSelected({ state.ideIntegration }, { state.ideIntegration = it })
                     .comment("Runs a local <code>ide</code> MCP server the CLI connects to. Restart a conversation (New) after changing this.")
+            }
+            group("Agent Activity Map") {
+                row {
+                    checkBox("Show the live Agent Activity Map while Claude works")
+                        .bindSelected({ state.showActivityMap }, { state.showActivityMap = it })
+                        .comment(
+                            "A graph of what Claude is <i>observably</i> touching — files, commands, tests, errors — " +
+                                "not the model's private reasoning.",
+                        )
+                }
+                row {
+                    checkBox("Reduce motion (static layout, no pulsing)")
+                        .bindSelected({ state.activityReduceMotion }, { state.activityReduceMotion = it })
+                }
+                row("Max visible nodes:") {
+                    textField()
+                        .bindIntText({ state.activityMaxNodes }, { state.activityMaxNodes = it })
+                        .columns(6)
+                        .comment("Nodes rendered at once. Older nodes stay in the session but are hidden past this cap.")
+                }
+                row("Max retained nodes:") {
+                    textField()
+                        .bindIntText({ state.activityMaxRetained }, { state.activityMaxRetained = it })
+                        .columns(6)
+                        .comment("Session history size before the oldest non-pinned nodes are evicted.")
+                }
             }
             row("Extra CLI args:") {
                 textField()

@@ -1,3 +1,4 @@
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -9,7 +10,7 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.5.2"
+version = "0.6.0"
 
 repositories {
     mavenCentral()
@@ -27,6 +28,11 @@ dependencies {
         // --- Alternatives: comment out local() above and uncomment ONE of these ---
         // androidStudio("2026.1.4")        // download a specific Android Studio build
         // create("IC", "2026.1")           // or IntelliJ IDEA Community
+
+        // The platform test framework: needed so the `test` task's JVM (which the plugin decorates
+        // with a platform file-system bootstrap arg) can start. Our tests are plain JUnit4 unit
+        // tests over the activity/graph logic and don't spin up an IDE fixture.
+        testFramework(TestFrameworkType.Platform)
     }
 
     // Bundled into the plugin: used to parse the CLI's streaming-JSON events.
@@ -38,6 +44,13 @@ dependencies {
     implementation("org.java-websocket:Java-WebSocket:1.5.7") {
         exclude(group = "org.slf4j")
     }
+
+    // Unit tests for the platform-free activity/graph logic (JUnit 4; no IDE fixture needed).
+    testImplementation("junit:junit:4.13.2")
+}
+
+tasks.test {
+    useJUnit()
 }
 
 java {

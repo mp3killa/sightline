@@ -20,6 +20,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
+import com.intellij.ui.JBSplitter
 import com.intellij.ui.RoundedLineBorder
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -27,6 +28,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import io.mp.claudecodepanel.activity.ActivityInterpreter
+import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -104,6 +107,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     val component: JComponent
     private val session: ClaudeSession = ClaudeSession(project) { line -> onLine(line) }
+    private val interpreter = ActivityInterpreter()
+    // Parented to the tool window's Disposable (not `this`): this is a field initializer that runs
+    // before ClaudePanel registers itself, so registering under `this` would leak an unregistered parent.
+    private val activityMap = ActivityMapPanel(project, parent)
+    private val mapSplitter = JBSplitter(true, 0.60f)
+    private val mapButton = JButton()
+    private var mapVisible = ClaudeSettings.getInstance().state.showActivityMap
 
     private val transcript = object : JPanel(), Scrollable {
         init {
@@ -199,13 +209,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         newButton.addActionListener { session.newConversation() }
         settingsButton.toolTipText = "Claude Code settings"
         settingsButton.addActionListener { openSettings() }
-        bar.add(modelCombo); bar.add(primeButton); bar.add(detailsButton); bar.add(newButton); bar.add(settingsButton)
+        mapButton.toolTipText = "Show/hide the live Agent Activity Map (graph of observable tool activity)"
+        mapButton.addActionListener { setMapVisible(!mapVisible) }
+        bar.add(modelCombo); bar.add(primeButton); bar.add(detailsButton); bar.add(mapButton); bar.add(newButton); bar.add(settingsButton)
         root.add(bar, BorderLayout.NORTH)
 
         scroll.border = BorderFactory.createMatteBorder(1, 0, 1, 0, JBColor.border())
         scroll.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         scroll.viewport.background = editorBg()
-        root.add(scroll, BorderLayout.CENTER)
+        mapSplitter.firstComponent = scroll
+        mapSplitter.setHonorComponentsMinimumSize(false)
+        updateMapButton()
+        installCenter()
+        root.add(mapSplitter, BorderLayout.CENTER)
 
         val south = JPanel(BorderLayout())
         statusLabel.foreground = UIUtil.getContextHelpForeground()
@@ -364,6 +380,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         if (text.isEmpty()) return
         finalizeCurrent(); inAssistant = false; curTurn = null
         addUserBubble(text)
+        feed(interpreter.taskStarted(text))
         session.sendUserMessage(text)
         input.text = ""
         setRunning(true); setStatus("Sending…")
@@ -386,6 +403,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         if (running) return
         finalizeCurrent(); inAssistant = false; curTurn = null
         addUserBubble("📖 Catch up on this project — read the docs, generate any missing recommended ones (CLAUDE.md, ARCHITECTURE, conventions), and summarize.")
+        feed(interpreter.taskStarted("Catch up on this project and complete its docs"))
         session.sendUserMessage(PRIME_PROMPT)
         setRunning(true); setStatus("Reading project docs…")
     }
@@ -498,7 +516,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onSystem(o: JsonObject) {
         when (o.str("subtype")) {
             "init" -> setRunning(true)
-            "status" -> if (o.str("status") == "requesting") setStatus("Thinking…")
+            "status" -> if (o.str("status") == "requesting") { setStatus("Thinking…"); feed(interpreter.status("Thinking")) }
             "thinking_tokens" -> setStatus("Thinking… (" + (o.intOrNull("estimated_tokens") ?: 0) + " tokens)")
         }
     }
@@ -590,8 +608,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             if (b.str("type") == "tool_result") {
                 val id = b.str("tool_use_id")
                 val isErr = b.has("is_error") && b.get("is_error").let { it.isJsonPrimitive && it.asBoolean }
-                val card = id?.let { toolCardsById[it] } ?: continue
-                card.addResult(extractText(b.get("content")), isErr)
+                val text = extractText(b.get("content"))
+                feed(interpreter.toolResult(id, text, isErr))
+                id?.let { toolCardsById[it] }?.addResult(text, isErr)
             }
         }
         scrollToBottomSoon()
@@ -599,6 +618,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onResult(o: JsonObject) {
         finalizeCurrent(); inAssistant = false; setRunning(false)
+        val isErr = o.has("is_error") && o.get("is_error").let { it.isJsonPrimitive && it.asBoolean }
+        feed(interpreter.taskDone(o.str("result") ?: "", isErr))
         val parts = ArrayList<String>()
         o.dblOrNull("total_cost_usd")?.let { parts.add("$" + String.format("%.4f", it)) }
         o.dblOrNull("duration_ms")?.let { parts.add(String.format("%.1fs", it / 1000)) }
@@ -617,6 +638,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         target = null
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
         if (id != null) { renderedTools.add(id); toolCardsById[id] = card }
+        feed(interpreter.toolUse(id, name, input))
     }
 
     /** Renders a tool's command/diff/inputs into the current [target] doc; returns a header summary. */
@@ -744,13 +766,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun clearAll() {
         transcript.removeAll()
         toolCardsById.clear(); renderedTools.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock(); setStatus("")
+        interpreter.reset(); activityMap.clearSession()
         transcript.revalidate(); transcript.repaint()
         addInfo("New conversation.", false)
     }
 
     private fun applyConfigToUi() {
         val s = ClaudeSettings.getInstance().state
-        SwingUtilities.invokeLater { modelCombo.selectedItem = s.model ?: ""; updateModeChip() }
+        SwingUtilities.invokeLater {
+            modelCombo.selectedItem = s.model ?: ""; updateModeChip()
+            if (s.showActivityMap != mapVisible) setMapVisible(s.showActivityMap)
+        }
     }
 
     private fun openSettings() { ShowSettingsUtil.getInstance().showSettingsDialog(project, ClaudeSettingsConfigurable::class.java) }
@@ -765,6 +791,21 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun updateDetailsButton() {
         detailsButton.text = if (showDetails) "Hide details" else "Details"
     }
+
+    private fun setMapVisible(v: Boolean) {
+        mapVisible = v
+        ClaudeSettings.getInstance().state.showActivityMap = v
+        updateMapButton()
+        installCenter()
+    }
+    private fun updateMapButton() { mapButton.text = if (mapVisible) "Hide map" else "Activity map" }
+    private fun installCenter() {
+        mapSplitter.secondComponent = if (mapVisible) activityMap.component else null
+        SwingUtilities.invokeLater { mapSplitter.revalidate(); mapSplitter.repaint() }
+    }
+
+    /** Push normalised activity events into the map (no-op when the batch is empty). */
+    private fun feed(events: List<AgentActivityEvent>) { if (events.isNotEmpty()) activityMap.apply(events) }
 
     private fun scrollToBottomSoon() {
         if (pendingScroll) return

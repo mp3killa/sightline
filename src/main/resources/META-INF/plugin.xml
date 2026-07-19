@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.mp.claudecodepanel</id>
     <name>Claude Code Panel</name>
-    <version>0.5.2</version>
+    <version>0.6.0</version>
     <vendor email="mp3killa@gmail.com">mp</vendor>
 
     <description><![CDATA[
@@ -16,6 +16,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <b>0.6.0</b> — New <b>Agent Activity Map</b>: replaces the generic "Thinking…" indicator with a
+        live, force-directed graph of what Claude is <i>observably</i> touching — files, searches,
+        commands, Gradle tasks, tests, errors and generated patches — grouped into architectural
+        clusters, with a current-focus card, clickable node details (open/reveal in the IDE), and an
+        activity timeline. Observable activity only; it makes no claim to reveal hidden reasoning.
+        <br/>
         <b>0.1.0</b> — Initial release: streaming chat panel, extended-thinking &amp; tool-call
         rendering, edit/diff previews, model &amp; permission-mode selectors, and session resume.
     ]]></change-notes>
