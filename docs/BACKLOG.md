@@ -1,46 +1,202 @@
 # Backlog
 
-Deferred work, roughly in priority order. See [PROTOCOL.md](PROTOCOL.md) for CLI facts and
-[../CLAUDE.md](../CLAUDE.md) for architecture.
+Deferred work, ordered for **Marketplace publication** — trust/correctness first, differentiators later.
+The Agent Activity Map already demonstrates the core promise (showing what the agent touches while it
+works), so publication is **not** gated on PSI enrichment or replay. See [PROTOCOL.md](PROTOCOL.md) for
+CLI facts and [../CLAUDE.md](../CLAUDE.md) for architecture.
 
-## Agent Activity Map — Phase 2: IntelliJ / PSI enrichment
+Guiding principle: correctness logic lands as **platform-free, unit-tested** classes (mirroring
+`activity/` and `ui/state/`), with thin Swing on top — so P0 work is verifiable without launching an IDE.
 
-Currently the map's relationships are **path-heuristic only** (cluster classification, patch→file,
-error→file, sequential trail). Phase 2 replaces guesses with real project structure, off the EDT:
+## Already shipped (was stale in the old backlog)
 
-- Package/module membership from PSI (`file belongs to package`, `module`).
-- Class relationships: `implements` / `extends` / `references` / `calls` via PSI + `ReferencesSearch`.
-- Import edges between files.
-- Test → production-class targeting (`tests` / `tested-by`).
-- ViewModel → Composable state consumption; Repository → service; UseCase → Repository.
-- Architectural-pattern detection with **evidence** (MVVM, repository, DI, navigation graph, …),
-  shown in the details panel ("why this pattern was identified").
-- Rules: run in read actions / background tasks, respect indexing (DumbService), lazy-expand +
-  cache classifications, cancel on session end. Never index the whole project per prompt.
+These were listed as deferred but already exist; don't re-scope them:
 
-## Structured stream gaps (interpreter robustness)
+- Node colour/state **legend** (`ActivityMapPanel.showLegend`).
+- **Filter / fit / clear / reduce-motion**, and a layout-animation pause (button reads
+  "Pause layout animation" — note it freezes *layout*, not event recording; see the Freeze/Follow split below).
+- Node **inspector**: relationships, confidence, state, timestamps, open/reveal, pin, hide.
+- **Timeline** jump-to-node (centres the associated node).
+- Composer **permission-mode names** (Ask / Auto-edit / Plan / Auto / Unrestricted) — `ui/state/PermissionModes`.
+- **Status priority reducer** (`ui/state/StatusModel`) — a late "Thinking" no longer clobbers "Editing X.kt".
+  (Interpreter still *emits* a Thinking status; the reducer demotes it. Verify, don't rebuild.)
 
-Improve fidelity where the CLI's stream lacks structure:
+---
 
-- Real diagnostics: wire `ide` `getDiagnostics` (currently a stub) and/or `mcp__studio__get_file_problems`
-  so errors/warnings attach to files without parsing Bash output.
-- A denied tool still renders as attempted activity — reconcile with `can_use_tool` deny so denied
-  actions are marked distinctly (or not shown).
-- Broaden command parsing: Maven, Bazel, npm/yarn/pnpm scripts, `adb`, lint/detekt/ktlint output.
-- Correlate `mcp__studio__build_project` / `execute_run_configuration` results to build/test state.
-- Confidence tuning + a legend for node colours/states.
+# P0 — before external testers (Release Candidate 0.1)
 
-## Agent Activity Map — Phase 3: timeline replay & persistence
+Ordered cheapest-first within the release. Items 1–3 are pure code; 4 gates on a real IDE; 5 follows.
 
-- Session history: pause/resume live updates, select a past event, **replay** graph activity.
-- Filter timeline by event type; jump-to-node from a timeline entry (partially done).
-- Persist session metadata only (node ids/labels/paths/categories/timestamps/summaries — never
-  source contents or reasoning); "keep recent sessions" option; "clear all history".
+## 1. `getDiagnostics` honesty (cheap, high trust)
 
-## Smaller polish / ideas
+`IdeServer.getDiagnostics` returns a literal `"[]"` while still being advertised in `tools/list`. Claude
+can read "no diagnostics" as "code is clean." Return a structured, scoped result instead:
 
-- Legend for node colours & states.
-- Minimap / better fit for large graphs; group low-value nodes into collapsed clusters.
-- Keyboard navigation of nodes; focus-follows-agent auto-centering toggle.
-- Live verification in Android Studio (still open): IDE-side tool behaviours, openDiff dialog,
-  double-prompt interaction between interactiveApproval and permission modes.
+```json
+{ "available": true,
+  "files": [ { "path": "…/ClaudePanel.kt",
+    "problems": [ { "severity": "ERROR", "message": "Unresolved reference", "line": 214, "column": 17, "source": "Kotlin" } ] } ] }
+```
+
+- Scope: current file, open files, recently edited, or an explicitly requested path — **never** a
+  project-wide sweep (thousands of low-value nodes on a large Android project).
+- During indexing return `{ "available": false, "reason": "IDE indexing is in progress" }`. Never `[]`
+  when data couldn't be collected.
+- Retrieval: background read action, only after highlighting is available, cancellable, cached by
+  document modification stamp.
+
+## 2. Stop swallowing protocol errors (cheap)
+
+`ClaudePanel.handleEvent` has an **empty** `catch`, and the parse guard silently `return`s; a malformed
+approval/result event can leave the UI inconsistent with no trail. Replace with:
+
+- Structured plugin logging (`thisLogger()`): event type/subtype + safely-truncated payload metadata.
+  **Never** log full prompts, source, tokens, or secrets.
+- A local malformed-event counter; non-blocking UI recovery.
+- Surface a visible message only when the failure affects the session
+  ("Claude response could not be processed. See plugin logs."). Optional stream deltas can stay silent.
+
+## 3. Workspace-boundary protection (the real safety fix)
+
+The `ide` bridge accepts arbitrary paths for `openFile` / `openDiff` / `saveDocument`, and an accepted
+diff is written straight to the requested path — `writeFile` will even `createDirectoryIfMissing`
+anywhere on disk. Before any external tester:
+
+- Put the policy in a **platform-free, unit-tested** helper (canonicalise → resolve symlinks →
+  classify: inside-root / outside-root / sensitive).
+- Policy: inside project → follow the permission mode; outside project → always ask regardless of mode;
+  sensitive locations (IDE config, `.ssh`, credentials, unrelated home files) → reject by default.
+- Reads outside the project only when explicitly intended; writes outside require an extra clear
+  confirmation showing the **full external path** prominently.
+
+## 4. Live Android Studio verification (release gate, not "polish")
+
+Validates 1–3 and settles the open **double-approval** question (does `can_use_tool`'s ApprovalBlock
+*and* `openDiff`'s Accept/Reject both fire for one edit? — reproduce before refactoring). Verify:
+
+- CLI missing / unauthenticated / outdated. New & existing Android projects. Indexing. Kotlin & Java.
+- Read-only files, unsaved docs, file create, file delete. Diff accepted / rejected. Tool denied.
+- Claude stopped mid-tool. AS closed mid-session. Multiple projects open. Light & dark themes.
+- All five permission modes. Stale IDE lock-file cleanup + reconnection after unexpected shutdown.
+- `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open —
+  check for deadlock/UI-block under this pass.
+
+## 5. Correct denied / cancelled activity
+
+Nodes are created from `tool_use` before the deny control-response arrives, so a denied tool currently
+looks executed. `ActivityNodeState` has no denial/cancellation states. Add an explicit lifecycle:
+
+```
+REQUESTED → AWAITING_APPROVAL → APPROVED → RUNNING → SUCCEEDED | FAILED
+                              ↘ DENIED (user decision — NOT an error)   ↘ CANCELLED
+```
+
+- Visuals: pending = dotted amber; approved/running = active; denied = muted + blocked icon;
+  failed = red; cancelled = grey.
+- Correlate `request_id` / `tool_use_id` / tool name / path so protocol events for one operation reconcile.
+- Transcript: `Edit blocked · ClaudePanel.kt` / "Denied by user". Timeline keeps the attempt, but the
+  map must **not** add a success edge or mark the file modified.
+- If item 4 confirms the double-prompt: define one lifecycle so Ask mode uses the diff review *as* the
+  approval (no duplicate generic card for the same edit); Auto-edit applies then offers View diff + Undo;
+  Plan = no writes; Unrestricted = no prompt but still records activity. Commands keep the normal card.
+
+---
+
+# Marketplace mechanics (parallel track — start now)
+
+Independent of features; gates the listing. Missed until now.
+
+- **Trademark / naming.** A third-party plugin on Anthropic's "Claude" mark driving their CLI can draw
+  Marketplace-review or vendor objection. Decide early (e.g. "Panel for Claude Code", clearly *unofficial*,
+  "requires the separately-installed Claude CLI + subscription"). Highest-leverage — can invalidate the listing.
+- **Compatibility range + `verifyPlugin`.** The build targets `local(Android Studio)` (build 261) — fine
+  for dev, wrong for a portable artifact. Set real `sinceBuild`/`untilBuild`; pass the IntelliJ Plugin
+  Verifier (no internal-API usage, binary compat across the range).
+- **Plugin metadata.** `<vendor>`, real `<description>` + `<change-notes>`, plugin icon, honest
+  "requires Claude CLI" wording.
+
+---
+
+# P1 — before public Marketplace release (0.2)
+
+## 6. Android-first command interpreter
+
+Skip Maven/Bazel/npm/yarn/pnpm unless targeting IntelliJ products beyond Android Studio.
+
+**Done (console parsing):** Gradle & wrapper, unit + instrumented/connected tests, `adb`
+(install/uninstall/shell-launch/logcat with human labels), Android lint / detekt / ktlint recognised
+as static-analysis runs whose output is parsed into **file-attributed** errors/warnings
+(`OutputParsers.parseAnalysisDiagnostics`, `analysisTool`, `adbAction`) — all unit-tested.
+
+**Remaining:**
+- Prefer **structured outputs** (JUnit XML, Gradle test-result XML, lint/detekt XML/SARIF, task exit
+  status) over console text. These live in files the console doesn't echo, so this needs a small
+  IDE-side reader (off-EDT) that the interpreter consumes — not pure text parsing.
+- Correlate command → build → suite → failures → **referenced files** as real graph edges (today the
+  analysis findings create their own diagnostic nodes; link them back to the command/gradle node).
+- emulator/device launch outcomes; `logcat` crash extraction.
+
+## 7. PSI Phase 2a — cheap, reliable relationships only
+
+Full Phase 2 (`ReferencesSearch`, call graphs) is too broad and visually noisy for one release. **Enrich
+only files Claude already touched**, lazily, cached by modification stamp — never a project-wide pass:
+
+- File → module / package / imported file. Class → superclass/interfaces. Test file → likely
+  production file. Android resource → referencing source. Navigation destination → screen/composable.
+- Rules: background read actions, respect `DumbService`, lazy-expand, cancel on session end.
+- Lazy tiers: basic on first touch → references/usages on select → call relationships only on explicit
+  "Calls" / blast-radius request.
+
+## 8. Evidence provenance (before any pattern detection)
+
+Attach evidence to relationships so "architecture detection" is trustworthy, not decorative:
+
+```kotlin
+data class RelationshipEvidence(val source: EvidenceSource, val confidence: Float,
+    val explanation: String, val sourcePath: String?, val sourceSymbol: String?)
+enum class EvidenceSource { STRUCTURED_TOOL_EVENT, PSI_DECLARATION, PSI_REFERENCE, IMPORT,
+    NAMING_HEURISTIC, PATH_HEURISTIC, COMMAND_OUTPUT }
+```
+
+Inspector then shows *why* (e.g. "DriverRepositoryImpl implements DriverRepository").
+
+## 9. Cluster collapsing & basic keyboard access
+
+- Collapse: hide low-value labels → collapse historical nodes by category → aggregate repeated
+  command/test nodes → "Show more" → better Fit. (Minimap only if navigation is still hard — the panel
+  already has Fit + node caps, so it isn't the bottleneck.)
+- Keyboard (pre-public): Tab into graph, Esc closes inspector, Enter opens selected file, no accidental
+  delete, keyboard access to Chat/Activity switch and approval actions.
+
+---
+
+# P2 — after launch
+
+## 10. Phase 2b — on-demand deep relationships (0.3)
+
+Deferred because false claims / graph explosions concentrate here: full call graphs, broad
+`ReferencesSearch`, ViewModel→Composable / Repository→service / UseCase→Repository inference, automated
+pattern detection (with the evidence model above). Focus-follows-agent (default on; suspend on any user
+pan/zoom/drag/select/inspector; small "Resume following"). Advanced keyboard: arrow-key spatial nav,
+search-driven selection, next/prev active event.
+
+## 11. Timeline replay & persistence (0.4)
+
+Append-only event log; replay builds a **separate** graph state up to a selected sequence — never
+mutates the live graph ("N new events · Return to live"). Introduce the Freeze / Stop-following / Replay
+distinction the pause button hints at.
+
+```kotlin
+data class RecordedActivityEvent(val schemaVersion: Int, val sequence: Long,
+    val timestamp: Instant, val sessionId: String, val event: AgentActivityEvent)
+```
+
+Persistence: workspace-relative paths only; **never** absolute paths, source contents, prompts, or
+reasoning; versioned schema; max session count + retention; delete-one / clear-all. Default **off** in
+beta (current session in memory); opt-in retention of the last ~10 sessions.
+
+## 12. Health / preflight panel
+
+Small diagnostic screen: Claude CLI found + version, auth, IDE bridge, workspace, permission mode, AS
+version, activity events, diagnostics availability. Actions: Recheck, Open settings, Copy sanitised
+report, Open logs. High support-cost saver for early users.

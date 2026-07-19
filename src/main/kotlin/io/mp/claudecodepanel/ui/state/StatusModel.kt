@@ -1,5 +1,6 @@
 package io.mp.claudecodepanel.ui.state
 
+import io.mp.claudecodepanel.activity.ActivityDenied
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.BuildReported
 import io.mp.claudecodepanel.activity.CommandRun
@@ -107,6 +108,10 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
             is WarningObserved -> offer(tool(StatusKind.WARNING, "Warning", short(event.message, 60), now))
             is WebActivity -> offer(tool(StatusKind.RUNNING, "Fetching " + short(event.label, 40), null, now))
             is ToolInvoked -> offer(tool(StatusKind.WORKING, "Using " + event.summary, null, now))
+            is ActivityDenied -> {
+                val verb = if (event.cancelled) "Cancelled" else "Blocked"
+                offer(outcome(StatusKind.WARNING, "$verb ${event.toolName}", "not run", now))
+            }
         }
     }
 

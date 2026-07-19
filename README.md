@@ -1,6 +1,6 @@
-# Claude Code Panel
+# Sightline for Claude Code
 
-A **graphical Claude Code chat panel for Android Studio** (and other IntelliJ‑based IDEs).
+**Sightline** is a **graphical chat panel for Claude Code in Android Studio** (and other IntelliJ‑based IDEs).
 It drives your locally installed `claude` CLI over its streaming‑JSON protocol and renders the
 conversation — streaming replies, extended thinking, tool calls, edits with diffs, and results —
 inside a **native Swing tool window**. No embedded browser, no runtime changes: it works on the
@@ -39,13 +39,13 @@ stock Android Studio runtime.
 Installable zip:
 
 ```
-build/distributions/claude-code-panel-0.1.0.zip
+build/distributions/sightline-for-claude-code-0.6.0.zip
 ```
 
 ## Install into Android Studio
 
 1. **Settings → Plugins → ⚙ → Install Plugin from Disk…**
-2. Choose `build/distributions/claude-code-panel-0.1.0.zip`
+2. Choose `build/distributions/sightline-for-claude-code-0.6.0.zip`
 3. Restart the IDE.
 4. Open the **Claude** tool window on the right edge and start chatting.
 

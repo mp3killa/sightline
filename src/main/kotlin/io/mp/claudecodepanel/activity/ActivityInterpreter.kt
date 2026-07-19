@@ -16,7 +16,7 @@ import java.time.Instant
  */
 class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
 
-    private enum class Kind { READ, EDIT, WRITE, SEARCH, BASH, GRADLE, TEST, SYMBOL, DIAGNOSTICS, WEB, OTHER }
+    private enum class Kind { READ, EDIT, WRITE, SEARCH, BASH, GRADLE, TEST, ANALYSIS, SYMBOL, DIAGNOSTICS, WEB, OTHER }
     private data class Pending(val kind: Kind, val name: String, val path: String?, val command: String?)
 
     private val pending = HashMap<String, Pending>()
@@ -31,6 +31,20 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
 
     fun taskDone(summary: String, isError: Boolean): List<AgentActivityEvent> =
         listOf(TaskCompleted(summary, isError, clock()))
+
+    /**
+     * The user denied (or cancelled) a pending tool. Correlated to its tool_use via [id]; the
+     * remembered pending entry supplies the path/command so the graph can find and block the node it
+     * created. Removing the pending entry also prevents a late result from re-animating it.
+     */
+    fun toolDenied(id: String?, toolName: String, input: JsonObject?, cancelled: Boolean = false): List<AgentActivityEvent> {
+        val p = id?.let { pending.remove(it) }
+        val inp = input ?: JsonObject()
+        val path = p?.path ?: inp.str("file_path") ?: inp.str("notebook_path")
+            ?: inp.str("new_file_path") ?: inp.str("old_file_path")
+        val command = p?.command ?: inp.str("command")
+        return listOf(ActivityDenied(id, toolName, path, command, cancelled, clock()))
+    }
 
     /** A tool_use block: name + parsed input + optional id (id lets us correlate the result). */
     fun toolUse(id: String?, rawName: String, input: JsonObject?): List<AgentActivityEvent> {
@@ -93,6 +107,15 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
             }
         }
 
+        // Static-analysis output (lint/detekt/ktlint): attach findings to the files they name.
+        if (p != null && p.kind == Kind.ANALYSIS) {
+            for (d in OutputParsers.parseAnalysisDiagnostics(text)) {
+                if (d.isError) out.add(ErrorObserved(d.path, d.message, now))
+                else out.add(WarningObserved(d.path, d.message, now))
+            }
+            OutputParsers.parseBuildOutcome(text)?.let { ok -> out.add(BuildReported(ok, firstLine(text), now)) }
+        }
+
         if (isError) {
             // Attribute the failure to the file we know this tool touched, if any.
             val path = p?.path
@@ -108,9 +131,21 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
         out: MutableList<AgentActivityEvent>,
         remember: (Kind, String?, String?) -> Unit,
     ) {
+        val adb = OutputParsers.adbAction(cmd)
+        val analysis = OutputParsers.analysisTool(cmd)
         val gradleTasks = OutputParsers.extractGradleTasks(cmd)
         val isTest = OutputParsers.isTestCommand(cmd)
         when {
+            adb != null -> {
+                remember(Kind.BASH, null, cmd)
+                out.add(CommandRun(cmd, desc ?: OutputParsers.adbDescription(cmd), now))
+            }
+            analysis != null -> {
+                // Static analysis (lint/detekt/ktlint) — its output attaches diagnostics to files.
+                remember(Kind.ANALYSIS, null, cmd)
+                if (gradleTasks.isNotEmpty()) gradleTasks.forEach { out.add(GradleTaskRun(it, now)) }
+                else out.add(CommandRun(cmd, desc ?: "$analysis static analysis", now))
+            }
             gradleTasks.isNotEmpty() -> {
                 remember(if (isTest) Kind.TEST else Kind.GRADLE, null, cmd)
                 // A gradle *test* task is a single Testing-cluster node (avoid a duplicate gradle +

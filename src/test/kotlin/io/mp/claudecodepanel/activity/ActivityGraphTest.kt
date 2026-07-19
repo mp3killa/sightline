@@ -65,6 +65,46 @@ class ActivityGraphTest {
         assertNotNull(edge)
     }
 
+    @Test fun deniedEditIsBlockedAndDropsPatchEdge() {
+        val g = freshGraph()
+        g.apply(FileEdited("/a/Foo.kt", created = false, at = tick()))
+        // sanity: the optimistic patch edge exists before denial
+        assertTrue(g.edges.any {
+            it.targetNodeId == "file:/a/Foo.kt" && it.type == ActivityEdgeType.GENERATED_FROM
+        })
+        g.apply(ActivityDenied(toolUseId = "toolu_1", toolName = "Edit", path = "/a/Foo.kt", command = null, at = tick()))
+        val file = g.node("file:/a/Foo.kt")!!
+        assertEquals(ActivityNodeState.DENIED, file.state)
+        // the file must no longer read as modified: no generated-patch edge survives
+        assertFalse(g.edges.any {
+            it.targetNodeId == "file:/a/Foo.kt" && it.type == ActivityEdgeType.GENERATED_FROM
+        })
+        assertEquals("Denied", g.focus.verb)
+    }
+
+    @Test fun deniedCommandIsBlocked() {
+        val g = freshGraph()
+        g.apply(CommandRun("rm -rf build", "clean", tick()))
+        g.apply(ActivityDenied("toolu_2", "Bash", path = null, command = "rm -rf build", at = tick()))
+        val cmd = g.nodes.firstOrNull { it.type == ActivityNodeType.COMMAND }
+        assertNotNull(cmd)
+        assertEquals(ActivityNodeState.DENIED, cmd!!.state)
+    }
+
+    @Test fun deniedUnknownToolIsFocusOnlyNotAnError() {
+        val g = freshGraph()
+        val primary = g.apply(ActivityDenied("toolu_3", "SomeTool", path = null, command = null, at = tick()))
+        assertNull(primary)
+        assertEquals("Denied", g.focus.verb)
+    }
+
+    @Test fun cancelledUsesCancelledState() {
+        val g = freshGraph()
+        g.apply(FileEdited("/a/Foo.kt", created = false, at = tick()))
+        g.apply(ActivityDenied("toolu_4", "Edit", path = "/a/Foo.kt", command = null, cancelled = true, at = tick()))
+        assertEquals(ActivityNodeState.CANCELLED, g.node("file:/a/Foo.kt")!!.state)
+    }
+
     @Test fun confidenceTakesTheMaximum() {
         val g = freshGraph()
         g.apply(FileRead("/a/Foo.kt", tick(), confidence = 0.3f))

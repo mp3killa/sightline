@@ -1,8 +1,10 @@
-# Claude Code Panel — internal notes
+# Sightline for Claude Code — internal notes
 
-A native **Android Studio / IntelliJ plugin** that wraps the `claude` CLI in a graphical chat
-panel (message bubbles, collapsible tool cards, diffs, interactive approval, IDE integration).
-It drives the CLI over its streaming-JSON protocol and renders everything in **native Swing**.
+**Sightline** (product name; formerly "Claude Code Panel") is a native **Android Studio / IntelliJ
+plugin** that wraps the `claude` CLI in a graphical chat panel (message bubbles, collapsible tool
+cards, diffs, interactive approval, IDE integration). It drives the CLI over its streaming-JSON
+protocol and renders everything in **native Swing**. The Kotlin package stays `io.mp.claudecodepanel`
+and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutral, trademark-safe name).
 
 > Detailed, reverse-engineered CLI protocol facts live in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 > Read that before touching `ClaudeSession` or `IdeServer`.
@@ -17,7 +19,8 @@ It drives the CLI over its streaming-JSON protocol and renders everything in **n
 | `activity/*.kt` | Platform-free, unit-tested core of the map: `AgentActivityEvent` (normalised event model), `ActivityModel` (graph data model — node/edge/category/state/timeline types), `ActivityInterpreter` (raw tool events → normalised events), `ActivityGraph` (reducer → nodes/edges/clusters/focus/timeline), `ActivityClassifier` (path → cluster), `OutputParsers` (Gradle/compiler/test output), `ActivityColorRole` (state → theme role), `ActivityMapRenderer` (headless PNG preview) |
 | `process/ClaudeSession.kt` | Owns one persistent `claude -p` process; stdin/stdout stream-json plumbing; control-protocol responses; `--mcp-config` wiring |
 | `process/ClaudePathResolver.kt` | Finds the `claude` binary in GUI-launched IDEs (login-shell PATH) |
-| `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, …) |
+| `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, **scoped `getDiagnostics`**, …). Path-taking tools are gated by `PathAccessPolicy`. |
+| `ide/PathAccessPolicy.kt` | Platform-free (unit-tested) path guard: canonicalises + classifies open/diff/write targets as inside-project / outside / **sensitive** (refuse); writes outside the project need an extra confirm |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI |
 
 ### Agent Activity Map (v0.6.0)
@@ -28,6 +31,10 @@ Replaces the generic "Thinking…" indicator with a live graph of **observable**
 which emits `AgentActivityEvent`s that `ActivityGraph` reduces into nodes/edges/clusters. The
 `activity/` package has **no IntelliJ-platform imports**, so it's covered by plain JUnit4 tests in
 `src/test` (interpreter, reducer, classifier, parsers, colour roles, and a full 9-step sequence).
+Denied/cancelled tools are reconciled honestly: a `can_use_tool` deny feeds `ActivityInterpreter.toolDenied`
+(correlated by `tool_use_id`), which emits `ActivityDenied`; the graph marks the node `DENIED`/`CANCELLED`
+(muted **BLOCKED** colour role, dashed ring), drops the optimistic patch edge, and the transcript card
+shows "Denied by user" — a denied edit never looks executed. Denial is **not** an error.
 Structured tool events are high-confidence; text/heuristic guesses are lower-confidence and drawn
 subtler. Prose is **never** mined for file names. The map physics run on a Swing `Timer` that only
 ticks while the component is showing and auto-suspends when idle; "reduce motion" settles statically.
@@ -49,7 +56,7 @@ thinking/tool cards (compact mode). User turns are rounded `Bubble`s.
 ```bash
 # ALWAYS build with Android Studio's bundled JBR 21 (set in gradle.properties):
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-./gradlew buildPlugin           # -> build/distributions/claude-code-panel-<version>.zip
+./gradlew buildPlugin           # -> build/distributions/sightline-for-claude-code-<version>.zip
 ./gradlew runIde                # sandbox AS with the plugin
 ```
 

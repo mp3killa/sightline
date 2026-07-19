@@ -120,6 +120,21 @@ data class ToolInvoked(
     override val confidence: Float = 1f,
 ) : AgentActivityEvent
 
+/**
+ * The user denied a pending tool (or it was cancelled before executing). Correlated to the node the
+ * tool_use created via [toolUseId]/[path]/[command] so the graph can mark it blocked and undo any
+ * optimistic "modified" signal — a denied action must never look executed.
+ */
+data class ActivityDenied(
+    val toolUseId: String?,
+    val toolName: String,
+    val path: String?,
+    val command: String?,
+    val cancelled: Boolean = false,
+    override val at: Instant,
+    override val confidence: Float = 1f,
+) : AgentActivityEvent
+
 /** The task finished — marks touched nodes complete and closes any generated patch. */
 data class TaskCompleted(
     val summary: String,

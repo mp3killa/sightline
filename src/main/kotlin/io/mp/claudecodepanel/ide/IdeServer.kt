@@ -3,26 +3,34 @@ package io.mp.claudecodepanel.ide
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.SelectionEvent
 import com.intellij.openapi.editor.event.SelectionListener
+import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.JBUI
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
@@ -41,6 +49,10 @@ import javax.swing.JComponent
  * lock file to `~/.claude/ide/<port>.lock` and, once the CLI connects (authenticated with the
  * token), answers tool calls (selection, open editors, workspace, diff, diagnostics) and pushes
  * `selection_changed` notifications.
+ *
+ * Path-taking tools (`openFile`, `openDiff`, `saveDocument`) are gated by [PathAccessPolicy]:
+ * sensitive locations are refused outright, and writes outside the project require an extra explicit
+ * confirmation showing the full external path.
  */
 @Service(Service.Level.PROJECT)
 class IdeServer(private val project: Project) : Disposable {
@@ -53,6 +65,23 @@ class IdeServer(private val project: Project) : Disposable {
     private var server: Srv? = null
     private var lockFile: File? = null
     @Volatile private var lastSelection: JsonObject? = null
+
+    /** path -> (document modification stamp, collected problems) so unchanged files aren't re-scanned. */
+    private val diagnosticsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, JsonArray>>()
+
+    /** Guards which paths the bridge may open/diff/write. Built once from the project's content roots. */
+    private val pathPolicy: PathAccessPolicy by lazy { PathAccessPolicy(projectRoots()) }
+
+    private fun projectRoots(): List<String> {
+        val roots = mutableListOf<String>()
+        project.basePath?.let { roots.add(it) }
+        try {
+            ApplicationManager.getApplication().runReadAction {
+                ProjectRootManager.getInstance(project).contentRoots.forEach { roots.add(it.path) }
+            }
+        } catch (_: Exception) {}
+        return roots.distinct()
+    }
 
     @Synchronized
     fun ensureStarted(): Boolean {
@@ -187,7 +216,11 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("getLatestSelection", "Get the most recent text selection"))
         tools.add(tool("getOpenEditors", "Get information about currently open editors"))
         tools.add(tool("getWorkspaceFolders", "Get all workspace folders open in the IDE"))
-        tools.add(tool("getDiagnostics", "Get language diagnostics from the IDE"))
+        tools.add(tool("getDiagnostics", "Get IDE language diagnostics (errors/warnings) for a file. " +
+            "Pass `uri` (or `filePath`) to scope to one file; omit to report the current + open editors. " +
+            "Returns {available, files:[{path, problems:[{severity,message,line,column,source}]}]}. " +
+            "`available:false` means the data could not be collected (e.g. indexing) — not that the code is clean.",
+            JsonObject().apply { add("uri", JsonObject().apply { addProperty("type", "string") }) }))
         tools.add(tool("openFile", "Open a file in the editor"))
         tools.add(tool("openDiff", "Open a diff view for proposed changes (blocking)"))
         tools.add(tool("close_tab", "Close a tab by name"))
@@ -202,7 +235,7 @@ class IdeServer(private val project: Project) : Disposable {
         "getLatestSelection" -> lastSelection?.let { obj("success" to true).merge(it).toString() } ?: fail("No selection available")
         "getOpenEditors" -> onEdt { openEditors() } ?: "{\"tabs\":[]}"
         "getWorkspaceFolders" -> workspaceFolders()
-        "getDiagnostics" -> "[]"
+        "getDiagnostics" -> getDiagnostics(args)
         "openFile" -> openFile(args)
         "openDiff" -> openDiff(args)
         "close_tab" -> "TAB_CLOSED"
@@ -284,8 +317,88 @@ class IdeServer(private val project: Project) : Disposable {
         }.toString()
     }
 
+    /**
+     * Honest, scoped diagnostics. Never returns an empty array to mean "clean": if the data can't be
+     * collected (indexing, no target) it returns `available:false` with a reason. Scope is a single
+     * requested file, else the current + open editors — never a project-wide sweep.
+     */
+    private fun getDiagnostics(args: JsonObject): String {
+        if (DumbService.getInstance(project).isDumb) {
+            return JsonObject().apply {
+                addProperty("available", false); addProperty("reason", "IDE indexing is in progress")
+            }.toString()
+        }
+        val requested = (args.str("uri") ?: args.str("filePath"))?.let { uriToPath(it) }
+        val filesJson = onEdt {
+            val fdm = FileDocumentManager.getInstance()
+            val targets: List<VirtualFile> = if (requested != null) {
+                listOfNotNull(LocalFileSystem.getInstance().findFileByPath(requested))
+            } else {
+                val fem = FileEditorManager.getInstance(project)
+                val active = fem.selectedTextEditor?.let { fdm.getFile(it.document) }
+                (listOfNotNull(active) + fem.openFiles.toList()).distinct()
+            }
+            JsonArray().apply {
+                for (vf in targets) {
+                    val doc = fdm.getDocument(vf) ?: continue
+                    add(JsonObject().apply {
+                        addProperty("path", vf.path)
+                        add("problems", problemsFor(vf, doc))
+                    })
+                }
+            }
+        }
+        if (requested != null && filesJson != null && filesJson.isEmpty) {
+            return JsonObject().apply {
+                addProperty("available", false)
+                addProperty("reason", "File is not open in the IDE: $requested")
+            }.toString()
+        }
+        return JsonObject().apply {
+            addProperty("available", true)
+            add("files", filesJson ?: JsonArray())
+        }.toString()
+    }
+
+    /** Reads daemon highlights (>= weak-warning) from a document's markup model; cached by mod stamp. */
+    private fun problemsFor(vf: VirtualFile, doc: Document): JsonArray {
+        val stamp = doc.modificationStamp
+        diagnosticsCache[vf.path]?.let { (cachedStamp, cached) -> if (cachedStamp == stamp) return cached }
+        val out = JsonArray()
+        val markup = DocumentMarkupModel.forDocument(doc, project, false)
+        val source = vf.fileType.name.replaceFirstChar { it.uppercase() }
+        for (h in markup.allHighlighters) {
+            val info = h.errorStripeTooltip as? HighlightInfo ?: continue
+            if (info.severity < HighlightSeverity.WEAK_WARNING) continue
+            val offset = info.startOffset
+            if (offset < 0 || offset > doc.textLength) continue
+            val line = doc.getLineNumber(offset)
+            out.add(JsonObject().apply {
+                addProperty("severity", severityLabel(info.severity))
+                addProperty("message", info.description ?: "")
+                addProperty("line", line + 1)
+                addProperty("column", offset - doc.getLineStartOffset(line) + 1)
+                addProperty("source", source)
+            })
+            if (out.size() >= 200) break // cap per file — don't flood the model on a huge file
+        }
+        diagnosticsCache[vf.path] = stamp to out
+        return out
+    }
+
+    private fun severityLabel(sev: HighlightSeverity): String = when {
+        sev >= HighlightSeverity.ERROR -> "ERROR"
+        sev >= HighlightSeverity.WARNING -> "WARNING"
+        sev >= HighlightSeverity.WEAK_WARNING -> "WEAK_WARNING"
+        else -> "INFO"
+    }
+
+    private fun uriToPath(uriOrPath: String): String =
+        if (uriOrPath.startsWith("file://")) File(java.net.URI(uriOrPath)).path else uriOrPath
+
     private fun openFile(args: JsonObject): String {
         val path = args.str("filePath") ?: return fail("filePath required")
+        if (pathPolicy.classify(path) == PathAccess.SENSITIVE) return refused(path)
         val ok = onEdt {
             val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(path) ?: return@onEdt false
             FileEditorManager.getInstance(project).openFile(vf, true)
@@ -299,6 +412,9 @@ class IdeServer(private val project: Project) : Disposable {
         val newPath = args.str("new_file_path") ?: oldPath ?: return fail("no path")
         val newContents = args.str("new_file_contents") ?: ""
         val tabName = args.str("tab_name") ?: "Proposed changes"
+        val access = pathPolicy.classify(newPath)
+        // A protected location is never written, regardless of permission mode or diff acceptance.
+        if (access == PathAccess.SENSITIVE) return refused(newPath)
         val accepted = onEdt {
             val dcf = DiffContentFactory.getInstance()
             val fileType = FileTypeManager.getInstance().getFileTypeByFileName(newPath)
@@ -320,11 +436,31 @@ class IdeServer(private val project: Project) : Disposable {
                 }
             }
             val ok = dialog.showAndGet()
-            if (ok) writeFile(newPath, newContents)
+            if (ok) {
+                // Writing outside the project needs a second, explicit confirmation of the full path.
+                if (access == PathAccess.OUTSIDE_PROJECT && !confirmExternalWrite(newPath)) return@onEdt false
+                writeFile(newPath, newContents)
+            }
             ok
         } ?: false
         return if (accepted) "FILE_SAVED" else "DIFF_REJECTED"
     }
+
+    /** Blocking yes/no shown on the EDT before writing outside the project; surfaces the full path. */
+    private fun confirmExternalWrite(path: String): Boolean =
+        Messages.showYesNoDialog(
+            project,
+            "Claude is asking to write to a file OUTSIDE this project:\n\n$path\n\nAllow this write?",
+            "Write outside project?",
+            "Write file", "Cancel",
+            Messages.getWarningIcon(),
+        ) == Messages.YES
+
+    private fun refused(path: String): String = JsonObject().apply {
+        addProperty("success", false)
+        addProperty("refused", true)
+        addProperty("message", "Refused: \"$path\" is a protected location outside the workspace and cannot be accessed.")
+    }.toString()
 
     private fun writeFile(path: String, contents: String) {
         WriteCommandAction.runWriteCommandAction(project) {
@@ -361,6 +497,7 @@ class IdeServer(private val project: Project) : Disposable {
 
     private fun saveDoc(args: JsonObject): String {
         val path = args.str("filePath") ?: return fail("filePath required")
+        if (pathPolicy.classify(path) == PathAccess.SENSITIVE) return refused(path)
         return onEdt {
             val vf = LocalFileSystem.getInstance().findFileByPath(path) ?: return@onEdt fail("Document not open: $path")
             val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@onEdt fail("Document not open: $path")

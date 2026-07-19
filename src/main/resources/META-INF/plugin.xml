@@ -1,18 +1,20 @@
 <idea-plugin>
     <id>io.mp.claudecodepanel</id>
-    <name>Claude Code Panel</name>
+    <name>Sightline for Claude Code</name>
     <version>0.6.0</version>
     <vendor email="mp3killa@gmail.com">mp</vendor>
 
     <description><![CDATA[
-        A graphical <b>Claude Code</b> chat panel for Android Studio and IntelliJ-based IDEs,
-        inspired by the VS Code Claude Code experience. It drives your locally installed
+        <b>Sightline</b> is a graphical chat panel for <b>Claude Code</b> in Android Studio and
+        IntelliJ-based IDEs, inspired by the VS Code Claude Code experience. It drives your locally installed
         <code>claude</code> CLI over its streaming-JSON protocol and renders the conversation —
         streaming replies, extended thinking, tool calls, edits, and results — in a native
         Swing tool window with message bubbles and a Claude Code-style composer.
         <br/><br/>
         <b>Requires the Claude Code CLI</b> to be installed (the <code>claude</code> command).
-        This plugin is an independent wrapper and is not affiliated with Anthropic.
+        Sightline is an independent, unofficial wrapper and is not affiliated with or endorsed by
+        Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic; used here only to describe
+        compatibility.
     ]]></description>
 
     <change-notes><![CDATA[
@@ -31,14 +33,14 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Claude"
+        <toolWindow id="Sightline"
                     anchor="right"
                     factoryClass="io.mp.claudecodepanel.ClaudeToolWindowFactory"
                     icon="/icons/claudeToolWindow.svg"/>
         <applicationService serviceImplementation="io.mp.claudecodepanel.settings.ClaudeSettings"/>
         <applicationConfigurable parentId="tools"
                                  id="io.mp.claudecodepanel.settings"
-                                 displayName="Claude Code Panel"
+                                 displayName="Sightline for Claude Code"
                                  instance="io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable"/>
     </extensions>
 </idea-plugin>

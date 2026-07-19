@@ -108,6 +108,16 @@ object ActivityMapRenderer {
                 g.drawOval(x - r - 3, y - r - 3, (r + 3) * 2, (r + 3) * 2)
                 g.stroke = BasicStroke(1f)
             }
+            if (n.state == ActivityNodeState.DENIED || n.state == ActivityNodeState.CANCELLED) {
+                // A prohibition mark: dashed muted ring + a diagonal slash, so a denied action never
+                // reads as done.
+                g.color = color(ActivityColorRole.BLOCKED, dark)
+                g.stroke = BasicStroke(1.6f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 3f, floatArrayOf(3f, 3f), 0f)
+                g.drawOval(x - r - 3, y - r - 3, (r + 3) * 2, (r + 3) * 2)
+                g.stroke = BasicStroke(1.6f)
+                g.drawLine(x - (r * 0.7).toInt(), y - (r * 0.7).toInt(), x + (r * 0.7).toInt(), y + (r * 0.7).toInt())
+                g.stroke = BasicStroke(1f)
+            }
             // Label with a semi-transparent pill so overlapping labels stay legible.
             g.font = Font(Font.SANS_SERIF, if (n.type == ActivityNodeType.CATEGORY) Font.BOLD else Font.PLAIN, if (n.type == ActivityNodeType.TASK) 15 else 12)
             val fm = g.fontMetrics
@@ -151,6 +161,7 @@ object ActivityMapRenderer {
         ActivityColorRole.WARNING -> rgb(0xB08500, 0xE6C34D, dark)
         ActivityColorRole.SUGGESTION -> rgb(0xC44FA0, 0xF07AC8, dark)
         ActivityColorRole.TASK -> rgb(0x3A3F45, 0xF2F4F8, dark)
+        ActivityColorRole.BLOCKED -> rgb(0x9A8C86, 0xA79A94, dark)
     }
 
     private fun rgb(light: Int, dark: Int, isDark: Boolean) = Color(if (isDark) dark else light)

@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.fileChooser.FileChooser
@@ -172,6 +173,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private var curToolId: String? = null
     private val curToolJson = StringBuilder()
     private var target: StyledDocument? = null
+    private var malformedEventCount = 0
     private val toolCardsById = HashMap<String, ToolCard>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
@@ -538,9 +540,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     private fun handleEvent(line: String) {
-        val o = try { JsonParser.parseString(line).asJsonObject } catch (e: Exception) { return }
+        val o = try {
+            JsonParser.parseString(line).asJsonObject
+        } catch (e: Exception) {
+            noteMalformedEvent("<unparseable>", null, null, line.length, e, critical = false)
+            return
+        }
+        val type = o.str("type")
         try {
-            when (o.str("type")) {
+            when (type) {
                 "__panel" -> onPanel(o)
                 "system" -> onSystem(o)
                 "stream_event" -> o.objOrNull("event")?.let { onStream(it) }
@@ -550,6 +558,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 "control_request" -> onControlRequest(o)
             }
         } catch (e: Exception) {
+            // A malformed approval/result event can leave the UI inconsistent — surface those; ignore
+            // best-effort stream deltas. Never log prompt/source/token content, only shape metadata.
+            val critical = type == "control_request" || type == "result"
+            noteMalformedEvent(type ?: "<none>", o.str("subtype"), o, line.length, e, critical)
+        }
+    }
+
+    private fun noteMalformedEvent(
+        type: String, subtype: String?, o: JsonObject?, bytes: Int, e: Exception, critical: Boolean,
+    ) {
+        malformedEventCount++
+        val keys = o?.keySet()?.joinToString(",").orEmpty()
+        thisLogger().warn(
+            "Claude event not processed [#$malformedEventCount] type=$type " +
+                "subtype=${subtype ?: "-"} keys=[$keys] bytes=$bytes", e,
+        )
+        if (critical) {
+            addInfo("Claude response could not be processed. See the plugin log (Help → Show Log) for details.", true)
         }
     }
 
@@ -739,6 +765,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val toolName = req.str("tool_name") ?: "tool"
         val input = req.objOrNull("input") ?: JsonObject()
         val inputJson = input.toString()
+        val toolUseId = req.str("tool_use_id")
         val title = req.str("title") ?: "Allow $toolName?"
         val suggestions = if (req.has("permission_suggestions") && req.get("permission_suggestions").isJsonArray)
             req.getAsJsonArray("permission_suggestions").toString() else null
@@ -746,11 +773,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             title, toolName, input,
             onAllow = { session.respondAllow(reqId, inputJson, null); resolvePermission() },
             onAllowAlways = if (suggestions != null) ({ session.respondAllow(reqId, inputJson, suggestions); resolvePermission() }) else null,
-            onDeny = { session.respondDeny(reqId, "Denied by user"); resolvePermission() },
+            onDeny = { session.respondDeny(reqId, "Denied by user"); resolvePermission(); onToolDenied(toolUseId, toolName, input) },
         )
         turn.addBlock(block)
         statusModel.permissionRequested(); refreshStatus()
         scrollToBottomSoon()
+    }
+
+    /** The user denied a tool: record a blocked node/status (never an execution) and mark its card. */
+    private fun onToolDenied(toolUseId: String?, toolName: String, input: JsonObject) {
+        feed(interpreter.toolDenied(toolUseId, toolName, input))
+        val reason = "Denied by user"
+        toolUseId?.let { toolCardsById[it] }?.markBlocked(reason)
     }
 
     private fun resolvePermission() { statusModel.permissionResolved(); refreshStatus() }
@@ -1084,6 +1118,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
         fun expand() { if (!open) toggle() }
+        /** Marks this tool as denied/cancelled: blocked icon + a muted "not run" note; never looks done. */
+        fun markBlocked(reason: String) {
+            stateLabel.icon = ClaudeIcons.blocked.withSize(13)
+            targetLabel.foreground = mutedFg()
+            target = bodyDoc
+            if (bodyDoc.length > 0) insert("\n", sMuted)
+            insert("⦸ $reason\n", sMuted)
+            target = null
+            relayout()
+        }
         private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D

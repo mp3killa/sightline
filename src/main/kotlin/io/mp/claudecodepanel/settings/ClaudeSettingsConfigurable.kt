@@ -19,7 +19,7 @@ class ClaudeSettingsConfigurable : Configurable {
     private var dialog: DialogPanel? = null
     private val state get() = ClaudeSettings.getInstance().state
 
-    override fun getDisplayName(): String = "Claude Code Panel"
+    override fun getDisplayName(): String = "Sightline for Claude Code"
 
     override fun createComponent(): JComponent {
         val models = listOf("", "opus", "sonnet", "haiku")

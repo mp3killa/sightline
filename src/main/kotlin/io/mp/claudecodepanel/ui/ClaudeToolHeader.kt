@@ -36,7 +36,7 @@ class ClaudeToolHeader(
     private val onMore: (Component) -> Unit,
 ) : JPanel(BorderLayout()) {
 
-    private val brandLabel = JBLabel("Claude Code")
+    private val brandLabel = JBLabel("Sightline")
     private val stateDot = StateDot()
     private val stateLabel = JBLabel("Ready")
     private val segmented = SegmentedControl(

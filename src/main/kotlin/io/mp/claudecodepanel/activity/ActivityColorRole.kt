@@ -7,9 +7,9 @@ package io.mp.claudecodepanel.activity
  * Palette intent (resolved per-theme in the renderer):
  *  GREY idle/historical · CYAN discovered/searched · BLUE read/inspected · PURPLE current focus ·
  *  AMBER editing/proposed · GREEN created/passed/completed · RED error/failed · YELLOW warning ·
- *  PINK generated suggestion/patch · WHITE central task.
+ *  PINK generated suggestion/patch · WHITE central task · MUTED-SLATE denied/cancelled (blocked).
  */
-enum class ActivityColorRole { IDLE, DISCOVERED, READING, FOCUS, EDITING, SUCCESS, ERROR, WARNING, SUGGESTION, TASK }
+enum class ActivityColorRole { IDLE, DISCOVERED, READING, FOCUS, EDITING, SUCCESS, ERROR, WARNING, SUGGESTION, TASK, BLOCKED }
 
 object ActivityColorRoles {
 
@@ -24,6 +24,8 @@ object ActivityColorRoles {
         ActivityNodeState.DELETED, ActivityNodeState.FAILED -> ActivityColorRole.ERROR
         ActivityNodeState.WARNING -> ActivityColorRole.WARNING
         ActivityNodeState.TESTING -> ActivityColorRole.READING
+        // Denial/cancellation are user stops, not failures — muted, never red.
+        ActivityNodeState.DENIED, ActivityNodeState.CANCELLED -> ActivityColorRole.BLOCKED
     }
 
     /** A node's colour role, giving node type precedence for TASK/PATCH which are type-driven. */

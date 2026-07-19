@@ -133,10 +133,14 @@ The CLI talks to an in-IDE **WebSocket MCP** server (MCP spec 2025-03-26 over ws
 
 ### Tools (VS Code registers 12; see `IdeServer.kt`)
 `getCurrentSelection`, `getLatestSelection`, `getOpenEditors` (`{tabs:[{uri,isActive,label,languageId,isDirty}]}`),
-`getWorkspaceFolders` (`{success,folders:[{name,uri,path}],rootPath}`), `getDiagnostics` (per-file array; **stub returns `[]`**),
+`getWorkspaceFolders` (`{success,folders:[{name,uri,path}],rootPath}`),
+`getDiagnostics` (optional `uri`/`filePath`; scoped to that file else current+open editors — never a
+project sweep; returns `{available,files:[{path,problems:[{severity,message,line,column,source}]}]}`,
+`available:false` + `reason` when uncollectable e.g. indexing; reads daemon markup, cached by mod stamp),
 `openFile` (`{filePath,preview,startText,endText,makeFrontmost}`),
 **`openDiff`** (`{old_file_path,new_file_path,new_file_contents,tab_name}` → **blocking**; returns
-`"FILE_SAVED"` on accept / `"DIFF_REJECTED"` on reject; the IDE writes the file on accept),
+`"FILE_SAVED"` on accept / `"DIFF_REJECTED"` on reject; the IDE writes the file on accept. Guarded by
+`PathAccessPolicy`: sensitive targets are refused; writes outside the project require a second confirm),
 `close_tab` (`"TAB_CLOSED"`), `closeAllDiffTabs` (`"CLOSED_<n>_DIFF_TABS"`),
 `checkDocumentDirty`, `saveDocument`, `executeCode` (Jupyter — N/A here).
 Naming: camelCase except `close_tab`. Reference:

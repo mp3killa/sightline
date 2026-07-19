@@ -296,6 +296,14 @@ object ClaudeIcons {
         g.draw(line(s * 0.64f, s * 0.36f, s * 0.36f, s * 0.64f))
     }
 
+    /** A prohibition sign (circle + diagonal bar): a blocked/denied action. */
+    val blocked = icon({ ClaudeUiTokens.textSecondary() }) { g, s, c ->
+        g.color = c; g.stroke = stroke(s, 0.1f)
+        val p = s * 0.16f
+        g.draw(Ellipse2D.Float(p, p, s - 2 * p, s - 2 * p))
+        g.draw(line(s * 0.32f, s * 0.32f, s * 0.68f, s * 0.68f))
+    }
+
     val openFile = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.08f)
         val p = GeneralPath()

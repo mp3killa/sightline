@@ -76,4 +76,13 @@ intellijPlatform {
             // so the plugin stays compatible with future Android Studio builds.
         }
     }
+
+    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier against the
+    // recommended IDE builds for our since/until range (checks for internal-API usage and binary
+    // incompatibilities). Downloads those IDEs on first run, so it is not part of the default build.
+    pluginVerification {
+        ides {
+            recommended()
+        }
+    }
 }

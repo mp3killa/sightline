@@ -22,6 +22,11 @@ class ActivityColorRoleTest {
         assertEquals(ActivityColorRole.READING, ActivityColorRoles.roleForState(ActivityNodeState.READING))
     }
 
+    @Test fun deniedAndCancelledAreBlockedNotError() {
+        assertEquals(ActivityColorRole.BLOCKED, ActivityColorRoles.roleForState(ActivityNodeState.DENIED))
+        assertEquals(ActivityColorRole.BLOCKED, ActivityColorRoles.roleForState(ActivityNodeState.CANCELLED))
+    }
+
     @Test fun nodeTypeOverridesForTaskAndPatch() {
         val now = Instant.now()
         val task = ActivityNode("t", ActivityNodeType.TASK, "task", state = ActivityNodeState.ANALYSING, firstSeenAt = now, lastSeenAt = now)

@@ -19,6 +19,7 @@ import io.mp.claudecodepanel.activity.ActivityColorRole
 import io.mp.claudecodepanel.activity.ActivityColorRoles
 import io.mp.claudecodepanel.activity.ActivityGraph
 import io.mp.claudecodepanel.activity.ActivityNode
+import io.mp.claudecodepanel.activity.ActivityNodeState
 import io.mp.claudecodepanel.activity.ActivityNodeType
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.TimelineEntry
@@ -272,6 +273,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             ActivityColorRole.WARNING to "Warning",
             ActivityColorRole.ERROR to "Error · failed",
             ActivityColorRole.SUGGESTION to "Generated patch",
+            ActivityColorRole.BLOCKED to "Denied · cancelled",
             ActivityColorRole.IDLE to "Idle · historical",
         )
         for ((role, label) in entries) {
@@ -555,6 +557,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         ActivityColorRole.WARNING -> JBColor(0xB08500, 0xE6C34D)
         ActivityColorRole.SUGGESTION -> JBColor(0xC44FA0, 0xF07AC8)
         ActivityColorRole.TASK -> JBColor(0x3A3F45, 0xF2F4F8)
+        ActivityColorRole.BLOCKED -> JBColor(0x9A8C86, 0xA79A94)
     }
 
     private fun canvasBg(): Color {
@@ -735,6 +738,17 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     g2.color = colorForRole(ActivityColorRole.ERROR)
                     val er = r + 3
                     g2.drawOval((s.x - er).toInt(), (s.y - er).toInt(), (er * 2).toInt(), (er * 2).toInt())
+                }
+                if (n.state == ActivityNodeState.DENIED || n.state == ActivityNodeState.CANCELLED) {
+                    // Dashed muted ring + slash so a denied/cancelled action never reads as done.
+                    g2.color = colorForRole(ActivityColorRole.BLOCKED)
+                    g2.stroke = dashedStroke
+                    val br = r + 3
+                    g2.drawOval((s.x - br).toInt(), (s.y - br).toInt(), (br * 2).toInt(), (br * 2).toInt())
+                    g2.stroke = BasicStroke(1.5f)
+                    val d = r * 0.7
+                    g2.drawLine((s.x - d).toInt(), (s.y - d).toInt(), (s.x + d).toInt(), (s.y + d).toInt())
+                    g2.stroke = BasicStroke(1f)
                 }
                 if (n.pinned) { g2.color = accent(); g2.fillOval(s.x + r.toInt() - 2, s.y - r.toInt() - 2, JBUI.scale(5), JBUI.scale(5)) }
                 // Focus pulse: only the active node animates.

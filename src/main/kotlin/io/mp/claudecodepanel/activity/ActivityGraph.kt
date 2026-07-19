@@ -95,6 +95,7 @@ class ActivityGraph(
             is ErrorObserved -> errorNode(event, now)
             is WarningObserved -> warningNode(event, now)
             is WebActivity -> webNode(event, now)
+            is ActivityDenied -> denyNode(event, now)
             is TaskCompleted -> { completeTask(event, now); TASK_ID }
         }
         if (primary != null) advanceTrail(primary, now)
@@ -232,6 +233,37 @@ class ActivityGraph(
             category = ActivityCategory.NETWORKING_APIS, confidence = e.confidence, now = now, subtitle = e.label)
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.4f)
         setFocus("Fetching", trim(e.label, 40), null, id, now)
+        return id
+    }
+
+    /**
+     * Reconciles a denied/cancelled tool: marks the node it created as blocked and drops any
+     * optimistic modification edges (the patch link) so the file no longer reads as modified. Covers
+     * the file- and command-node cases (the tools users actually get prompted for); anything else
+     * falls back to a focus-only "Denied" so the timeline still records the attempt.
+     */
+    private fun denyNode(e: ActivityDenied, now: Instant): String? {
+        val verb = if (e.cancelled) "Cancelled" else "Denied"
+        val newState = if (e.cancelled) ActivityNodeState.CANCELLED else ActivityNodeState.DENIED
+        val id = when {
+            e.path != null -> "file:${ActivityClassifier.normalizePath(e.path)}"
+            e.command != null -> "cmd:${hash(e.command)}"
+            else -> null
+        }
+        val node = id?.let { nodesMap[it] }
+        if (id == null || node == null) {
+            setFocus(verb, e.toolName, "blocked before running", null, now)
+            return null
+        }
+        nodesMap[id] = node.copy(state = newState, subtitle = "$verb by user", lastSeenAt = now)
+        // Undo the optimistic "modified" signal created at tool_use time (linkEdit's patch edge).
+        edgesMap.values
+            .filter { (it.sourceNodeId == id || it.targetNodeId == id) &&
+                (it.type == ActivityEdgeType.GENERATED_FROM || it.type == ActivityEdgeType.EDITS ||
+                    it.type == ActivityEdgeType.CREATES) }
+            .map { it.id }.toList()
+            .forEach { edgesMap.remove(it) }
+        setFocus(verb, node.label, "blocked before running", id, now)
         return id
     }
 

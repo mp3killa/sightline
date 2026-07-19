@@ -8,9 +8,9 @@ import com.intellij.ui.content.ContentFactory
 import io.mp.claudecodepanel.ui.ClaudePanel
 
 /**
- * Registers the right-dock "Claude" tool window. Kept intentionally small: it builds [ClaudePanel],
+ * Registers the right-dock "Sightline" tool window. Kept intentionally small: it builds [ClaudePanel],
  * wraps it in a single non-closeable content, and points keyboard focus at the composer. The tool
- * window already carries the "Claude" display name, so the content title is left empty (no dupe tab).
+ * window already carries the "Sightline" display name, so the content title is left empty (no dupe tab).
  */
 class ClaudeToolWindowFactory : ToolWindowFactory, DumbAware {
 

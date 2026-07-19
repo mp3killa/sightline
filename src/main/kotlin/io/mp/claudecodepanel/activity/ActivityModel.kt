@@ -46,10 +46,15 @@ enum class ActivityCategory(val label: String) {
     UNKNOWN("Unknown / Unclassified"),
 }
 
-/** Visual/semantic state of a node. The renderer maps these to theme-aware colours. */
+/**
+ * Visual/semantic state of a node. The renderer maps these to theme-aware colours.
+ *
+ * [DENIED] and [CANCELLED] are terminal, non-error states: the action never executed. A denied edit
+ * must therefore never look modified/completed, and denial is a user decision — not a failure.
+ */
 enum class ActivityNodeState {
     IDLE, DISCOVERED, SEARCHING, READING, ANALYSING, SELECTED, EDITING, CREATED,
-    DELETED, TESTING, PASSED, WARNING, FAILED, COMPLETED,
+    DELETED, TESTING, PASSED, WARNING, FAILED, COMPLETED, DENIED, CANCELLED,
 }
 
 /** Relationship kinds between nodes. */
