@@ -73,6 +73,18 @@ class ProjectStructureEnricherTest : BasePlatformTestCase() {
         })
     }
 
+    fun testFindUsagesReturnsReferencingFiles() {
+        val svc = myFixture.addFileToProject("com/example/UserService.java", "package com.example; public class UserService {}")
+        myFixture.addFileToProject("com/example/Caller.java", "package com.example; public class Caller { UserService s; }")
+        val enricher = ProjectStructureEnricher(project, testRootDisposable)
+        val rels = ReadAction.compute<List<AgentActivityEvent>, RuntimeException> { enricher.findUsages(svc.virtualFile) }
+            .filterIsInstance<StructuralRelation>()
+        assertTrue(
+            "UserService used by Caller",
+            rels.any { it.relation == StructuralRelationKind.REFERENCED_BY && it.targetLabel == "Caller" },
+        )
+    }
+
     fun testResourceReverseLookupFindsReferencingSource() {
         myFixture.addFileToProject(
             "com/example/MainActivity.java",

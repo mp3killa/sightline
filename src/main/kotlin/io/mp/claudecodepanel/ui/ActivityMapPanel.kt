@@ -19,6 +19,7 @@ import io.mp.claudecodepanel.activity.ActivityColorRole
 import io.mp.claudecodepanel.activity.ActivityColorRoles
 import io.mp.claudecodepanel.activity.ActivityGraph
 import io.mp.claudecodepanel.activity.ClusterCollapser
+import io.mp.claudecodepanel.ide.ProjectStructureEnricher
 import io.mp.claudecodepanel.activity.ActivityNode
 import io.mp.claudecodepanel.activity.ActivityNodeState
 import io.mp.claudecodepanel.activity.ActivityNodeType
@@ -80,6 +81,8 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     val component: JComponent
     private val graph = ActivityGraph(maxRetained = retainedCap())
+    // On-demand "find usages" for a selected file node (the lazy PSI tier); results feed back into the graph.
+    private val usageEnricher by lazy { ProjectStructureEnricher(project, this) }
 
     private val canvas = GraphCanvas()
     private val inspector = InspectorPanel()
@@ -972,6 +975,11 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             if (n.path != null) {
                 actions.add(IconActionButton(ClaudeIcons.openFile, "Open in editor") { openNode(n) })
                 actions.add(IconActionButton(ClaudeIcons.reveal, "Reveal in Project view") { revealNode(n) })
+            }
+            n.path?.takeIf { it.endsWith(".kt") || it.endsWith(".java") || it.endsWith(".kts") }?.let { path ->
+                actions.add(IconActionButton(ClaudeIcons.search, "Find usages in project") {
+                    usageEnricher.findUsagesAsync(path) { this@ActivityMapPanel.apply(it) }
+                })
             }
             actions.add(IconActionButton(if (n.pinned) ClaudeIcons.diamond else ClaudeIcons.diamond, if (n.pinned) "Unpin" else "Pin (keep from eviction)") { graph.setPinned(n.id, !n.pinned); refresh(); canvas.repaint() })
             actions.add(IconActionButton(ClaudeIcons.close, "Hide from map") { graph.setHidden(n.id, true); selectNode(null) })

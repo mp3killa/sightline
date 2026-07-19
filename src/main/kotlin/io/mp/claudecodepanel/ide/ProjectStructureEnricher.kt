@@ -14,6 +14,7 @@ import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.PsiSearchHelper
 import com.intellij.psi.search.UsageSearchContext
+import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.uast.UFile
 import org.jetbrains.uast.toUElementOfType
@@ -136,6 +137,41 @@ class ProjectStructureEnricher(private val project: Project, private val parent:
             links++
         }
         return out
+    }
+
+    /**
+     * On-demand **find usages** (the lazy P1 tier): project files that reference the type(s) declared in
+     * [vf], via precise PSI [ReferencesSearch]. Run only when the user explicitly asks (an inspector
+     * action) — never during automatic enrichment; the broad/eager version is deferred to Phase 2b.
+     * Emits [StructuralRelationKind.REFERENCED_BY] relations. Must run inside a read action.
+     */
+    internal fun findUsages(vf: VirtualFile, sourcePath: String = vf.path): List<AgentActivityEvent> {
+        val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return emptyList()
+        val uFile = try { psiFile.toUElementOfType<UFile>() } catch (e: Exception) { null } ?: return emptyList()
+        val fileIndex = ProjectFileIndex.getInstance(project)
+        val now = Instant.now()
+        val referrers = LinkedHashSet<String>()
+        val out = ArrayList<AgentActivityEvent>()
+        for (uClass in uFile.classes) {
+            if (referrers.size >= MAX_LINKS) break
+            ReferencesSearch.search(uClass.javaPsi, GlobalSearchScope.projectScope(project)).forEach { ref ->
+                val refVf = ref.element.containingFile?.virtualFile ?: return@forEach
+                if (refVf != vf && fileIndex.isInContent(refVf) && referrers.size < MAX_LINKS && referrers.add(refVf.path)) {
+                    out.add(StructuralRelation(sourcePath, refVf.path, refVf.nameWithoutExtension, StructuralRelationKind.REFERENCED_BY, now))
+                }
+            }
+        }
+        return out
+    }
+
+    /** Off-EDT [findUsages] for the inspector's "Find usages" action; delivers results on the UI thread. */
+    fun findUsagesAsync(path: String, sink: (List<AgentActivityEvent>) -> Unit) {
+        val vf = LocalFileSystem.getInstance().findFileByPath(path) ?: return
+        ReadAction.nonBlocking<List<AgentActivityEvent>> { findUsages(vf) }
+            .inSmartMode(project)
+            .expireWith(parent)
+            .finishOnUiThread(ModalityState.any()) { events -> if (events.isNotEmpty()) sink(events) }
+            .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     /**
