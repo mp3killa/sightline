@@ -86,6 +86,12 @@ Validates 1–3 and settles the open **double-approval** question (does `can_use
 - All five permission modes. Stale IDE lock-file cleanup + reconnection after unexpected shutdown.
 - `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open —
   check for deadlock/UI-block under this pass.
+- **AskUserQuestion:** render (radio/checkbox/Other), Continue-gating, Cancel-denies, "Skip"-as-answer,
+  and the returned `answers` object. The bridge can now drive this (`simulate_question` → the real UI
+  path; `respond_question` → the production builder), and `SightlineTestBridgeQuestionTest`
+  (BasePlatformTestCase) verifies the answer-construction + resolve-once autonomously — only the **visual**
+  click-through still needs a human/driver in `runIde` (the studio MCP can't click the tool window, and
+  the sandbox can't be driven externally without opening the window + starting a session).
 
 ## 5. Correct denied / cancelled activity
 
