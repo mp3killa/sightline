@@ -169,6 +169,17 @@ class ActivityGraphTest {
         assertNull(g.node("file:/app/Bar.kt"))
     }
 
+    @Test fun extendsAndImplementsRelationsBecomeHierarchyEdges() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/LoginViewModel.kt", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/LoginViewModel.kt", "/app/BaseViewModel.kt", "BaseViewModel",
+            StructuralRelationKind.EXTENDS, tick()))
+        g.apply(StructuralRelation("/app/LoginViewModel.kt", "/app/Trackable.kt", "Trackable",
+            StructuralRelationKind.IMPLEMENTS, tick()))
+        assertTrue(g.edges.any { it.type == ActivityEdgeType.EXTENDS && it.targetNodeId == "file:/app/BaseViewModel.kt" })
+        assertTrue(g.edges.any { it.type == ActivityEdgeType.IMPLEMENTS && it.targetNodeId == "file:/app/Trackable.kt" })
+    }
+
     @Test fun testRelationAndPackageMetadata() {
         val g = freshGraph()
         g.apply(FileRead("/app/FooTest.kt", tick()))

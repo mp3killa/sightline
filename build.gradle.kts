@@ -35,6 +35,11 @@ dependencies {
         // with a platform file-system bootstrap arg) can start. Our tests are plain JUnit4 unit
         // tests over the activity/graph logic and don't spin up an IDE fixture.
         testFramework(TestFrameworkType.Platform)
+
+        // Java PSI (com.intellij.psi.PsiClass) + Java UAST provider — used by ProjectStructureEnricher
+        // for precise class-hierarchy (extends/implements) resolution across Kotlin & Java via UAST.
+        // Always present in Android Studio; the plugin declares <depends>com.intellij.modules.java</depends>.
+        bundledPlugin("com.intellij.java")
     }
 
     // Bundled into the plugin: used to parse the CLI's streaming-JSON events.

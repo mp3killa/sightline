@@ -155,27 +155,27 @@ an edit created.
 
 ## 7. PSI Phase 2a — cheap, reliable relationships only
 
-**Done (first slice):** `ide/ProjectStructureEnricher` enriches files Claude touches, off the EDT in a
-smart-mode (post-indexing) `ReadAction.nonBlocking`, once per path, only for touched files — never a
-project sweep. It emits **file → imported project file** (`IMPORTS`) and **test file → production file**
-(`TESTS`) edges, plus **package/module** as node metadata (`FilePackage`). Parsing is the platform-free,
-unit-tested `SourceStructureParser` (package + PascalCase type imports + test-target); resolution is
-index-based (`FilenameIndex`) and links only on a **unique** project-file match, so an edge always points
-at a file that really exists. The graph reduction (`StructuralRelation`/`FilePackage`) is unit-tested and
-background-only (no focus/trail/status change). Note: chosen over UAST/Kotlin-PSI to avoid a language-
-plugin dependency; relationships resolve to real files but by short name, not full type resolution.
+**Done:** `ide/ProjectStructureEnricher` enriches files Claude touches, off the EDT in a smart-mode
+(post-indexing) `ReadAction.nonBlocking`, once per path, only for touched files — never a project sweep.
+Via **real PSI (UAST)** it emits, package-aware and cross-language (Kotlin + Java):
+- **imports** → the imported project file (`imp.resolve()` — member/wildcard imports resolve to
+  non-classes and are skipped);
+- **class → superclass / interfaces** (`EXTENDS` / `IMPLEMENTS`, via `uClass.javaPsi.superClass` /
+  `.interfaces`), library/implicit roots (`Object`/`Any`) skipped;
+- **test → production** file (unique short-name match via `FilenameIndex`);
+- **package/module** as node metadata (`FilePackage`).
+Only in-content (project) targets are linked. Build depends on `com.intellij.java` (always in AS) +
+`<depends>com.intellij.modules.java</depends>` for Java PSI/UAST; Kotlin uses the same UAST path at
+runtime. Tested by `SourceStructureParserTest` (package/type/test-target), `ActivityGraphTest` (edge
+reduction, background-only), and **`ProjectStructureEnricherTest` — a real `BasePlatformTestCase`** over
+a live Java project (extends/implements/imports/package resolution; library roots not linked).
 
 **Remaining:**
-- **Class → superclass/interfaces** (`EXTENDS`/`IMPLEMENTS`) — deferred: needs real PSI/UAST to be
-  reliable across Kotlin/Java (regex supertype parsing risks wrong hierarchy edges). Requires adding the
-  Kotlin/Java plugin dependency + a `BasePlatformTestCase` fixture; edge types already exist.
-- Import precision: resolve to the exact declaration (package-aware) instead of unique-short-name, so
-  same-named types in different packages don't get skipped/mislinked.
 - Android resource → referencing source; navigation destination → screen/composable.
 - Cache by modification stamp (currently once-per-path-per-session; re-enrich on edit).
 - Lazy tiers: references/usages on select → call relationships only on explicit "Calls" / blast-radius.
-- A `BasePlatformTestCase` covering the enricher's real index resolution (only the parser + graph
-  reduction are unit-tested today; the platform IO/index layer is verified via sandbox load).
+- A Kotlin `BasePlatformTestCase` (needs the Kotlin plugin on the test classpath) — Kotlin uses the same
+  UAST code path, currently only exercised live in the sandbox.
 
 ## 8. Evidence provenance (before any pattern detection)
 

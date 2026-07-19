@@ -299,6 +299,8 @@ class ActivityGraph(
         val type = when (e.relation) {
             StructuralRelationKind.IMPORTS -> ActivityEdgeType.IMPORTS
             StructuralRelationKind.TESTS -> ActivityEdgeType.TESTS
+            StructuralRelationKind.EXTENDS -> ActivityEdgeType.EXTENDS
+            StructuralRelationKind.IMPLEMENTS -> ActivityEdgeType.IMPLEMENTS
         }
         edge(srcId, tgtId, type, now, weight = 0.4f, bump = false)
     }

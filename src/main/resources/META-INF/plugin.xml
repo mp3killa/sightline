@@ -29,8 +29,10 @@
         rendering, edit/diff previews, model &amp; permission-mode selectors, and session resume.
     ]]></change-notes>
 
-    <!-- Only the platform module: loads in Android Studio and every IntelliJ-based IDE. -->
+    <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST
+         used for class-hierarchy enrichment (extends/implements). -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Sightline"
