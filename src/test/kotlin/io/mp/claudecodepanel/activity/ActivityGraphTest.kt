@@ -139,6 +139,46 @@ class ActivityGraphTest {
         })
     }
 
+    @Test fun structuralImportLinksTouchedFileToResolvedTarget() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/ui/LoginViewModel.kt", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/ui/LoginViewModel.kt", "/app/data/UserRepository.kt", "UserRepository",
+            StructuralRelationKind.IMPORTS, tick()))
+        val edge = g.edges.firstOrNull {
+            it.sourceNodeId == "file:/app/ui/LoginViewModel.kt" &&
+                it.targetNodeId == "file:/app/data/UserRepository.kt" && it.type == ActivityEdgeType.IMPORTS
+        }
+        assertNotNull(edge)
+        // the target became a light discovered node, not part of the active trail
+        assertEquals(ActivityNodeState.DISCOVERED, g.node("file:/app/data/UserRepository.kt")!!.state)
+    }
+
+    @Test fun structuralEnrichmentDoesNotChangeFocusOrTrail() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/ui/Foo.kt", created = false, at = tick()))
+        val focusBefore = g.focus
+        val primary = g.apply(StructuralRelation("/app/ui/Foo.kt", "/app/Bar.kt", "Bar", StructuralRelationKind.IMPORTS, tick()))
+        assertNull(primary)                 // focus-only events return null
+        assertEquals(focusBefore.label, g.focus.label) // focus unchanged
+    }
+
+    @Test fun structuralRelationIgnoredIfSourceNotTouched() {
+        val g = freshGraph()
+        g.apply(StructuralRelation("/app/Untouched.kt", "/app/Bar.kt", "Bar", StructuralRelationKind.IMPORTS, tick()))
+        assertNull(g.node("file:/app/Untouched.kt"))
+        assertNull(g.node("file:/app/Bar.kt"))
+    }
+
+    @Test fun testRelationAndPackageMetadata() {
+        val g = freshGraph()
+        g.apply(FileRead("/app/FooTest.kt", tick()))
+        g.apply(StructuralRelation("/app/FooTest.kt", "/app/Foo.kt", "Foo", StructuralRelationKind.TESTS, tick()))
+        assertNotNull(g.edges.firstOrNull { it.type == ActivityEdgeType.TESTS && it.targetNodeId == "file:/app/Foo.kt" })
+        g.apply(FilePackage("/app/FooTest.kt", "com.example", "app", tick()))
+        assertEquals("com.example", g.node("file:/app/FooTest.kt")!!.metadata["package"])
+        assertEquals("app", g.node("file:/app/FooTest.kt")!!.metadata["module"])
+    }
+
     @Test fun confidenceTakesTheMaximum() {
         val g = freshGraph()
         g.apply(FileRead("/a/Foo.kt", tick(), confidence = 0.3f))

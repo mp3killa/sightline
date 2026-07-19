@@ -101,6 +101,9 @@ class ActivityGraph(
             is WarningObserved -> warningNode(event, now)
             is WebActivity -> webNode(event, now)
             is ActivityDenied -> denyNode(event, now)
+            // Background PSI enrichment: add structure without grabbing focus or advancing the trail.
+            is StructuralRelation -> { relateFiles(event, now); return null }
+            is FilePackage -> { setFilePackage(event, now); return null }
             is TaskCompleted -> { completeTask(event, now); TASK_ID }
         }
         if (primary != null) advanceTrail(primary, now)
@@ -281,6 +284,45 @@ class ActivityGraph(
         val src = lastCommandNodeId ?: return
         if (src == resultId || !nodesMap.containsKey(src)) return
         edge(src, resultId, ActivityEdgeType.PRODUCED, now, weight = 0.5f)
+    }
+
+    /**
+     * Draws a real structural edge from a touched file to a resolved project file. Only enriches files
+     * already in the graph (Claude touched the source); the target is created as a light DISCOVERED node
+     * so the relationship is visible without pulling it into the active trail.
+     */
+    private fun relateFiles(e: StructuralRelation, now: Instant) {
+        val srcId = "file:${ActivityClassifier.normalizePath(e.sourcePath)}"
+        if (!nodesMap.containsKey(srcId)) return
+        val tgtId = ensureEnrichedFileNode(e.targetPath, now)
+        if (srcId == tgtId) return
+        val type = when (e.relation) {
+            StructuralRelationKind.IMPORTS -> ActivityEdgeType.IMPORTS
+            StructuralRelationKind.TESTS -> ActivityEdgeType.TESTS
+        }
+        edge(srcId, tgtId, type, now, weight = 0.4f, bump = false)
+    }
+
+    private fun ensureEnrichedFileNode(rawPath: String, now: Instant): String {
+        val path = ActivityClassifier.normalizePath(rawPath)
+        val id = "file:$path"
+        if (!nodesMap.containsKey(id)) {
+            val c = ActivityClassifier.classify(path)
+            val cat = ensureCategory(c.category, now)
+            touch(id, c.nodeType, label = ActivityClassifier.basename(path), state = ActivityNodeState.DISCOVERED,
+                category = c.category, confidence = 0.6f, now = now, path = path, subtitle = c.category.label)
+            edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.5f, bump = false)
+        }
+        return id
+    }
+
+    private fun setFilePackage(e: FilePackage, now: Instant) {
+        val id = "file:${ActivityClassifier.normalizePath(e.path)}"
+        val n = nodesMap[id] ?: return
+        val meta = n.metadata.toMutableMap()
+        meta["package"] = e.packageName
+        e.module?.let { meta["module"] = it }
+        nodesMap[id] = n.copy(metadata = meta)
     }
 
     private fun linkEdit(fileId: String, now: Instant) {

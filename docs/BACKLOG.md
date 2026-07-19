@@ -155,14 +155,27 @@ an edit created.
 
 ## 7. PSI Phase 2a — cheap, reliable relationships only
 
-Full Phase 2 (`ReferencesSearch`, call graphs) is too broad and visually noisy for one release. **Enrich
-only files Claude already touched**, lazily, cached by modification stamp — never a project-wide pass:
+**Done (first slice):** `ide/ProjectStructureEnricher` enriches files Claude touches, off the EDT in a
+smart-mode (post-indexing) `ReadAction.nonBlocking`, once per path, only for touched files — never a
+project sweep. It emits **file → imported project file** (`IMPORTS`) and **test file → production file**
+(`TESTS`) edges, plus **package/module** as node metadata (`FilePackage`). Parsing is the platform-free,
+unit-tested `SourceStructureParser` (package + PascalCase type imports + test-target); resolution is
+index-based (`FilenameIndex`) and links only on a **unique** project-file match, so an edge always points
+at a file that really exists. The graph reduction (`StructuralRelation`/`FilePackage`) is unit-tested and
+background-only (no focus/trail/status change). Note: chosen over UAST/Kotlin-PSI to avoid a language-
+plugin dependency; relationships resolve to real files but by short name, not full type resolution.
 
-- File → module / package / imported file. Class → superclass/interfaces. Test file → likely
-  production file. Android resource → referencing source. Navigation destination → screen/composable.
-- Rules: background read actions, respect `DumbService`, lazy-expand, cancel on session end.
-- Lazy tiers: basic on first touch → references/usages on select → call relationships only on explicit
-  "Calls" / blast-radius request.
+**Remaining:**
+- **Class → superclass/interfaces** (`EXTENDS`/`IMPLEMENTS`) — deferred: needs real PSI/UAST to be
+  reliable across Kotlin/Java (regex supertype parsing risks wrong hierarchy edges). Requires adding the
+  Kotlin/Java plugin dependency + a `BasePlatformTestCase` fixture; edge types already exist.
+- Import precision: resolve to the exact declaration (package-aware) instead of unique-short-name, so
+  same-named types in different packages don't get skipped/mislinked.
+- Android resource → referencing source; navigation destination → screen/composable.
+- Cache by modification stamp (currently once-per-path-per-session; re-enrich on edit).
+- Lazy tiers: references/usages on select → call relationships only on explicit "Calls" / blast-radius.
+- A `BasePlatformTestCase` covering the enricher's real index resolution (only the parser + graph
+  reduction are unit-tested today; the platform IO/index layer is verified via sandbox load).
 
 ## 8. Evidence provenance (before any pattern detection)
 

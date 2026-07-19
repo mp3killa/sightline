@@ -7,8 +7,10 @@ import io.mp.claudecodepanel.activity.CommandRun
 import io.mp.claudecodepanel.activity.ErrorObserved
 import io.mp.claudecodepanel.activity.FileEdited
 import io.mp.claudecodepanel.activity.FileRead
+import io.mp.claudecodepanel.activity.FilePackage
 import io.mp.claudecodepanel.activity.FileSearched
 import io.mp.claudecodepanel.activity.GradleTaskRun
+import io.mp.claudecodepanel.activity.StructuralRelation
 import io.mp.claudecodepanel.activity.StatusUpdated
 import io.mp.claudecodepanel.activity.SymbolInspected
 import io.mp.claudecodepanel.activity.TaskCompleted
@@ -112,6 +114,8 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
                 val verb = if (event.cancelled) "Cancelled" else "Blocked"
                 offer(outcome(StatusKind.WARNING, "$verb ${event.toolName}", "not run", now))
             }
+            // Background structure enrichment never changes the status line.
+            is StructuralRelation, is FilePackage -> view
         }
     }
 

@@ -120,6 +120,32 @@ data class ToolInvoked(
     override val confidence: Float = 1f,
 ) : AgentActivityEvent
 
+/** How one file structurally relates to another (resolved to real project files, not path guesses). */
+enum class StructuralRelationKind { IMPORTS, TESTS }
+
+/**
+ * A structural relationship discovered by enriching a file Claude touched — its import resolved to a
+ * real project file, or a test file's production target. Background enrichment: it adds a graph edge
+ * but never grabs focus, advances the activity trail, or changes the status line.
+ */
+data class StructuralRelation(
+    val sourcePath: String,
+    val targetPath: String,
+    val targetLabel: String,
+    val relation: StructuralRelationKind,
+    override val at: Instant,
+    override val confidence: Float = 0.85f,
+) : AgentActivityEvent
+
+/** Package/module membership for a touched file — stored as node metadata; never focus-changing. */
+data class FilePackage(
+    val path: String,
+    val packageName: String,
+    val module: String?,
+    override val at: Instant,
+    override val confidence: Float = 0.9f,
+) : AgentActivityEvent
+
 /**
  * The user denied a pending tool (or it was cancelled before executing). Correlated to the node the
  * tool_use created via [toolUseId]/[path]/[command] so the graph can mark it blocked and undo any

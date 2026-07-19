@@ -30,10 +30,13 @@ import io.mp.claudecodepanel.activity.ActivityInterpreter
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.BuildReportScanner
 import io.mp.claudecodepanel.activity.ErrorObserved
+import io.mp.claudecodepanel.activity.FileEdited
+import io.mp.claudecodepanel.activity.FileRead
 import io.mp.claudecodepanel.activity.OutputParsers
 import io.mp.claudecodepanel.ide.ApprovalCoordinator
 import io.mp.claudecodepanel.ide.ApprovalDecision
 import io.mp.claudecodepanel.ide.PendingApproval
+import io.mp.claudecodepanel.ide.ProjectStructureEnricher
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -189,6 +192,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // logic as the human's Allow/Deny buttons — never a separate bypass path.
     private val approvalCoordinator by lazy { project.getService(ApprovalCoordinator::class.java) }
     private val uiState by lazy { project.getService(SightlineUiState::class.java) }
+
+    // Phase 2a: enriches files Claude touches with real project structure (imports/test targets/package),
+    // off the EDT. Only files already touched are enriched; results feed back as background relations.
+    private val structureEnricher by lazy { ProjectStructureEnricher(project, this) }
     private val toolCardsById = HashMap<String, ToolCard>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
@@ -910,6 +917,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         activityMap.apply(events)
         for (e in events) statusModel.apply(e)
         refreshStatus()
+        for (e in events) maybeEnrich(e)
+    }
+
+    /** Kick off background structure enrichment for a file Claude just read/edited. */
+    private fun maybeEnrich(e: AgentActivityEvent) {
+        val path = when (e) { is FileRead -> e.path; is FileEdited -> e.path; else -> return }
+        structureEnricher.enrich(path) { evs -> feed(evs) }
     }
 
     private fun noteError(text: String) {
@@ -969,7 +983,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         transcript.removeAll()
         toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         completionMeta = null
-        interpreter.reset(); activityMap.clearSession()
+        interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
         statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
         showEmptyState(true)
