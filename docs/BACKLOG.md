@@ -31,6 +31,9 @@ own tool window. Verify:
   double-prompt question — reproduce before any approval-flow refactor).
 - `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open — check
   for deadlock / UI-block.
+- **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
+  `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
+  clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
 - **AskUserQuestion visual click-through:** render (radio / checkbox / Other), Continue-gating,
   Cancel-denies, "Skip"-as-answer, and the returned `answers` object. Logic is unit-tested and the bridge
   can drive it (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`); only the
@@ -45,12 +48,7 @@ Claude CLI" wording are all in place — the remaining step is actually submitti
 
 # P1 differentiators — remaining
 
-Most of the P1 tail shipped this cycle (see [../CLAUDE.md](../CLAUDE.md)): Android device / emulator /
-`logcat` diagnostics, navigation-graph enrichment (`NAVIGATES_TO`), the full evidence-provenance
-extension (`COMMAND_OUTPUT` on `PRODUCED`/`AFFECTED_BY`, rank/merge, hover tooltips), the platform-free
-`ClusterCollapser` + a "Collapse finished history" toggle, and inspector Esc. The Chat/Split/Map switch is
-already keyboard-reachable in code (`SegmentedControl` focus + arrows, `IconActionButton` = real `JButton`)
-— it only needs the live eye-pass in the release gate. What's left:
+The bulk of the P1 tail has shipped (see [../CLAUDE.md](../CLAUDE.md)); only these remain:
 
 ## Android command interpreter
 
