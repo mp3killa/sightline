@@ -39,6 +39,9 @@ own tool window. Verify:
 - **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
   `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
   clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
+- **Activity map (needs eyes):** a touched resource links to its referencing sources; the inspector
+  "Find usages" action adds usage edges; "Collapse finished history" folds clusters and the "N commands"
+  chips expand/collapse in place. Logic is unit-tested; only the visual behaviour needs eyes.
 - **AskUserQuestion visual click-through:** render (radio / checkbox / Other), Continue-gating,
   Cancel-denies, "Skip"-as-answer, and the returned `answers` object. Logic is unit-tested and the bridge
   can drive it (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`); only the
@@ -51,26 +54,16 @@ Claude CLI" wording are all in place — the remaining step is actually submitti
 
 ---
 
-# P1 differentiators — remaining
+# P1 differentiators — complete
 
-The bulk of the P1 tail has shipped (see [../CLAUDE.md](../CLAUDE.md)); only these remain:
+The P1 differentiators are done (see [../CLAUDE.md](../CLAUDE.md)): Android device/logcat diagnostics,
+nav-graph enrichment, evidence provenance, exit-status + parallel `tool_use` correlation, **resource →
+referencing source** (reverse lookup), on-demand **find-usages** (lazy tier), the **Kotlin
+`BasePlatformTestCase`**, and cluster collapsing with **expand-in-place chips**. Only minor optional polish
+remains:
 
-## PSI enrichment
-
-- Android **resource → referencing source** (the reverse lookup, via the resource/reference index — live
-  only; the forward nav-graph → destination direction already ships).
-- Lazy tiers: references/usages on select → call relationships only on explicit "Calls" / blast-radius.
-- A Kotlin `BasePlatformTestCase` (needs the Kotlin plugin on the test classpath) — Kotlin uses the same
-  UAST code path, currently only exercised live in the sandbox. Java is covered (imports, hierarchy, and
-  nav-destination resolution).
-
-## Cluster collapsing (renderer polish)
-
-- The fold logic + toggle ship and the header "X of Y" count reflects folded history. Remaining is
-  renderer polish: draw the aggregates as **clickable chips** that expand in place (`Plan.expanded`
-  already supports it) and the fuller tier progression (hide low-value labels → collapse historical by
-  category → "Show more" → better Fit). Minimap only if navigation is still hard — Fit + node caps + the
-  new fold mean it isn't the bottleneck.
+- Cluster collapsing: the aggregate chips + expand-in-place ship; the fuller multi-stage progression
+  (hide low-value labels → "Show more" → better Fit at very high node counts) is a small UX refinement.
 
 ---
 
