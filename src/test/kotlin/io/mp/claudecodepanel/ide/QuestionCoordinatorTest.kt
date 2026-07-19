@@ -10,7 +10,7 @@ import org.junit.Test
 class QuestionCoordinatorTest {
 
     private fun pending(id: String, sink: (QuestionResolution) -> Unit) =
-        PendingQuestion(id, null, UserQuestionRequest(emptyList()), sink)
+        PendingQuestion(id, null, UserQuestionRequest(emptyList()), "{}", sink)
 
     @Test fun resolvesAnsweredExactlyOnce() {
         val c = QuestionCoordinator()

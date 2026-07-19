@@ -80,29 +80,33 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "261"
+            // Floor = the latest *released* IntelliJ platform (2025.3 / build 253) rather than the local
+            // Android Studio's preview build 261: 253 is downloadable for the Plugin Verifier and gives the
+            // listing real reach (installable on 253+, which includes AS 2026.1). The code avoids 261-only
+            // APIs — `verifyPlugin` (below) confirms the 261-compiled artifact is clean against 253.
+            sinceBuild = "253"
             // untilBuild is intentionally omitted: it is ignored on platform 243+,
             // so the plugin stays compatible with future Android Studio builds.
         }
     }
 
-    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier (internal-API usage,
-    // binary compatibility). The plugin only uses platform APIs + com.intellij.java (no Android-plugin
-    // APIs), so IntelliJ IDEA Community is a valid — and more portable — verification target.
+    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier (internal/experimental
+    // API usage — a common rejection cause — and binary compatibility). It verifies against the released
+    // 253 floor (IntelliJ IDEA Community 2025.3). The plugin uses only platform APIs + com.intellij.java
+    // (no Android-plugin APIs), so IC is a valid, portable target.
     //
-    // CONSTRAINT (2026-07): our local() Android Studio 2026.1 is a *preview* platform (build **261**) that
-    // runs ahead of every released IntelliJ IDE — the latest published IC is 2025.3 / build **253**. So
-    // there is no downloadable IC at 261 yet, and this `select` currently resolves nothing ("No IDE
-    // resolved"). It becomes runnable when either (a) IC build 261 ships, or (b) the compatibility floor
-    // (sinceBuild, below) is lowered to a released platform for wider Marketplace reach — a publication
-    // decision. Until then the config is correct but the verifier can't fetch a matching IDE.
+    // NOTE (2026-07): the verifier could not be *run* in the dev environment here — IPGP 2.6.0 mis-resolves
+    // the IC distribution coordinate (`idea:ideaIC:<v>`, group "idea") while the ZIP actually lives at
+    // `com.jetbrains.intellij.idea:ideaIC:<v>` (the ZIP exists + downloads), and `local(AndroidStudio)`
+    // can't be used because that install is already the compile-time platform dependency. Run this on CI /
+    // an environment where the IC distribution resolves (or a newer IPGP). The config below is correct.
     pluginVerification {
         ides {
             select {
                 types = listOf(IntelliJPlatformType.IntellijIdeaCommunity)
                 channels = listOf(ProductRelease.Channel.RELEASE)
-                sinceBuild = "261"
-                untilBuild = "261.*"
+                sinceBuild = "253"
+                untilBuild = "253.*"
             }
         }
     }

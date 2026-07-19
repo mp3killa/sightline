@@ -40,9 +40,11 @@ Marketplace build, so the tools are absent from production `tools/list`.
 | Tool | Purpose |
 |---|---|
 | `sightline.test.get_ui_state` | `{toolWindowVisible, workspace, sessionState, pendingApprovals, pendingDiffs}` |
-| `sightline.test.list_pending_interactions` | pending approvals + diffs with **opaque ids** + `availableActions` |
+| `sightline.test.list_pending_interactions` | pending approvals + diffs + **questions** with **opaque ids** + `availableActions` |
 | `sightline.test.respond_permission` | `{interactionId, decision: ALLOW\|ALLOW_ALWAYS\|DENY}` → `ApprovalCoordinator.respond` |
 | `sightline.test.respond_diff` | `{interactionId, decision: ACCEPT\|REJECT}` → `DiffReviewCoordinator.respond` |
+| `sightline.test.simulate_question` | `{input: <AskUserQuestion input>}` → renders a synthetic question through the **real** UI path (so the flow is drivable without a live Claude session) |
+| `sightline.test.respond_question` | `{interactionId, answers: {"<question>": ["<label>"]}}` or `{interactionId, cancel: true}` → builds the response via the production `AskUserQuestionResponseBuilder` and resolves `QuestionCoordinator` |
 | `sightline.test.capture_tool_window` | renders the root component to PNG (MCP image block + dimensions) |
 
 Every simulated decision is audit-logged (ids/decisions only — never prompt/source content). `openDiff`

@@ -127,6 +127,9 @@ private const val PRIME_PROMPT =
         "4. Give me a concise brief (what it does, structure/stack, key conventions) and list which docs you created " +
         "vs. already found."
 
+/** request_id prefix for sandbox-test-bridge-simulated control requests (no real CLI behind them). */
+private const val SIM_REQ_PREFIX = "sim-question-"
+
 /**
  * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
  * workspace (transcript / activity map / split), a coordinated [ClaudeStatusStrip], and the
@@ -229,6 +232,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         component.getAccessibleContext()?.accessibleName = A11yNames.TOOL_WINDOW_ROOT
         uiState.rootComponent = component
         uiState.toolWindowVisible = true
+        uiState.askQuestionSimulator = { input -> simulateAskUserQuestion(input) } // reachable only via the gated test bridge
         applyConfigToUi()
         installEmptyState()
         installResponsive()
@@ -895,7 +899,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         val handler: (QuestionResolution) -> Unit = { resolution ->
             runOnEdt {
-                when (resolution) {
+                // A simulated (test-bridge) request has no real CLI behind it — resolve the UI only.
+                if (!reqId.startsWith(SIM_REQ_PREFIX)) when (resolution) {
                     is QuestionResolution.Answered -> session.respondAllow(reqId, resolution.updatedInputJson, null)
                     QuestionResolution.Cancelled -> session.respondDeny(reqId, "User cancelled the question")
                 }
@@ -904,10 +909,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             }
         }
         questionCoordinator.register(
-            PendingQuestion(reqId, toolUseId, request ?: UserQuestionRequest(emptyList()), handler),
+            PendingQuestion(reqId, toolUseId, request ?: UserQuestionRequest(emptyList()), input.toString(), handler),
         )
         statusModel.permissionRequested("Waiting for your answer"); refreshStatus()
         scrollToBottomSoon()
+    }
+
+    /** TEST-ONLY (sandbox bridge): render a synthetic AskUserQuestion as if the CLI had asked it. */
+    private fun simulateAskUserQuestion(input: JsonObject) {
+        runOnEdt {
+            val req = JsonObject().apply {
+                addProperty("subtype", "can_use_tool")
+                addProperty("tool_name", "AskUserQuestion")
+                add("input", input)
+            }
+            showAskUserQuestion(SIM_REQ_PREFIX + System.nanoTime(), req)
+        }
     }
 
     /** Runs [r] on the EDT now if already there (human click), else marshals it (test-bridge thread). */

@@ -95,6 +95,8 @@ class PendingQuestion(
     val id: String,              // the control-protocol request_id
     val toolUseId: String?,
     val request: UserQuestionRequest,
+    /** The raw tool input JSON — lets the test bridge build a faithful response via the production builder. */
+    val originalInputJson: String,
     private val handler: (QuestionResolution) -> Unit,
 ) {
     internal fun invoke(resolution: QuestionResolution) = handler(resolution)

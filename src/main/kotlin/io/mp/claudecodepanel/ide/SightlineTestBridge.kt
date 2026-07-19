@@ -2,9 +2,11 @@ package io.mp.claudecodepanel.ide
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import io.mp.claudecodepanel.interaction.AskUserQuestionResponseBuilder
 import io.mp.claudecodepanel.ui.SightlineUiState
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -38,6 +40,7 @@ class SightlineTestBridge(private val project: Project) {
 
     private val approvals get() = project.getService(ApprovalCoordinator::class.java)
     private val diffs get() = project.getService(DiffReviewCoordinator::class.java)
+    private val questions get() = project.getService(QuestionCoordinator::class.java)
     private val ui get() = project.getService(SightlineUiState::class.java)
 
     private val toolNames = setOf(
@@ -45,6 +48,8 @@ class SightlineTestBridge(private val project: Project) {
         "sightline.test.list_pending_interactions",
         "sightline.test.respond_permission",
         "sightline.test.respond_diff",
+        "sightline.test.simulate_question",
+        "sightline.test.respond_question",
         "sightline.test.capture_tool_window",
     )
 
@@ -60,6 +65,10 @@ class SightlineTestBridge(private val project: Project) {
             props("interactionId" to "string", "decision" to "string")))
         tools.add(def("sightline.test.respond_diff", "TEST-ONLY: resolve a pending diff review. args {interactionId, decision: ACCEPT|REJECT}.",
             props("interactionId" to "string", "decision" to "string")))
+        tools.add(def("sightline.test.simulate_question", "TEST-ONLY: render a synthetic AskUserQuestion (drives the real UI path). args {input: <AskUserQuestion tool input>}.",
+            props("input" to "object")))
+        tools.add(def("sightline.test.respond_question", "TEST-ONLY: answer/cancel a pending AskUserQuestion. args {interactionId, answers?: {\"<question text>\": [\"<label>\"]}, cancel?: bool}.",
+            props("interactionId" to "string", "answers" to "object", "cancel" to "boolean")))
         tools.add(def("sightline.test.capture_tool_window", "TEST-ONLY: PNG screenshot of the tool window (image content + dimensions)."))
     }
 
@@ -68,6 +77,8 @@ class SightlineTestBridge(private val project: Project) {
         "sightline.test.list_pending_interactions" -> BridgeResult(listPending())
         "sightline.test.respond_permission" -> BridgeResult(respondPermission(args))
         "sightline.test.respond_diff" -> BridgeResult(respondDiff(args))
+        "sightline.test.simulate_question" -> BridgeResult(simulateQuestion(args))
+        "sightline.test.respond_question" -> BridgeResult(respondQuestion(args))
         "sightline.test.capture_tool_window" -> captureToolWindow()
         else -> BridgeResult(err("unknown test tool: $name"))
     }
@@ -105,7 +116,64 @@ class SightlineTestBridge(private val project: Project) {
                 add("availableActions", JsonArray().apply { add("ACCEPT"); add("REJECT") })
             })
         }
+        for (q in questions.listPending()) {
+            arr.add(JsonObject().apply {
+                addProperty("id", q.id)
+                addProperty("type", "QUESTION")
+                add("questions", JsonArray().apply {
+                    q.request.questions.forEach { question ->
+                        add(JsonObject().apply {
+                            addProperty("question", question.question)
+                            question.header?.let { addProperty("header", it) }
+                            addProperty("multiSelect", question.multiSelect)
+                            add("options", JsonArray().apply { question.options.forEach { add(it.label) } })
+                        })
+                    }
+                })
+                add("availableActions", JsonArray().apply { add("ANSWER"); add("CANCEL") })
+            })
+        }
         return JsonObject().apply { add("interactions", arr) }.toString()
+    }
+
+    /** Inject a synthetic AskUserQuestion so the full UI path can be driven without a live Claude session. */
+    private fun simulateQuestion(args: JsonObject): String {
+        val inputEl = args.get("input")
+        if (inputEl == null || !inputEl.isJsonObject) return err("input object required")
+        val input = inputEl.asJsonObject
+        val simulate = ui.askQuestionSimulator ?: return err("question simulator not wired (is the tool window open?)")
+        simulate(input)
+        thisLogger().warn("TEST BRIDGE simulate_question")
+        return JsonObject().apply { addProperty("ok", true) }.toString()
+    }
+
+    /** Resolve a pending question through the SAME production builder + coordinator the real UI uses. */
+    private fun respondQuestion(args: JsonObject): String {
+        val id = args.str("interactionId") ?: return err("interactionId required")
+        val pending = questions.get(id) ?: return err("no pending question with id=$id")
+        if (args.has("cancel") && args.get("cancel").let { it.isJsonPrimitive && it.asBoolean }) {
+            val ok = questions.respond(id, QuestionResolution.Cancelled)
+            thisLogger().warn("TEST BRIDGE respond_question id=$id CANCEL -> ok=$ok")
+            return JsonObject().apply { addProperty("ok", ok) }.toString()
+        }
+        val answersEl = args.get("answers")
+        if (answersEl == null || !answersEl.isJsonObject) return err("answers object required (or cancel:true)")
+        val answersArg = answersEl.asJsonObject
+        val answers = LinkedHashMap<String, List<String>>()
+        for ((q, v) in answersArg.entrySet()) {
+            answers[q] = when {
+                v.isJsonArray -> v.asJsonArray.mapNotNull { if (it.isJsonPrimitive) it.asString else null }
+                v.isJsonPrimitive -> listOf(v.asString)
+                else -> emptyList()
+            }
+        }
+        val originalInput = runCatching { JsonParser.parseString(pending.originalInputJson).asJsonObject }.getOrNull()
+            ?: return err("could not parse original question input")
+        val updated = runCatching { AskUserQuestionResponseBuilder.build(originalInput, pending.request, answers).toString() }
+            .getOrElse { return err("invalid answers: ${it.message}") }
+        val ok = questions.respond(id, QuestionResolution.Answered(updated))
+        thisLogger().warn("TEST BRIDGE respond_question id=$id ANSWER -> ok=$ok")
+        return JsonObject().apply { addProperty("ok", ok); add("updatedInput", JsonParser.parseString(updated)) }.toString()
     }
 
     private fun respondPermission(args: JsonObject): String {
