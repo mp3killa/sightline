@@ -83,7 +83,29 @@ class BlockRenderer(private val onLink: (String) -> Unit = { runCatching { Brows
         return boxed(inner, top = 2, bottom = 4)
     }
 
-    private fun callout(c: MdCallout): JComponent = quote(c.blocks) // refined in Phase 2
+    private fun callout(c: MdCallout): JComponent {
+        val accent = when (c.kind) {
+            MdCalloutKind.WARNING, MdCalloutKind.CAUTION -> ClaudeUiTokens.warning()
+            MdCalloutKind.IMPORTANT -> ClaudeUiTokens.accent()
+            else -> ClaudeUiTokens.info() // NOTE, TIP
+        }
+        val inner = JPanel()
+        inner.layout = BoxLayout(inner, BoxLayout.Y_AXIS)
+        inner.isOpaque = true
+        inner.background = ClaudeUiTokens.subtleSurface()
+        // Restrained: a coloured left rule + label, not a bright full-card border.
+        inner.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, JBUI.scale(3), 0, 0, accent),
+            JBUI.Borders.empty(4, 10),
+        )
+        val head = JBLabel(c.kind.name.lowercase().replaceFirstChar { it.uppercase() })
+        head.foreground = accent
+        head.font = baseFont().deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat())
+        head.alignmentX = Component.LEFT_ALIGNMENT
+        inner.add(head)
+        c.blocks.map { block(it) }.forEach { it.alignmentX = Component.LEFT_ALIGNMENT; inner.add(it) }
+        return boxed(inner, top = 4, bottom = 6)
+    }
 
     private fun thematicBreak(): JComponent {
         val line = JPanel()

@@ -13,7 +13,15 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.DumbService
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
@@ -54,6 +62,7 @@ import io.mp.claudecodepanel.theme.ClaudeIcons
 import io.mp.claudecodepanel.theme.ClaudeUiTokens
 import io.mp.claudecodepanel.ui.components.EmptyStatePanel
 import io.mp.claudecodepanel.ui.markdown.BlockRenderer
+import io.mp.claudecodepanel.ui.markdown.FileRefDetector
 import io.mp.claudecodepanel.ui.markdown.MarkdownDocParser
 import io.mp.claudecodepanel.ui.state.CompletionSummary
 import io.mp.claudecodepanel.ui.state.ComposerModel
@@ -408,10 +417,43 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun <T : JComponent> fullWidth(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; c.isOpaque = false; return c }
     private fun click(run: () -> Unit) = object : MouseAdapter() { override fun mouseClicked(e: MouseEvent) { run() } }
 
-    /** Opens a Markdown hyperlink: real URLs in the browser. Project-file references are added in Phase 2. */
+    /** Opens a Markdown hyperlink: real URLs in the browser, `file:` refs at the resolved project file. */
     private fun openMarkdownLink(href: String) {
-        if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:")) {
-            runCatching { BrowserUtil.browse(href) }
+        when {
+            href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:") ->
+                runCatching { BrowserUtil.browse(href) }
+            href.startsWith("file:") -> openFileRef(href.removePrefix("file:"))
+        }
+    }
+
+    private fun openFileRef(spec: String) {
+        val line = Regex(":(\\d+)$|#L(\\d+)$").find(spec)?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toIntOrNull() }
+        val vf = resolveProjectFile(spec) ?: return
+        val desc = if (line != null) OpenFileDescriptor(project, vf, (line - 1).coerceAtLeast(0), 0) else OpenFileDescriptor(project, vf)
+        FileEditorManager.getInstance(project).openTextEditor(desc, true)
+    }
+
+    /**
+     * The unique in-project file a Markdown reference points at ("CLAUDE.md", "docs/Foo.kt", "Bar.kt:12"),
+     * or null when absent, ambiguous, or the index is unavailable. Never guesses — a link is only offered
+     * when exactly one project file matches. Runs in a read action; skipped during indexing.
+     */
+    private fun resolveProjectFile(ref: String): VirtualFile? {
+        if (DumbService.isDumb(project)) return null
+        val path = ref.substringBefore(':').substringBefore("#")
+        val name = path.substringAfterLast('/').ifBlank { return null }
+        return try {
+            ReadAction.compute<VirtualFile?, RuntimeException> {
+                val idx = ProjectFileIndex.getInstance(project)
+                val matches = FilenameIndex.getVirtualFilesByName(name, GlobalSearchScope.projectScope(project))
+                    .filter { idx.isInContent(it) }
+                when {
+                    path.contains('/') -> matches.singleOrNull { it.path.replace('\\', '/').endsWith(path) }
+                    else -> matches.singleOrNull()
+                }
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -1269,7 +1311,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         private fun renderMarkdown(raw: String) {
             try {
-                val comps = markdownRenderer.render(MarkdownDocParser.parse(raw))
+                val model = FileRefDetector.linkify(MarkdownDocParser.parse(raw)) { resolveProjectFile(it) != null }
+                val comps = markdownRenderer.render(model)
                 blocks.removeAll()
                 comps.forEach { blocks.add(fullWidth(it)) }
                 if (!showingBlocks) { remove(stream); add(blocks, BorderLayout.CENTER); showingBlocks = true }

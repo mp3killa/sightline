@@ -78,4 +78,18 @@ class MarkdownRenderSmokeTest : BasePlatformTestCase() {
         val comps = BlockRenderer().render(MarkdownDocParser.parse("### H\n\n```\ncode line\n```"))
         assertEquals(2, comps.size)
     }
+
+    fun testCalloutRendersCleanly() {
+        val blocks = MarkdownDocParser.parse("> [!WARNING]\n> The docs are stale")
+        assertTrue(blocks.single() is MdCallout)
+        assertTrue(BlockRenderer().render(blocks).single().preferredSize.height > 0)
+    }
+
+    fun testResolvedFileLinkRendersCleanly() {
+        var opened: String? = null
+        val blocks = FileRefDetector.linkify(MarkdownDocParser.parse("Open CLAUDE.md now.")) { true }
+        val comp = BlockRenderer { opened = it }.render(blocks).single()
+        assertNotNull(comp.preferredSize)
+        assertNull(opened) // constructed only, no click
+    }
 }

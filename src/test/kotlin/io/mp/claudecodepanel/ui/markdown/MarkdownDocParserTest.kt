@@ -68,6 +68,25 @@ class MarkdownDocParserTest {
         assertEquals("quoted text", (q.blocks[0] as MdParagraph).inlines.plainText())
     }
 
+    @Test fun explicitAlertBecomesCallout() {
+        val c = parse("> [!WARNING]\n> The docs are stale").single() as MdCallout
+        assertEquals(MdCalloutKind.WARNING, c.kind)
+        assertEquals("The docs are stale", (c.blocks[0] as MdParagraph).inlines.plainText())
+    }
+
+    @Test fun calloutMarkerIsStrippedFromText() {
+        val c = parse("> [!NOTE] inline note body").single() as MdCallout
+        assertEquals(MdCalloutKind.NOTE, c.kind)
+        val body = (c.blocks[0] as MdParagraph).inlines.plainText()
+        assertTrue(body.startsWith("inline note"))
+        assertFalse(body.contains("[!"))
+    }
+
+    @Test fun plainQuoteIsNotACallout() {
+        // Callouts are syntax-driven only — an ordinary quote (no [!KIND]) never becomes one.
+        assertTrue(parse("> just an ordinary quotation").single() is MdQuote)
+    }
+
     @Test fun thematicBreak() {
         assertTrue(parse("above\n\n---\n\nbelow").any { it is MdThematicBreak })
     }

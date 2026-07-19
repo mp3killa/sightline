@@ -40,7 +40,8 @@ object MarkdownDocParser {
             name == "ORDERED_LIST" -> list(node, text, ordered = true)
             name == "CODE_FENCE" -> codeFence(node, text)
             name == "CODE_BLOCK" -> MdCodeBlock(null, dedentIndentedCode(node.getTextInNode(text).toString()))
-            name == "BLOCK_QUOTE" -> MdQuote(node.children.mapNotNull { quoteChild(it, text) })
+            name == "BLOCK_QUOTE" -> calloutOf(node.getTextInNode(text).toString())
+                ?: MdQuote(node.children.mapNotNull { quoteChild(it, text) })
             name == "TABLE" -> table(node, text)
             name == "HORIZONTAL_RULE" -> MdThematicBreak
             name == "EOL" || name == "WHITE_SPACE" -> null
@@ -50,6 +51,22 @@ object MarkdownDocParser {
 
     private fun atxContent(node: ASTNode): ASTNode =
         node.children.firstOrNull { it.type.name == "ATX_CONTENT" } ?: node
+
+    // GitHub-style alert: a block quote whose first inner line is [!NOTE|TIP|IMPORTANT|WARNING|CAUTION].
+    private val CALLOUT_MARKER = Regex("^\\s*\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)]\\s*", RegexOption.IGNORE_CASE)
+    private val QUOTE_MARKER = Regex("^\\s*>\\s?")
+
+    /**
+     * A callout iff the block quote's first inner line is an explicit `[!KIND]` marker — never inferred
+     * from prose. Works off the **raw** quote text (the parser mangles `[!WARNING]` into a reference
+     * link), stripping the `>` markers and the alert marker, then re-parsing the remainder as the body.
+     */
+    private fun calloutOf(rawQuote: String): MdCallout? {
+        val inner = rawQuote.lines().joinToString("\n") { it.replaceFirst(QUOTE_MARKER, "") }
+        val m = CALLOUT_MARKER.find(inner) ?: return null
+        val kind = MdCalloutKind.valueOf(m.groupValues[1].uppercase())
+        return MdCallout(kind, parse(inner.substring(m.range.last + 1).trim()))
+    }
 
     private fun quoteChild(node: ASTNode, text: String): MdBlock? = when {
         // The "> " marker is itself a childless BLOCK_QUOTE node; skip it and structural whitespace.
