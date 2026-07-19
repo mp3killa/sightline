@@ -8,6 +8,8 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 
 > Detailed, reverse-engineered CLI protocol facts live in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 > Read that before touching `ClaudeSession` or `IdeServer`.
+> How the interactive flows are verified (coordinators + the sandbox test bridge) lives in
+> **[docs/TESTING.md](docs/TESTING.md)** — read it before touching approval/diff wiring.
 
 ## Architecture
 
@@ -21,6 +23,8 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | `process/ClaudePathResolver.kt` | Finds the `claude` binary in GUI-launched IDEs (login-shell PATH) |
 | `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, **scoped `getDiagnostics`**, …). Path-taking tools are gated by `PathAccessPolicy`. |
 | `ide/PathAccessPolicy.kt` | Platform-free (unit-tested) path guard: canonicalises + classifies open/diff/write targets as inside-project / outside / **sensitive** (refuse); writes outside the project need an extra confirm |
+| `ide/InteractionCoordinators.kt` | Platform-free `ApprovalCoordinator` + `DiffReviewCoordinator` — decouple approval/diff **decisions** from Swing so the UI and the sandbox test bridge drive identical logic (no bypass). `<projectService>`s. |
+| `ide/SightlineTestBridge.kt` | **Sandbox-only** MCP tools (`sightline.test.*`) gated by `TestBridgeGuard` (`-Dsightline.testBridge=true`): inspect/resolve pending approvals & diffs, capture the tool window. See [docs/TESTING.md](docs/TESTING.md). |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI |
 
 ### Agent Activity Map (v0.6.0)

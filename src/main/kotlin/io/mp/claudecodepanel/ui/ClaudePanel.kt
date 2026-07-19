@@ -31,6 +31,9 @@ import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.BuildReportScanner
 import io.mp.claudecodepanel.activity.ErrorObserved
 import io.mp.claudecodepanel.activity.OutputParsers
+import io.mp.claudecodepanel.ide.ApprovalCoordinator
+import io.mp.claudecodepanel.ide.ApprovalDecision
+import io.mp.claudecodepanel.ide.PendingApproval
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -181,6 +184,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // results than the console gives. tool_use_id -> (command, start millis).
     private val reportScanner = BuildReportScanner()
     private val pendingReportScans = HashMap<String, Pair<String, Long>>()
+
+    // Approvals are resolved through a shared coordinator so the sandbox test bridge drives the same
+    // logic as the human's Allow/Deny buttons — never a separate bypass path.
+    private val approvalCoordinator by lazy { project.getService(ApprovalCoordinator::class.java) }
+    private val uiState by lazy { project.getService(SightlineUiState::class.java) }
     private val toolCardsById = HashMap<String, ToolCard>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
@@ -195,6 +203,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         initStyles()
         viewMode = initialViewMode()
         component = build()
+        component.getAccessibleContext()?.accessibleName = A11yNames.TOOL_WINDOW_ROOT
+        uiState.rootComponent = component
+        uiState.toolWindowVisible = true
         applyConfigToUi()
         installEmptyState()
         installResponsive()
@@ -513,6 +524,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         s.showActivityMap = WorkspaceModes.toShowActivityMap(ws)
         s.activityViewMode = WorkspaceModes.toViewMode(ws)
         header.setWorkspace(ws)
+        uiState.workspace = ws.name
         installCenter()
     }
 
@@ -785,17 +797,47 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val inputJson = input.toString()
         val toolUseId = req.str("tool_use_id")
         val title = req.str("title") ?: "Allow $toolName?"
+        val targetPath = input.str("file_path") ?: input.str("notebook_path") ?: input.str("new_file_path")
         val suggestions = if (req.has("permission_suggestions") && req.get("permission_suggestions").isJsonArray)
             req.getAsJsonArray("permission_suggestions").toString() else null
-        val block = ApprovalBlock(
-            title, toolName, input,
-            onAllow = { session.respondAllow(reqId, inputJson, null); resolvePermission() },
-            onAllowAlways = if (suggestions != null) ({ session.respondAllow(reqId, inputJson, suggestions); resolvePermission() }) else null,
-            onDeny = { session.respondDeny(reqId, "Denied by user"); resolvePermission(); onToolDenied(toolUseId, toolName, input) },
-        )
+
+        // The buttons just ask the coordinator to resolve; the one handler below does the real work,
+        // whether the decision came from a human click or the sandbox test bridge.
+        val block = ApprovalBlock(title, toolName, input, canAllowAlways = suggestions != null,
+            onDecision = { decision -> approvalCoordinator.respond(reqId, decision) })
         turn.addBlock(block)
+
+        val handler: (ApprovalDecision) -> Unit = { decision ->
+            runOnEdt {
+                when (decision) {
+                    ApprovalDecision.ALLOW -> session.respondAllow(reqId, inputJson, null)
+                    ApprovalDecision.ALLOW_ALWAYS -> session.respondAllow(reqId, inputJson, suggestions)
+                    ApprovalDecision.DENY -> {
+                        session.respondDeny(reqId, "Denied by user")
+                        onToolDenied(toolUseId, toolName, input)
+                    }
+                }
+                resolvePermission()
+                block.markResolved(decision)
+            }
+        }
+        approvalCoordinator.register(
+            PendingApproval(reqId, toolUseId, toolName, title, targetPath, suggestions != null, handler),
+        )
         statusModel.permissionRequested(); refreshStatus()
         scrollToBottomSoon()
+    }
+
+    /** Runs [r] on the EDT now if already there (human click), else marshals it (test-bridge thread). */
+    private fun runOnEdt(r: () -> Unit) {
+        val app = ApplicationManager.getApplication()
+        if (app.isDispatchThread) r() else app.invokeLater({ r() }, ModalityState.any())
+    }
+
+    /** Sets a stable accessible name (calls the getter explicitly; the inherited field is null-until-lazy). */
+    private fun <T : JComponent> T.named(accessibleName: String): T {
+        getAccessibleContext()?.accessibleName = accessibleName
+        return this
     }
 
     /** The user denied a tool: record a blocked node/status (never an execution) and mark its card. */
@@ -895,6 +937,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val meta = if (running) modelLabel() else completionMeta
         statusStrip.update(view, meta)
         header.setSessionState(coarseKind(view), coarseLabel(view))
+        uiState.sessionState = if (approvalCoordinator.hasPending()) "WAITING_FOR_APPROVAL" else view.kind.name
     }
 
     private fun modelLabel(): String {
@@ -924,7 +967,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         completionMeta = null
         interpreter.reset(); activityMap.clearSession()
         statusModel.reset(); transcriptPresenter.reset()
@@ -1178,7 +1221,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Always-visible approval prompt for a can_use_tool control request. */
     private inner class ApprovalBlock(
         title: String, toolName: String, input: JsonObject,
-        onAllow: () -> Unit, onAllowAlways: (() -> Unit)?, onDeny: () -> Unit,
+        canAllowAlways: Boolean, onDecision: (ApprovalDecision) -> Unit,
     ) : Block() {
         private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
         private val decided = JBLabel("")
@@ -1198,17 +1241,29 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             add(mid, BorderLayout.CENTER)
 
             buttons.isOpaque = false
-            val allow = JButton("Allow"); allow.addActionListener { onAllow(); resolve("Allowed") }; buttons.add(allow)
-            if (onAllowAlways != null) {
-                val aa = JButton("Allow always"); aa.addActionListener { onAllowAlways(); resolve("Always allowed") }; buttons.add(aa)
+            val allow = JButton("Allow").named(A11yNames.APPROVAL_ALLOW)
+            allow.addActionListener { onDecision(ApprovalDecision.ALLOW) }; buttons.add(allow)
+            if (canAllowAlways) {
+                val aa = JButton("Allow always").named(A11yNames.APPROVAL_ALLOW_ALWAYS)
+                aa.addActionListener { onDecision(ApprovalDecision.ALLOW_ALWAYS) }; buttons.add(aa)
             }
-            val deny = JButton("Deny"); deny.addActionListener { onDeny(); resolve("Denied") }; buttons.add(deny)
+            val deny = JButton("Deny").named(A11yNames.APPROVAL_DENY)
+            deny.addActionListener { onDecision(ApprovalDecision.DENY) }; buttons.add(deny)
             decided.foreground = mutedFg()
             val south = JPanel(BorderLayout()); south.isOpaque = false
             south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
             add(south, BorderLayout.SOUTH)
         }
-        private fun resolve(text: String) { buttons.isVisible = false; decided.text = text; relayout() }
+        /** Reflects a resolved decision (from a human click or the test bridge) in the card. */
+        fun markResolved(decision: ApprovalDecision) {
+            buttons.isVisible = false
+            decided.text = when (decision) {
+                ApprovalDecision.ALLOW -> "Allowed"
+                ApprovalDecision.ALLOW_ALWAYS -> "Always allowed"
+                ApprovalDecision.DENY -> "Denied"
+            }
+            relayout()
+        }
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)

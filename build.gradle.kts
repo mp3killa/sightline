@@ -86,3 +86,13 @@ intellijPlatform {
         }
     }
 }
+
+// Sandbox IDE with the sandbox-only test bridge enabled (`-Dsightline.testBridge=true`), so a UI
+// driver can inspect/resolve pending approvals & diffs and capture the tool window. NEVER enabled in
+// the Marketplace build. Launch: `./gradlew runIdeTestBridge`. See docs/TESTING.md.
+intellijPlatformTesting.runIde.register("runIdeTestBridge") {
+    task {
+        systemProperty("sightline.testBridge", "true")
+        systemProperty("idea.trust.all.projects", "true")
+    }
+}

@@ -38,6 +38,11 @@
                     factoryClass="io.mp.claudecodepanel.ClaudeToolWindowFactory"
                     icon="/icons/claudeToolWindow.svg"/>
         <applicationService serviceImplementation="io.mp.claudecodepanel.settings.ClaudeSettings"/>
+        <!-- Decouple approval/diff decisions from Swing so both the UI and the sandbox test bridge
+             resolve them through the same logic. Plain classes, so registered here (not annotated). -->
+        <projectService serviceImplementation="io.mp.claudecodepanel.ide.ApprovalCoordinator"/>
+        <projectService serviceImplementation="io.mp.claudecodepanel.ide.DiffReviewCoordinator"/>
+        <projectService serviceImplementation="io.mp.claudecodepanel.ui.SightlineUiState"/>
         <applicationConfigurable parentId="tools"
                                  id="io.mp.claudecodepanel.settings"
                                  displayName="Sightline for Claude Code"

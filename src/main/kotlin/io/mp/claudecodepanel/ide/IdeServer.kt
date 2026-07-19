@@ -72,6 +72,16 @@ class IdeServer(private val project: Project) : Disposable {
     /** Guards which paths the bridge may open/diff/write. Built once from the project's content roots. */
     private val pathPolicy: PathAccessPolicy by lazy { PathAccessPolicy(projectRoots()) }
 
+    /** Shared so the human diff dialog and the sandbox test bridge resolve the same review. */
+    private val diffCoordinator: DiffReviewCoordinator by lazy { project.getService(DiffReviewCoordinator::class.java) }
+
+    /** Sandbox-only automation tools; contributes nothing unless -Dsightline.testBridge=true. */
+    private val testBridge: SightlineTestBridge by lazy { SightlineTestBridge(project) }
+
+    private companion object {
+        const val DIFF_TIMEOUT_MINUTES = 10L
+    }
+
     private fun projectRoots(): List<String> {
         val roots = mutableListOf<String>()
         project.basePath?.let { roots.add(it) }
@@ -169,7 +179,12 @@ class IdeServer(private val project: Project) : Disposable {
                 val params = root.getObj("params") ?: JsonObject()
                 val name = params.str("name") ?: ""
                 val args = params.getObj("arguments") ?: JsonObject()
-                reply(conn, id, toolResult(callTool(name, args)))
+                if (testBridge.handles(name)) {
+                    val r = testBridge.call(name, args)
+                    reply(conn, id, toolResult(r.text, r.imagePng))
+                } else {
+                    reply(conn, id, toolResult(callTool(name, args)))
+                }
             }
             else -> if (id != null && !id.isJsonNull) replyError(conn, id, -32601, "Method not found: $method")
         }
@@ -194,10 +209,17 @@ class IdeServer(private val project: Project) : Disposable {
         add("serverInfo", JsonObject().apply { addProperty("name", "claude-code-panel-ide"); addProperty("version", "0.4.0") })
     }
 
-    /** Wraps a plain-text tool result in the MCP `{content:[{type:text,text}]}` envelope. */
-    private fun toolResult(text: String): JsonObject = JsonObject().apply {
+    /** Wraps a tool result in the MCP `{content:[…]}` envelope; adds a base64 PNG image block if given. */
+    private fun toolResult(text: String, imagePng: ByteArray? = null): JsonObject = JsonObject().apply {
         add("content", JsonArray().apply {
             add(JsonObject().apply { addProperty("type", "text"); addProperty("text", text) })
+            imagePng?.let { bytes ->
+                add(JsonObject().apply {
+                    addProperty("type", "image")
+                    addProperty("data", java.util.Base64.getEncoder().encodeToString(bytes))
+                    addProperty("mimeType", "image/png")
+                })
+            }
         })
     }
 
@@ -227,6 +249,7 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("closeAllDiffTabs", "Close all diff tabs"))
         tools.add(tool("checkDocumentDirty", "Check whether a document has unsaved changes"))
         tools.add(tool("saveDocument", "Save a document"))
+        testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
     }
 
@@ -415,35 +438,58 @@ class IdeServer(private val project: Project) : Disposable {
         val access = pathPolicy.classify(newPath)
         // A protected location is never written, regardless of permission mode or diff acceptance.
         if (access == PathAccess.SENSITIVE) return refused(newPath)
-        val accepted = onEdt {
-            val dcf = DiffContentFactory.getInstance()
-            val fileType = FileTypeManager.getInstance().getFileTypeByFileName(newPath)
-            val oldText = oldPath?.let {
+
+        val oldText = onEdt {
+            oldPath?.let {
                 val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(it)
                 if (vf != null) String(vf.contentsToByteArray(), StandardCharsets.UTF_8) else ""
             } ?: ""
-            val oldContent = dcf.create(project, oldText, fileType)
-            val newContent = dcf.create(project, newContents, fileType)
-            val request = SimpleDiffRequest(tabName, oldContent, newContent, "Current", "Proposed by Claude")
-            val dialog = object : DialogWrapper(project, true) {
-                init { title = tabName; init(); setOKButtonText("Accept"); setCancelButtonText("Reject") }
-                override fun createCenterPanel(): JComponent {
-                    val p = DiffManager.getInstance().createRequestPanel(project, disposable, null)
-                    p.setRequest(request)
-                    val c = p.component
-                    c.preferredSize = Dimension(JBUI.scale(920), JBUI.scale(560))
-                    return c
-                }
+        } ?: ""
+
+        // Register the review so either the human's dialog or the sandbox test bridge can resolve it;
+        // the handler thread waits on the future. Same external contract as before (blocking + write).
+        val id = "diff_" + randomHex(6)
+        val review = diffCoordinator.create(id, newPath, oldText, newContents)
+        ApplicationManager.getApplication().invokeLater({ showDiffDialog(review, tabName, access) })
+
+        val decision = try {
+            review.future.get(DIFF_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES)
+        } catch (e: Exception) {
+            diffCoordinator.remove(id)
+            return "DIFF_REJECTED"
+        }
+        return if (decision == DiffDecision.ACCEPT) { writeFile(newPath, newContents); "FILE_SAVED" } else "DIFF_REJECTED"
+    }
+
+    /** Shows the Accept/Reject diff dialog on the EDT; its result resolves the pending review. Skips if
+     * the review was already resolved externally (test bridge), and auto-closes if resolved while open. */
+    private fun showDiffDialog(review: PendingDiffReview, tabName: String, access: PathAccess) {
+        if (review.future.isDone) return
+        val dcf = DiffContentFactory.getInstance()
+        val fileType = FileTypeManager.getInstance().getFileTypeByFileName(review.path)
+        val oldContent = dcf.create(project, review.currentText, fileType)
+        val newContent = dcf.create(project, review.proposedText, fileType)
+        val request = SimpleDiffRequest(tabName, oldContent, newContent, "Current", "Proposed by Claude")
+        val dialog = object : DialogWrapper(project, true) {
+            init { title = tabName; init(); setOKButtonText("Accept"); setCancelButtonText("Reject") }
+            override fun createCenterPanel(): JComponent {
+                val p = DiffManager.getInstance().createRequestPanel(project, disposable, null)
+                p.setRequest(request)
+                val c = p.component
+                c.preferredSize = Dimension(JBUI.scale(920), JBUI.scale(560))
+                return c
             }
-            val ok = dialog.showAndGet()
-            if (ok) {
-                // Writing outside the project needs a second, explicit confirmation of the full path.
-                if (access == PathAccess.OUTSIDE_PROJECT && !confirmExternalWrite(newPath)) return@onEdt false
-                writeFile(newPath, newContents)
-            }
-            ok
-        } ?: false
-        return if (accepted) "FILE_SAVED" else "DIFF_REJECTED"
+        }
+        // If the review is resolved externally (test bridge) while the dialog is open, close it.
+        review.future.whenComplete { _, _ -> ApplicationManager.getApplication().invokeLater { if (dialog.isShowing) dialog.close(DialogWrapper.CANCEL_EXIT_CODE) } }
+        val ok = dialog.showAndGet()
+        // Writing outside the project needs a second, explicit confirmation of the full path.
+        val decision = if (ok && (access != PathAccess.OUTSIDE_PROJECT || confirmExternalWrite(review.path))) {
+            DiffDecision.ACCEPT
+        } else {
+            DiffDecision.REJECT
+        }
+        diffCoordinator.respond(review.id, decision)
     }
 
     /** Blocking yes/no shown on the EDT before writing outside the project; surfaces the full path. */

@@ -1,0 +1,172 @@
+package io.mp.claudecodepanel.ide
+
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.project.Project
+import io.mp.claudecodepanel.ui.SightlineUiState
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
+import javax.swing.JComponent
+
+/**
+ * Guards the sandbox-only test bridge. Enabled ONLY when `-Dsightline.testBridge=true` is passed to the
+ * IDE JVM — which no normal install or Marketplace build ever sets — so the interaction-mutation and
+ * screenshot tools are never present in production `tools/list`.
+ */
+object TestBridgeGuard {
+    fun isEnabled(): Boolean = java.lang.Boolean.getBoolean("sightline.testBridge")
+}
+
+/** A tool result that may carry a PNG image in addition to text. */
+class BridgeResult(val text: String, val imagePng: ByteArray? = null)
+
+/**
+ * Sandbox-only MCP tools that let an automated driver **inspect and resolve pending interactions and
+ * capture the tool window without clicking pixels** — by driving the same [ApprovalCoordinator] /
+ * [DiffReviewCoordinator] the real UI uses. This is deliberately NOT a bypass: it runs the identical
+ * production handlers. Every simulated decision is audit-logged (ids/decisions only, never content).
+ *
+ * Exposed only when [TestBridgeGuard.isEnabled]; see docs/TESTING.md.
+ */
+class SightlineTestBridge(private val project: Project) {
+
+    private val approvals get() = project.getService(ApprovalCoordinator::class.java)
+    private val diffs get() = project.getService(DiffReviewCoordinator::class.java)
+    private val ui get() = project.getService(SightlineUiState::class.java)
+
+    private val toolNames = setOf(
+        "sightline.test.get_ui_state",
+        "sightline.test.list_pending_interactions",
+        "sightline.test.respond_permission",
+        "sightline.test.respond_diff",
+        "sightline.test.capture_tool_window",
+    )
+
+    fun handles(name: String): Boolean = TestBridgeGuard.isEnabled() && name in toolNames
+
+    /** Appends the test tool definitions to [tools] when the bridge is enabled. */
+    fun addToolDefs(tools: JsonArray) {
+        if (!TestBridgeGuard.isEnabled()) return
+        thisLogger().warn("Sightline TEST BRIDGE enabled (-Dsightline.testBridge=true) — sandbox use only")
+        tools.add(def("sightline.test.get_ui_state", "TEST-ONLY: structured tool-window state (workspace, session, pending counts)."))
+        tools.add(def("sightline.test.list_pending_interactions", "TEST-ONLY: pending approvals and diff reviews with opaque ids + available actions."))
+        tools.add(def("sightline.test.respond_permission", "TEST-ONLY: resolve a pending approval. args {interactionId, decision: ALLOW|ALLOW_ALWAYS|DENY}.",
+            props("interactionId" to "string", "decision" to "string")))
+        tools.add(def("sightline.test.respond_diff", "TEST-ONLY: resolve a pending diff review. args {interactionId, decision: ACCEPT|REJECT}.",
+            props("interactionId" to "string", "decision" to "string")))
+        tools.add(def("sightline.test.capture_tool_window", "TEST-ONLY: PNG screenshot of the tool window (image content + dimensions)."))
+    }
+
+    fun call(name: String, args: JsonObject): BridgeResult = when (name) {
+        "sightline.test.get_ui_state" -> BridgeResult(getUiState())
+        "sightline.test.list_pending_interactions" -> BridgeResult(listPending())
+        "sightline.test.respond_permission" -> BridgeResult(respondPermission(args))
+        "sightline.test.respond_diff" -> BridgeResult(respondDiff(args))
+        "sightline.test.capture_tool_window" -> captureToolWindow()
+        else -> BridgeResult(err("unknown test tool: $name"))
+    }
+
+    // ---- tool implementations ----
+
+    private fun getUiState(): String = JsonObject().apply {
+        val s = ui
+        addProperty("toolWindowVisible", s.toolWindowVisible)
+        addProperty("workspace", s.workspace)
+        addProperty("sessionState", s.sessionState)
+        addProperty("pendingApprovals", approvals.listPending().size)
+        addProperty("pendingDiffs", diffs.listPending().size)
+    }.toString()
+
+    private fun listPending(): String {
+        val arr = JsonArray()
+        for (a in approvals.listPending()) {
+            arr.add(JsonObject().apply {
+                addProperty("id", a.id)
+                addProperty("type", "TOOL_PERMISSION")
+                addProperty("toolName", a.toolName)
+                addProperty("title", a.title)
+                a.targetPath?.let { addProperty("targetPath", it) }
+                add("availableActions", JsonArray().apply {
+                    add("ALLOW"); if (a.canAllowAlways) add("ALLOW_ALWAYS"); add("DENY")
+                })
+            })
+        }
+        for (d in diffs.listPending()) {
+            arr.add(JsonObject().apply {
+                addProperty("id", d.id)
+                addProperty("type", "DIFF_REVIEW")
+                addProperty("targetPath", d.path)
+                add("availableActions", JsonArray().apply { add("ACCEPT"); add("REJECT") })
+            })
+        }
+        return JsonObject().apply { add("interactions", arr) }.toString()
+    }
+
+    private fun respondPermission(args: JsonObject): String {
+        val id = args.str("interactionId") ?: return err("interactionId required")
+        val decision = args.str("decision")?.let { runCatching { ApprovalDecision.valueOf(it) }.getOrNull() }
+            ?: return err("decision must be ALLOW | ALLOW_ALWAYS | DENY")
+        val outcome = approvals.respond(id, decision)
+        thisLogger().warn("TEST BRIDGE respond_permission id=$id decision=$decision -> ${outcome::class.simpleName}")
+        return JsonObject().apply {
+            addProperty("ok", outcome is ApprovalOutcome.Applied)
+            addProperty("outcome", outcome::class.simpleName ?: "?")
+        }.toString()
+    }
+
+    private fun respondDiff(args: JsonObject): String {
+        val id = args.str("interactionId") ?: return err("interactionId required")
+        val decision = args.str("decision")?.let { runCatching { DiffDecision.valueOf(it) }.getOrNull() }
+            ?: return err("decision must be ACCEPT | REJECT")
+        val ok = diffs.respond(id, decision)
+        thisLogger().warn("TEST BRIDGE respond_diff id=$id decision=$decision -> ok=$ok")
+        return JsonObject().apply { addProperty("ok", ok); addProperty("found", ok) }.toString()
+    }
+
+    private fun captureToolWindow(): BridgeResult {
+        val component = ui.rootComponent ?: return BridgeResult(err("tool window not available"))
+        val image = captureComponent(component) ?: return BridgeResult(err("capture failed"))
+        val png = ByteArrayOutputStream().use { ImageIO.write(image, "png", it); it.toByteArray() }
+        val meta = JsonObject().apply {
+            addProperty("width", image.width); addProperty("height", image.height)
+            addProperty("workspace", ui.workspace); addProperty("sessionState", ui.sessionState)
+            addProperty("bytes", png.size)
+        }.toString()
+        return BridgeResult(meta, png)
+    }
+
+    private fun captureComponent(component: JComponent): BufferedImage? {
+        var img: BufferedImage? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            val w = component.width.coerceAtLeast(component.preferredSize.width).coerceAtLeast(1)
+            val h = component.height.coerceAtLeast(component.preferredSize.height).coerceAtLeast(1)
+            val image = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+            val g = image.createGraphics()
+            try { component.printAll(g) } finally { g.dispose() }
+            img = image
+        }
+        return img
+    }
+
+    // ---- helpers ----
+
+    private fun def(name: String, desc: String, props: JsonObject? = null): JsonObject = JsonObject().apply {
+        addProperty("name", name)
+        addProperty("description", desc)
+        add("inputSchema", JsonObject().apply {
+            addProperty("type", "object"); add("properties", props ?: JsonObject())
+        })
+    }
+
+    private fun props(vararg pairs: Pair<String, String>): JsonObject = JsonObject().apply {
+        pairs.forEach { (k, type) -> add(k, JsonObject().apply { addProperty("type", type) }) }
+    }
+
+    private fun err(message: String): String =
+        JsonObject().apply { addProperty("ok", false); addProperty("error", message) }.toString()
+
+    private fun JsonObject.str(k: String): String? = if (has(k) && get(k).isJsonPrimitive) get(k).asString else null
+}
