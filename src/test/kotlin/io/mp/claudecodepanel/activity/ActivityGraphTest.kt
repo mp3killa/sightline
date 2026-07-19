@@ -180,6 +180,23 @@ class ActivityGraphTest {
         assertTrue(g.edges.any { it.type == ActivityEdgeType.IMPLEMENTS && it.targetNodeId == "file:/app/Trackable.kt" })
     }
 
+    @Test fun structuralEdgesCarryEvidenceProvenance() {
+        val g = freshGraph()
+        g.apply(FileEdited("/app/DriverRepositoryImpl.kt", created = false, at = tick()))
+        g.apply(StructuralRelation("/app/DriverRepositoryImpl.kt", "/app/DriverRepository.kt", "DriverRepository",
+            StructuralRelationKind.IMPLEMENTS, tick()))
+        val edge = g.edgesTouching("file:/app/DriverRepositoryImpl.kt")
+            .first { it.type == ActivityEdgeType.IMPLEMENTS }
+        val ev = edge.evidence!!
+        assertEquals(EvidenceSource.PSI_DECLARATION, ev.source)
+        assertEquals("DriverRepositoryImpl implements DriverRepository", ev.explanation)
+
+        g.apply(StructuralRelation("/app/DriverRepositoryImpl.kt", "/app/data/Db.kt", "Db",
+            StructuralRelationKind.IMPORTS, tick()))
+        val imp = g.edgesTouching("file:/app/DriverRepositoryImpl.kt").first { it.type == ActivityEdgeType.IMPORTS }
+        assertEquals(EvidenceSource.IMPORT, imp.evidence!!.source)
+    }
+
     @Test fun testRelationAndPackageMetadata() {
         val g = freshGraph()
         g.apply(FileRead("/app/FooTest.kt", tick()))

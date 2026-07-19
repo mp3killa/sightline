@@ -21,6 +21,7 @@ import io.mp.claudecodepanel.activity.ActivityGraph
 import io.mp.claudecodepanel.activity.ActivityNode
 import io.mp.claudecodepanel.activity.ActivityNodeState
 import io.mp.claudecodepanel.activity.ActivityNodeType
+import io.mp.claudecodepanel.activity.EvidenceSource
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.TimelineEntry
 import io.mp.claudecodepanel.settings.ClaudeSettings
@@ -922,11 +923,21 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             propRow("Last active", timeAgo(n.lastSeenAt))
             if (graph.hasActiveError(n.id)) addLine("Affected by an active error", muted = false)
 
-            // Relationships.
-            val related = graph.neighbors(n.id).mapNotNull { graph.node(it) }.filter { it.type != ActivityNodeType.CATEGORY }.take(6)
+            // Relationships — with provenance ("why") when we have it (PSI/import/naming evidence).
+            val related = graph.edgesTouching(n.id).mapNotNull { e ->
+                val otherId = if (e.sourceNodeId == n.id) e.targetNodeId else e.sourceNodeId
+                val other = graph.node(otherId) ?: return@mapNotNull null
+                if (other.type == ActivityNodeType.CATEGORY) null else e to other
+            }.take(6)
             if (related.isNotEmpty()) {
                 addGap(); addLine("Related", bold = true)
-                related.forEach { addLine("• " + cleanLabel(it), muted = true) }
+                related.forEach { (e, other) ->
+                    val ev = e.evidence
+                    // The explanation ("DriverRepositoryImpl implements DriverRepository") already names both
+                    // ends, so it stands alone; fall back to the node label when there's no provenance.
+                    if (ev != null) addLine("• ${ev.explanation} · ${prettyEvidence(ev.source)}", muted = true)
+                    else addLine("• " + cleanLabel(other), muted = true)
+                }
             }
 
             // Evidence (confidence) — secondary; only surfaced for inferred/low-confidence.
@@ -961,6 +972,16 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private fun prettyType(t: ActivityNodeType): String =
         t.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+    private fun prettyEvidence(s: EvidenceSource): String = when (s) {
+        EvidenceSource.STRUCTURED_TOOL_EVENT -> "tool event"
+        EvidenceSource.PSI_DECLARATION -> "PSI"
+        EvidenceSource.PSI_REFERENCE -> "PSI reference"
+        EvidenceSource.IMPORT -> "import"
+        EvidenceSource.NAMING_HEURISTIC -> "naming"
+        EvidenceSource.PATH_HEURISTIC -> "path"
+        EvidenceSource.COMMAND_OUTPUT -> "command output"
+    }
 
     private fun timeAgo(instant: Instant): String {
         val s = Duration.between(instant, Instant.now()).seconds

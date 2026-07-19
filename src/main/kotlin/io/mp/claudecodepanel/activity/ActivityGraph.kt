@@ -58,6 +58,10 @@ class ActivityGraph(
             when (id) { it.sourceNodeId -> it.targetNodeId; it.targetNodeId -> it.sourceNodeId; else -> null }
         }.distinct()
 
+    /** Edges incident to [id] in either direction — for the inspector's relationship list (with evidence). */
+    fun edgesTouching(id: String): List<ActivityEdge> =
+        edgesMap.values.filter { it.sourceNodeId == id || it.targetNodeId == id }
+
     /** True when a currently-failing error node points at [id] via AFFECTED_BY. */
     fun hasActiveError(id: String): Boolean =
         edgesMap.values.any {
@@ -302,7 +306,19 @@ class ActivityGraph(
             StructuralRelationKind.EXTENDS -> ActivityEdgeType.EXTENDS
             StructuralRelationKind.IMPLEMENTS -> ActivityEdgeType.IMPLEMENTS
         }
-        edge(srcId, tgtId, type, now, weight = 0.4f, bump = false)
+        edge(srcId, tgtId, type, now, weight = 0.4f, bump = false, evidence = structuralEvidence(e))
+    }
+
+    /** Provenance for a PSI-derived relationship — e.g. "DriverRepositoryImpl implements DriverRepository". */
+    private fun structuralEvidence(e: StructuralRelation): RelationshipEvidence {
+        val symbol = ActivityClassifier.basename(e.sourcePath).substringBeforeLast('.')
+        val (source, verb) = when (e.relation) {
+            StructuralRelationKind.IMPORTS -> EvidenceSource.IMPORT to "imports"
+            StructuralRelationKind.EXTENDS -> EvidenceSource.PSI_DECLARATION to "extends"
+            StructuralRelationKind.IMPLEMENTS -> EvidenceSource.PSI_DECLARATION to "implements"
+            StructuralRelationKind.TESTS -> EvidenceSource.NAMING_HEURISTIC to "tests"
+        }
+        return RelationshipEvidence(source, e.confidence, "$symbol $verb ${e.targetLabel}", e.sourcePath, symbol)
     }
 
     private fun ensureEnrichedFileNode(rawPath: String, now: Instant): String {
@@ -390,15 +406,19 @@ class ActivityGraph(
 
     private fun edge(
         source: String, target: String, type: ActivityEdgeType, now: Instant,
-        weight: Float = 1f, bump: Boolean = true,
+        weight: Float = 1f, bump: Boolean = true, evidence: RelationshipEvidence? = null,
     ) {
         if (source == target) return
         val id = "$source->$target:${type.name}"
         val existing = edgesMap[id]
         edgesMap[id] = if (existing == null) {
-            ActivityEdge(id, source, target, type, weight, 1f, now)
+            ActivityEdge(id, source, target, type, weight, 1f, now, evidence)
         } else {
-            existing.copy(weight = if (bump) minOf(4f, existing.weight + 0.15f) else existing.weight, lastActivatedAt = now)
+            existing.copy(
+                weight = if (bump) minOf(4f, existing.weight + 0.15f) else existing.weight,
+                lastActivatedAt = now,
+                evidence = evidence ?: existing.evidence,
+            )
         }
     }
 

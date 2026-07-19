@@ -83,6 +83,24 @@ data class ActivityNode(
     val metadata: Map<String, String> = emptyMap(),
 )
 
+/**
+ * Where a relationship claim came from — so the inspector can say **why** an edge exists instead of
+ * asserting it bare. Ordered strongest→weakest; structured/PSI facts outrank name/path heuristics.
+ */
+enum class EvidenceSource {
+    STRUCTURED_TOOL_EVENT, PSI_DECLARATION, PSI_REFERENCE, IMPORT,
+    NAMING_HEURISTIC, PATH_HEURISTIC, COMMAND_OUTPUT,
+}
+
+/** Provenance attached to an edge: its source, confidence, and a human-readable [explanation]. */
+data class RelationshipEvidence(
+    val source: EvidenceSource,
+    val confidence: Float,
+    val explanation: String,
+    val sourcePath: String? = null,
+    val sourceSymbol: String? = null,
+)
+
 data class ActivityEdge(
     val id: String,
     val sourceNodeId: String,
@@ -91,6 +109,7 @@ data class ActivityEdge(
     val weight: Float = 1f,
     val confidence: Float = 1f,
     val lastActivatedAt: Instant,
+    val evidence: RelationshipEvidence? = null,
 )
 
 /** One entry in the session activity timeline (metadata/summaries only — never file contents). */

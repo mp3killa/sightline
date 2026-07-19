@@ -197,18 +197,17 @@ the VFS then re-runs, picking up new imports/supertypes). Idempotent: the graph 
 - A Kotlin `BasePlatformTestCase` (needs the Kotlin plugin on the test classpath) — Kotlin uses the same
   UAST code path, currently only exercised live in the sandbox.
 
-## 8. Evidence provenance (before any pattern detection)
+## 8. Evidence provenance (before any pattern detection) — **done**
 
-Attach evidence to relationships so "architecture detection" is trustworthy, not decorative:
+`RelationshipEvidence(source, confidence, explanation, sourcePath, sourceSymbol)` +
+`EvidenceSource { STRUCTURED_TOOL_EVENT, PSI_DECLARATION, PSI_REFERENCE, IMPORT, NAMING_HEURISTIC,
+PATH_HEURISTIC, COMMAND_OUTPUT }` in `activity/ActivityModel`. `ActivityEdge.evidence` carries it;
+`ActivityGraph.relateFiles` attaches it to structural edges (IMPORTS → IMPORT, EXTENDS/IMPLEMENTS →
+PSI_DECLARATION, TESTS → NAMING_HEURISTIC) with a human explanation, and the inspector's **Related**
+section shows the *why* (e.g. "DriverRepositoryImpl implements DriverRepository · PSI"). Unit-tested.
 
-```kotlin
-data class RelationshipEvidence(val source: EvidenceSource, val confidence: Float,
-    val explanation: String, val sourcePath: String?, val sourceSymbol: String?)
-enum class EvidenceSource { STRUCTURED_TOOL_EVENT, PSI_DECLARATION, PSI_REFERENCE, IMPORT,
-    NAMING_HEURISTIC, PATH_HEURISTIC, COMMAND_OUTPUT }
-```
-
-Inspector then shows *why* (e.g. "DriverRepositoryImpl implements DriverRepository").
+**Remaining (as pattern detection grows):** attach COMMAND_OUTPUT evidence to `PRODUCED`/`AFFECTED_BY`
+edges; rank/merge multiple evidences per relationship; show evidence in tooltips as well as the inspector.
 
 ## 9. Cluster collapsing & basic keyboard access
 
