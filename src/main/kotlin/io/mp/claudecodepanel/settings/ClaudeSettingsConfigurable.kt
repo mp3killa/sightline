@@ -23,7 +23,7 @@ class ClaudeSettingsConfigurable : Configurable {
 
     override fun createComponent(): JComponent {
         val models = listOf("", "opus", "sonnet", "haiku")
-        val modes = listOf("acceptEdits", "default", "plan", "bypassPermissions")
+        val modes = listOf("default", "acceptEdits", "plan", "auto", "bypassPermissions")
 
         val p = panel {
             row("Claude command:") {
@@ -52,11 +52,11 @@ class ClaudeSettingsConfigurable : Configurable {
             }
             row("Permission mode:") {
                 comboBox(modes)
-                    .bindItem({ state.permissionMode ?: "acceptEdits" }, { state.permissionMode = it ?: "acceptEdits" })
+                    .bindItem({ state.permissionMode ?: "auto" }, { state.permissionMode = it ?: "auto" })
                     .comment(
-                        "<b>acceptEdits</b> mirrors VS Code auto-accept · <b>plan</b> read-only planning · " +
-                            "<b>bypassPermissions</b> auto-approves everything (use with care) · " +
-                            "<b>default</b> skips tools that would need approval."
+                        "<b>auto</b> (default) approves safe actions and pauses for risky ones (needs Sonnet/Opus) · " +
+                            "<b>default</b> asks before each tool · <b>acceptEdits</b> auto-accepts edits, asks for commands · " +
+                            "<b>plan</b> read-only planning · <b>bypassPermissions</b> approves everything (use with care)."
                     )
             }
             row {

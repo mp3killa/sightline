@@ -13,8 +13,8 @@ It drives the CLI over its streaming-JSON protocol and renders everything in **n
 |---|---|
 | `ClaudeToolWindowFactory.kt` | Registers the right-dock "Claude" tool window |
 | `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering. Feeds every observable tool/stream event into the activity map. |
-| `ui/ActivityMapPanel.kt` | The **Agent Activity Map**: force-directed Swing graph, current-focus card, node details (open/reveal), timeline, filters/controls. Renders only; theme-aware colours. |
-| `activity/*.kt` | Platform-free, unit-tested core of the map: event model (`AgentActivityEvent`), `ActivityInterpreter` (raw tool events → normalised events), `ActivityGraph` (reducer → nodes/edges/clusters/focus/timeline), `ActivityClassifier` (path → cluster), `OutputParsers` (Gradle/compiler/test output), `ActivityColorRole` (state → theme role) |
+| `ui/ActivityMapPanel.kt` | The **Agent Activity Map**: force-directed Swing graph, current-focus card, node details (open/reveal/pin/hide), timeline, filter combo, legend, and pause/reduce-motion/fit/clear controls. Renders only; theme-aware colours. |
+| `activity/*.kt` | Platform-free, unit-tested core of the map: `AgentActivityEvent` (normalised event model), `ActivityModel` (graph data model — node/edge/category/state/timeline types), `ActivityInterpreter` (raw tool events → normalised events), `ActivityGraph` (reducer → nodes/edges/clusters/focus/timeline), `ActivityClassifier` (path → cluster), `OutputParsers` (Gradle/compiler/test output), `ActivityColorRole` (state → theme role), `ActivityMapRenderer` (headless PNG preview) |
 | `process/ClaudeSession.kt` | Owns one persistent `claude -p` process; stdin/stdout stream-json plumbing; control-protocol responses; `--mcp-config` wiring |
 | `process/ClaudePathResolver.kt` | Finds the `claude` binary in GUI-launched IDEs (login-shell PATH) |
 | `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, …) |
@@ -77,7 +77,12 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 
 - `interactiveApproval` (default on) → `--permission-prompt-tool stdio` + control protocol.
 - `ideIntegration` (default on) → runs `IdeServer` and passes it via `--mcp-config` (ws).
+- `includePartialMessages` (default on) → `--include-partial-messages` for token-level streaming.
 - `showDetails` (default off) → compact vs detailed transcript.
-- `showActivityMap` (default on) → show the Agent Activity Map; `activityReduceMotion`,
-  `activityMaxNodes` (visible cap, default 200), `activityMaxRetained` (session cap, default 500).
-- Permission mode chip composes with the above (Manual prompts all, acceptEdits only commands, …).
+- `showActivityMap` (default on) → show the Agent Activity Map; `activityViewMode`
+  (`chat`|`split`|`map`, default `split`), `activityReduceMotion`, `activityMaxNodes`
+  (visible cap, default 200), `activityMaxRetained` (session cap, default 500).
+- `permissionMode` (default `auto`) — set via the composer mode chip or the Settings dropdown.
+  `auto` (⚡) is **model-gated** (Sonnet/Opus only; silently falls back to `default` on Haiku).
+  Composes with `interactiveApproval`: Manual prompts all, acceptEdits only commands, Bypass never prompts.
+- `extraArgs` — advanced: extra CLI args appended verbatim to every `claude` invocation.

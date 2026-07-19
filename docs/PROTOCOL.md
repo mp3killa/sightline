@@ -81,7 +81,7 @@ approve safe actions and prompt for risky ones. On **Haiku** it fails: the contr
 (verified: `permissionMode` echoes `default` for Haiku, `auto` for Sonnet/Opus). So a UI "Auto"
 option must assume a capable model.
 
-## 4. JetBrains "MCP Server" plugin (IDE tools for Claude)
+## 3. JetBrains "MCP Server" plugin (IDE tools for Claude)
 
 Separate from our own `ide` server: the official JetBrains **MCP Server** plugin
 (`com.intellij.mcpServer`, since-build 261.25134, loads in AS despite the marketplace refusing
@@ -99,7 +99,7 @@ Separate from our own `ide` server: the official JetBrains **MCP Server** plugin
 
 ---
 
-## 3. IDE integration (the `ide` MCP server)
+## 4. IDE integration (the `ide` MCP server)
 
 The CLI talks to an in-IDE **WebSocket MCP** server (MCP spec 2025-03-26 over ws, JSON-RPC 2.0).
 
