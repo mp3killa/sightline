@@ -134,13 +134,20 @@ command-type events so interleaved reads don't steal it) — so the map shows co
 test report / diagnostic, and diagnostics still link on to the file they name (`AFFECTED_BY`),
 completing the command → … → referenced-files chain. Unit-tested.
 
+**Done (structured report files):** `activity/ReportParsers` (JUnit XML, detekt/ktlint Checkstyle XML,
+Android lint XML, SARIF — secure XML, no XXE) + `activity/BuildReportScanner` (platform-free, off-EDT:
+bounded walk of `build/test-results` + `build/reports`, only files newer than the command start).
+`ClaudePanel` records build/test/analysis Bash commands and, on their result, scans the reports on a
+pooled thread and feeds `TestReported`/`ErrorObserved`/`WarningObserved` — richer and more reliable
+than console scraping. All unit-tested (temp-dir fixtures, stale-file + prune cases).
+
 **Remaining:**
-- Prefer **structured outputs** (JUnit XML, Gradle test-result XML, lint/detekt XML/SARIF, task exit
-  status) over console text. These live in files the console doesn't echo, so this needs a small
-  IDE-side reader (off-EDT) that the interpreter consumes — not pure text parsing.
+- Task exit-status correlation (map non-zero exit → build failure even without a parseable summary).
 - emulator/device launch outcomes; `logcat` crash extraction.
 - `PRODUCED` correlation is sequential (best-effort); parallel tool_use in one turn could mis-link —
   revisit if/when the CLI emits parallel results, ideally threading the tool_use_id into result events.
+- Report paths are used as reported (relative vs absolute) — normalise against content roots so a
+  finding always attaches to the same file node an edit created.
 
 ## 7. PSI Phase 2a — cheap, reliable relationships only
 

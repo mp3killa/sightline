@@ -28,7 +28,9 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.activity.ActivityInterpreter
 import io.mp.claudecodepanel.activity.AgentActivityEvent
+import io.mp.claudecodepanel.activity.BuildReportScanner
 import io.mp.claudecodepanel.activity.ErrorObserved
+import io.mp.claudecodepanel.activity.OutputParsers
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -174,6 +176,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val curToolJson = StringBuilder()
     private var target: StyledDocument? = null
     private var malformedEventCount = 0
+
+    // After a build/test/analysis command, its structured report files are read off-EDT for richer
+    // results than the console gives. tool_use_id -> (command, start millis).
+    private val reportScanner = BuildReportScanner()
+    private val pendingReportScans = HashMap<String, Pair<String, Long>>()
     private val toolCardsById = HashMap<String, ToolCard>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
@@ -686,6 +693,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val text = extractText(b.get("content"))
                 feed(interpreter.toolResult(id, text, isErr))
                 id?.let { toolCardsById[it] }?.addResult(text, isErr)
+                id?.let { tid -> pendingReportScans.remove(tid)?.let { (cmd, started) -> scanReportsAsync(cmd, started) } }
             }
         }
         scrollToBottomSoon()
@@ -712,6 +720,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
         if (id != null) { renderedTools.add(id); toolCardsById[id] = card }
         feed(interpreter.toolUse(id, name, input))
+        noteBuildCommand(id, name, input)
+    }
+
+    /** Remembers a build/test/analysis Bash command so its report files can be read when it finishes. */
+    private fun noteBuildCommand(id: String?, name: String, input: JsonObject?) {
+        if (id == null || name != "Bash") return
+        val cmd = input?.str("command") ?: return
+        if (OutputParsers.looksLikeGradle(cmd) || OutputParsers.isTestCommand(cmd) || OutputParsers.analysisTool(cmd) != null) {
+            pendingReportScans[id] = cmd to System.currentTimeMillis()
+        }
     }
 
     /** Renders a tool's command/diff/inputs into the current [target] doc; returns a header summary. */
@@ -857,6 +875,21 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         refreshStatus()
     }
 
+    /** Reads the report files a build/test/analysis command wrote (off the EDT), then feeds the results. */
+    private fun scanReportsAsync(command: String, startedMillis: Long) {
+        val base = project.basePath ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val events = try {
+                reportScanner.scan(java.io.File(base), command, startedMillis)
+            } catch (e: Exception) {
+                thisLogger().warn("Build report scan failed", e); emptyList()
+            }
+            if (events.isNotEmpty()) {
+                ApplicationManager.getApplication().invokeLater({ feed(events) }, ModalityState.any())
+            }
+        }
+    }
+
     private fun refreshStatus() {
         val view = statusModel.view
         val meta = if (running) modelLabel() else completionMeta
@@ -891,7 +924,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); renderedTools.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         completionMeta = null
         interpreter.reset(); activityMap.clearSession()
         statusModel.reset(); transcriptPresenter.reset()
