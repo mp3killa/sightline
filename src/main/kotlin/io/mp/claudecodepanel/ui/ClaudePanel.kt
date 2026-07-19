@@ -69,6 +69,7 @@ import io.mp.claudecodepanel.ui.state.ComposerModel
 import io.mp.claudecodepanel.ui.state.LayoutProfile
 import io.mp.claudecodepanel.ui.state.PermissionModes
 import io.mp.claudecodepanel.ui.state.ResponsiveLayout
+import io.mp.claudecodepanel.ui.state.ScrollFollow
 import io.mp.claudecodepanel.ui.state.StatusKind
 import io.mp.claudecodepanel.ui.state.StatusModel
 import io.mp.claudecodepanel.ui.state.StatusView
@@ -186,7 +187,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun getScrollableTracksViewportWidth() = true
         override fun getScrollableTracksViewportHeight() = false
     }
-    private val scroll = JBScrollPane(transcript)
+    // Auto-follow stays on only while the user is at/near the bottom; scrolling up to read pauses it.
+    private var following = true
+    private val scroll = JBScrollPane(transcript).apply {
+        verticalScrollBar.addAdjustmentListener {
+            following = ScrollFollow.isNearBottom(verticalScrollBar.value, verticalScrollBar.visibleAmount, verticalScrollBar.maximum, JBUI.scale(48))
+        }
+    }
 
     private val hand = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
 
@@ -466,6 +473,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val attachments = composerModel.attachments
         val message = composerModel.buildMessage(rawText)
         finalizeCurrent(); inAssistant = false; curTurn = null
+        following = true // sending a message re-follows so the user always sees their own turn + the reply
         addUserBubble(text, attachments)
         transcriptPresenter.onUserMessage(); showEmptyState(false)
         feed(interpreter.taskStarted(text))
@@ -1157,7 +1165,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     private fun scrollToBottomSoon() {
-        if (pendingScroll) return
+        if (!following || pendingScroll) return // don't yank the user back while they read up-thread
         pendingScroll = true
         SwingUtilities.invokeLater {
             pendingScroll = false
