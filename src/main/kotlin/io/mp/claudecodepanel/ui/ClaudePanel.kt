@@ -36,7 +36,16 @@ import io.mp.claudecodepanel.activity.OutputParsers
 import io.mp.claudecodepanel.ide.ApprovalCoordinator
 import io.mp.claudecodepanel.ide.ApprovalDecision
 import io.mp.claudecodepanel.ide.PendingApproval
+import io.mp.claudecodepanel.ide.PendingQuestion
 import io.mp.claudecodepanel.ide.ProjectStructureEnricher
+import io.mp.claudecodepanel.ide.QuestionCoordinator
+import io.mp.claudecodepanel.ide.QuestionResolution
+import io.mp.claudecodepanel.interaction.AskUserQuestionParser
+import io.mp.claudecodepanel.interaction.AskUserQuestionResponseBuilder
+import io.mp.claudecodepanel.interaction.ParseResult
+import io.mp.claudecodepanel.interaction.QuestionFormState
+import io.mp.claudecodepanel.interaction.UserQuestionOption
+import io.mp.claudecodepanel.interaction.UserQuestionRequest
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -73,16 +82,22 @@ import java.time.Instant
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.ButtonGroup
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JRadioButton
 import javax.swing.JTextArea
+import javax.swing.JToggleButton
 import javax.swing.JTextPane
 import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
 import javax.swing.Scrollable
 import javax.swing.SwingUtilities
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.text.AttributeSet
 import javax.swing.text.BadLocationException
 import javax.swing.text.SimpleAttributeSet
@@ -191,6 +206,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // Approvals are resolved through a shared coordinator so the sandbox test bridge drives the same
     // logic as the human's Allow/Deny buttons — never a separate bypass path.
     private val approvalCoordinator by lazy { project.getService(ApprovalCoordinator::class.java) }
+    private val questionCoordinator by lazy { project.getService(QuestionCoordinator::class.java) }
     private val uiState by lazy { project.getService(SightlineUiState::class.java) }
 
     // Phase 2a: enriches files Claude touches with real project structure (imports/test targets/package),
@@ -781,6 +797,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     insert(mark + (to.str("content") ?: "") + "\n", sMuted)
                 }
             }
+            "AskUserQuestion" -> {
+                // A structured question — never dump the raw JSON here; the interactive block shows it.
+                val qs = if (inp.has("questions") && inp.get("questions").isJsonArray) inp.getAsJsonArray("questions") else null
+                val n = qs?.size() ?: 0
+                val count = if (n == 1) "1 question" else "$n questions"
+                summary = qs?.firstOrNull { it.isJsonObject }?.asJsonObject?.str("header")?.takeIf { it.isNotBlank() } ?: count
+                insert(count + "\n", sMuted)
+            }
             else -> if (inp.size() > 0) insert(inp.toString() + "\n", sCode)
         }
         return summary
@@ -798,6 +822,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     private fun showApproval(reqId: String, req: JsonObject) {
+        // AskUserQuestion rides the same can_use_tool channel but is a request for input, not permission
+        // to act — route it to the structured question UI instead of a generic Allow/Deny approval.
+        if (req.str("tool_name") == "AskUserQuestion") { showAskUserQuestion(reqId, req); return }
         val turn = ensureAssistant()
         val toolName = req.str("tool_name") ?: "tool"
         val input = req.objOrNull("input") ?: JsonObject()
@@ -832,6 +859,54 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             PendingApproval(reqId, toolUseId, toolName, title, targetPath, suggestions != null, handler),
         )
         statusModel.permissionRequested(); refreshStatus()
+        scrollToBottomSoon()
+    }
+
+    /**
+     * Structured `AskUserQuestion` interaction — a request for input, not permission. Parses the input
+     * off the raw JSON (never shown to the user), presents a question block, and returns the selected
+     * answers through the same control response. A parse failure still registers so Cancel can unblock
+     * the CLI; it just can't be answered.
+     */
+    private fun showAskUserQuestion(reqId: String, req: JsonObject) {
+        val turn = ensureAssistant()
+        val input = req.objOrNull("input") ?: JsonObject()
+        val toolUseId = req.str("tool_use_id")
+        val parsed = AskUserQuestionParser.parse(input)
+        val request = (parsed as? ParseResult.Ok)?.value
+        if (parsed is ParseResult.Invalid) {
+            thisLogger().warn("AskUserQuestion could not be parsed: ${parsed.reason} (fields=${parsed.fields})")
+        }
+
+        val block = AskUserQuestionBlock(
+            request = request,
+            invalidReason = (parsed as? ParseResult.Invalid)?.reason,
+            onSubmit = { answers ->
+                request?.let { r ->
+                    val updated = runCatching { AskUserQuestionResponseBuilder.build(input, r, answers).toString() }
+                        .onFailure { thisLogger().warn("AskUserQuestion response build failed", it) }
+                        .getOrNull()
+                    if (updated != null) questionCoordinator.respond(reqId, QuestionResolution.Answered(updated))
+                }
+            },
+            onCancel = { questionCoordinator.respond(reqId, QuestionResolution.Cancelled) },
+        )
+        turn.addBlock(block)
+
+        val handler: (QuestionResolution) -> Unit = { resolution ->
+            runOnEdt {
+                when (resolution) {
+                    is QuestionResolution.Answered -> session.respondAllow(reqId, resolution.updatedInputJson, null)
+                    QuestionResolution.Cancelled -> session.respondDeny(reqId, "User cancelled the question")
+                }
+                resolvePermission()
+                block.markResolved(resolution)
+            }
+        }
+        questionCoordinator.register(
+            PendingQuestion(reqId, toolUseId, request ?: UserQuestionRequest(emptyList()), handler),
+        )
+        statusModel.permissionRequested("Waiting for your answer"); refreshStatus()
         scrollToBottomSoon()
     }
 
@@ -971,7 +1046,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun coarseLabel(v: StatusView): String = when (v.kind) {
         StatusKind.READY -> "Ready"
         StatusKind.ERROR -> "Error"
-        StatusKind.PERMISSION -> "Waiting for approval"
+        // Follow the model's prompt so a question reads "Waiting for your answer", not "…approval".
+        StatusKind.PERMISSION -> v.primary
         StatusKind.WARNING -> "Stopped"
         StatusKind.SUCCESS, StatusKind.COMPLETED -> "Ready"
         else -> "Working"
@@ -981,7 +1057,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         completionMeta = null
         interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
         statusModel.reset(); transcriptPresenter.reset()
@@ -1068,7 +1144,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun toolAction(name: String): String = when (name) {
         "Read" -> "Read"; "Edit", "MultiEdit", "NotebookEdit" -> "Edited"; "Write" -> "Created"
         "Bash" -> "Ran"; "Grep", "Glob", "WebSearch" -> "Searched"; "WebFetch" -> "Fetched"
-        "TodoWrite" -> "Planned"; else -> humanizeTool(name)
+        "TodoWrite" -> "Planned"; "AskUserQuestion" -> "Asked"; else -> humanizeTool(name)
     }
 
     private fun toolIcon(name: String): Icon = when (name) {
@@ -1077,7 +1153,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         "Bash" -> ClaudeIcons.command
         "Grep", "Glob", "WebSearch" -> ClaudeIcons.search
         "WebFetch" -> ClaudeIcons.web
-        "TodoWrite" -> ClaudeIcons.diamond
+        "TodoWrite", "AskUserQuestion" -> ClaudeIcons.diamond
         else -> ClaudeIcons.diamond
     }
 
@@ -1115,7 +1191,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         fun addBlock(c: JComponent) {
             val strut = Box.createVerticalStrut(JBUI.scale(5))
             body.add(fullWidth(c)); body.add(strut)
-            if (c is TextBlock || c is ApprovalBlock) textCount++
+            if (c is TextBlock || c is ApprovalBlock || c is AskUserQuestionBlock) textCount++
             if (c is ThinkingBlock || c is ToolCard) {
                 c.isVisible = showDetails; strut.isVisible = showDetails
                 detailKids.add(c); detailKids.add(strut)
@@ -1278,6 +1354,198 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             }
             relayout()
         }
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = ClaudeUiTokens.radiusMd()
+            g2.color = ClaudeUiTokens.overlaySurface()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = ClaudeUiTokens.accent()
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
+    }
+
+    /**
+     * Structured `AskUserQuestion` prompt: radio (single-select) / checkbox (multi-select) options plus
+     * an optional free-text "Other", with Continue gated until every question is answered. This is user
+     * **input**, not a permission decision — Cancel denies the request to unblock the turn, while a valid
+     * option like "Skip" is a normal answer. Parsing, validity and response-building live in the
+     * platform-free `interaction` package; this inner class is the thin Swing view over [QuestionFormState].
+     */
+    private inner class AskUserQuestionBlock(
+        private val request: UserQuestionRequest?,
+        private val invalidReason: String?,
+        private val onSubmit: (Map<String, List<String>>) -> Unit,
+        private val onCancel: () -> Unit,
+    ) : Block() {
+        private val form = request?.let { QuestionFormState(it) }
+        private val centerPanel = JPanel()
+        private val continueBtn = JButton("Continue").named(A11yNames.QUESTION_CONTINUE)
+        private val cancelBtn = JButton("Cancel").named(A11yNames.QUESTION_CANCEL)
+        private val decided = JBLabel("")
+        private val otherWraps = HashMap<Int, JComponent>()
+        private var resolved = false
+
+        init {
+            layout = BorderLayout()
+            border = JBUI.Borders.empty(9, 11)
+
+            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(5), 0)); head.isOpaque = false; head.border = JBUI.Borders.emptyBottom(6)
+            val titleLabel = JBLabel(if (request != null) "Claude needs your input" else "Claude requested input")
+            titleLabel.foreground = ClaudeUiTokens.accent(); titleLabel.font = titleLabel.font.deriveFont(Font.BOLD)
+            head.add(titleLabel)
+            add(head, BorderLayout.NORTH)
+
+            centerPanel.layout = BoxLayout(centerPanel, BoxLayout.Y_AXIS)
+            centerPanel.isOpaque = false; centerPanel.alignmentX = Component.LEFT_ALIGNMENT
+            if (request != null) buildQuestions() else buildUnavailable()
+            add(centerPanel, BorderLayout.CENTER)
+
+            val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); buttons.isOpaque = false
+            if (request != null) {
+                continueBtn.isEnabled = false
+                continueBtn.addActionListener { submit() }
+                buttons.add(continueBtn)
+            }
+            cancelBtn.addActionListener { cancel() }
+            buttons.add(cancelBtn)
+            decided.foreground = mutedFg()
+            val south = JPanel(BorderLayout()); south.isOpaque = false
+            south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
+            add(south, BorderLayout.SOUTH)
+        }
+
+        private fun buildQuestions() {
+            request!!.questions.forEachIndexed { qi, q ->
+                val qPanel = column(); qPanel.border = JBUI.Borders.emptyBottom(8)
+                q.header?.takeIf { it.isNotBlank() }?.let { qPanel.add(categoryLabel(it)) }
+                qPanel.add(leftLabel(plainArea(q.question)))
+                if (q.multiSelect) qPanel.add(leftLabel(italicMuted("Select all that apply")))
+                qPanel.add(Box.createVerticalStrut(JBUI.scale(3)))
+                val group = if (q.multiSelect) null else ButtonGroup()
+                q.options.forEachIndexed { oi, opt -> qPanel.add(optionRow(qi, oi, opt, q.multiSelect, group)) }
+                qPanel.add(otherRow(qi, q.multiSelect, group))
+                centerPanel.add(qPanel)
+            }
+        }
+
+        private fun buildUnavailable() {
+            centerPanel.add(leftLabel(plainArea("Claude requested input, but the question could not be displayed.")))
+            if (showDetails && !invalidReason.isNullOrBlank()) centerPanel.add(leftLabel(italicMuted(invalidReason)))
+        }
+
+        private fun optionRow(qi: Int, oi: Int, opt: UserQuestionOption, multi: Boolean, group: ButtonGroup?): JComponent {
+            val f = form!!
+            val button: JToggleButton = if (multi) JCheckBox(opt.label) else JRadioButton(opt.label)
+            button.isOpaque = false; button.font = button.font.deriveFont(Font.BOLD)
+            button.named(A11yNames.questionOption(qi, oi))
+            opt.description?.let { button.accessibleContext?.accessibleDescription = it }
+            group?.add(button)
+            button.addActionListener {
+                if (multi) f.select(qi, opt.label) else { f.select(qi, opt.label); syncOther(qi) }
+                updateContinue()
+            }
+            val col = column(); col.add(leftLabel(button))
+            opt.description?.takeIf { it.isNotBlank() }?.let {
+                val d = plainArea(it); d.foreground = mutedFg(); d.font = d.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
+                d.border = JBUI.Borders.emptyLeft(22); d.cursor = hand; d.addMouseListener(click { button.doClick() })
+                col.add(leftLabel(d))
+            }
+            opt.preview?.takeIf { it.isNotBlank() }?.let {
+                val pv = plainArea(it); pv.foreground = mutedFg()
+                pv.font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(11.5f))
+                pv.border = JBUI.Borders.empty(2, 22, 2, 0)
+                col.add(leftLabel(pv))
+            }
+            return leftLabel(col)
+        }
+
+        private fun otherRow(qi: Int, multi: Boolean, group: ButtonGroup?): JComponent {
+            val f = form!!
+            val button: JToggleButton = if (multi) JCheckBox("Other…") else JRadioButton("Other…")
+            button.isOpaque = false; button.named(A11yNames.questionOther(qi))
+            group?.add(button)
+            val field = JTextArea(2, 24); field.lineWrap = true; field.wrapStyleWord = true; field.border = JBUI.Borders.empty(3)
+            val wrap = JPanel(BorderLayout()); wrap.isOpaque = false; wrap.border = JBUI.Borders.empty(2, 22, 4, 0)
+            wrap.add(field, BorderLayout.CENTER); wrap.isVisible = false
+            otherWraps[qi] = wrap
+            button.addActionListener {
+                f.setOther(qi, button.isSelected); syncOther(qi)
+                if (button.isSelected) field.requestFocusInWindow()
+                updateContinue()
+            }
+            field.document.addDocumentListener(object : DocumentListener {
+                private fun changed() { f.setOtherText(qi, field.text); updateContinue() }
+                override fun insertUpdate(e: DocumentEvent) = changed()
+                override fun removeUpdate(e: DocumentEvent) = changed()
+                override fun changedUpdate(e: DocumentEvent) = changed()
+            })
+            val col = column(); col.add(leftLabel(button)); col.add(leftLabel(wrap))
+            return leftLabel(col)
+        }
+
+        private fun syncOther(qi: Int) {
+            val show = form?.isOther(qi) == true
+            otherWraps[qi]?.let { if (it.isVisible != show) { it.isVisible = show; relayout() } }
+        }
+
+        private fun updateContinue() { continueBtn.isEnabled = !resolved && form?.isComplete() == true }
+
+        private fun submit() {
+            val f = form ?: return
+            if (resolved || !f.isComplete()) return
+            onSubmit(f.resolvedAnswers())
+        }
+
+        private fun cancel() { if (!resolved) onCancel() }
+
+        /** Reflects a resolved answer/cancel (human click or test bridge): swaps controls for a summary. */
+        fun markResolved(resolution: QuestionResolution) {
+            resolved = true
+            centerPanel.removeAll()
+            continueBtn.isVisible = false; cancelBtn.isVisible = false
+            when (resolution) {
+                is QuestionResolution.Answered -> {
+                    val n = request?.questions?.size ?: 0
+                    decided.text = if (n > 1) "Answered $n questions" else "Answered"
+                    answeredSummary()?.let { centerPanel.add(it) }
+                }
+                QuestionResolution.Cancelled -> decided.text = "Question cancelled"
+            }
+            centerPanel.revalidate(); relayout()
+        }
+
+        private fun answeredSummary(): JComponent? {
+            val f = form ?: return null
+            val answers = f.resolvedAnswers()
+            if (answers.isEmpty()) return null
+            val panel = column()
+            request!!.questions.forEach { q ->
+                val chosen = answers[q.question] ?: return@forEach
+                panel.add(categoryLabel(q.header?.takeIf { it.isNotBlank() } ?: q.question))
+                val v = plainArea(chosen.joinToString(", ")); v.border = JBUI.Borders.emptyBottom(4)
+                panel.add(leftLabel(v))
+            }
+            return leftLabel(panel)
+        }
+
+        private fun column(): JPanel {
+            val p = JPanel(); p.layout = BoxLayout(p, BoxLayout.Y_AXIS); p.isOpaque = false; p.alignmentX = Component.LEFT_ALIGNMENT
+            return p
+        }
+        private fun <T : JComponent> leftLabel(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; return c }
+        private fun categoryLabel(text: String): JBLabel {
+            val l = JBLabel(text.uppercase()); l.foreground = mutedFg()
+            l.font = l.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(10.5f).toFloat()); l.alignmentX = Component.LEFT_ALIGNMENT
+            return l
+        }
+        private fun italicMuted(text: String): JBLabel {
+            val l = JBLabel(text); l.foreground = mutedFg(); l.font = l.font.deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+            return l
+        }
+
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)

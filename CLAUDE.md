@@ -24,7 +24,8 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | `ide/IdeServer.kt` | The `ide` MCP **WebSocket** server (selection, open editors, `openDiff` → native diff, **scoped `getDiagnostics`**, …). Path-taking tools are gated by `PathAccessPolicy`. |
 | `ide/PathAccessPolicy.kt` | Platform-free (unit-tested) path guard: canonicalises + classifies open/diff/write targets as inside-project / outside / **sensitive** (refuse); writes outside the project need an extra confirm |
 | `ide/ProjectStructureEnricher.kt` | **PSI Phase 2a**: enriches files Claude touched with real project structure via **UAST** (imports + class→super/interfaces resolved package-aware for Kotlin & Java; test→prod via `FilenameIndex`; package/module metadata), off-EDT in a smart-mode `ReadAction.nonBlocking`, once per path, project files only. Emits `StructuralRelation`/`FilePackage`. Build depends on `com.intellij.java`. |
-| `ide/InteractionCoordinators.kt` | Platform-free `ApprovalCoordinator` + `DiffReviewCoordinator` — decouple approval/diff **decisions** from Swing so the UI and the sandbox test bridge drive identical logic (no bypass). `<projectService>`s. |
+| `ide/InteractionCoordinators.kt` | Platform-free `ApprovalCoordinator` + `DiffReviewCoordinator` + `QuestionCoordinator` — decouple approval/diff/question **decisions** from Swing so the UI and the sandbox test bridge drive identical one-shot logic (no bypass). `<projectService>`s. |
+| `interaction/*.kt` | Platform-free, unit-tested **AskUserQuestion** core: `AskUserQuestionModels` (provider-neutral `UserQuestionRequest`/`UserQuestion`/`UserQuestionOption` + `ParseResult`), `AskUserQuestionParser` (protocol JSON → model; refuses empty/fabricated questions), `QuestionFormState` (radio/checkbox/Other selection + validity + `resolvedAnswers`), `AskUserQuestionResponseBuilder` (answers keyed by full question text, original `questions` preserved, non-mutating). The Swing view is `ClaudePanel.AskUserQuestionBlock`. |
 | `ide/SightlineTestBridge.kt` | **Sandbox-only** MCP tools (`sightline.test.*`) gated by `TestBridgeGuard` (`-Dsightline.testBridge=true`): inspect/resolve pending approvals & diffs, capture the tool window. See [docs/TESTING.md](docs/TESTING.md). |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI |
 
@@ -53,8 +54,22 @@ animated, so the preview is representative, not pixel-identical.)
 
 The transcript is a `Scrollable` `JPanel` (BoxLayout Y) of block components. Each assistant turn is
 an `AssistantTurn` holding `TextBlock` (streamed markdown), `ThinkingBlock` (collapsible),
-`ToolCard` (collapsible, icon + summary + diff/result), and `ApprovalBlock`. "Details" toggle hides
-thinking/tool cards (compact mode). User turns are rounded `Bubble`s.
+`ToolCard` (collapsible, icon + summary + diff/result), `ApprovalBlock`, and `AskUserQuestionBlock`.
+"Details" toggle hides thinking/tool cards (compact mode); approval **and question** blocks always stay
+visible (they block the turn). User turns are rounded `Bubble`s.
+
+### AskUserQuestion (structured input, not permission)
+
+`AskUserQuestion` arrives on the same `can_use_tool` control channel as a permission prompt but is a
+request for **input**, not approval — so `showApproval` routes it to `showAskUserQuestion` instead of a
+generic Allow/Deny `ApprovalBlock` (which would dump the raw question JSON). The `interaction/` core
+parses it (`AskUserQuestionParser`), tracks selections (`QuestionFormState` — radio for single-select,
+checkbox for multi-select, plus a free-text **Other**), and builds the response
+(`AskUserQuestionResponseBuilder`: the original `questions` echoed back plus an `answers` object keyed by
+**full question text**, labels joined by `, `). `QuestionCoordinator` resolves it exactly once (UI or
+test bridge). Continue stays disabled until every question is answered; **Cancel** denies the request to
+unblock the turn (a valid option like "Skip" is a normal answer, never a denial). Status reads
+"Waiting for your answer", and the streamed tool card shows `Asked · <header or N questions>`, never JSON.
 
 ## Build / run
 

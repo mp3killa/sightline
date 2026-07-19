@@ -20,6 +20,12 @@ These were listed as deferred but already exist; don't re-scope them:
 - Composer **permission-mode names** (Ask / Auto-edit / Plan / Auto / Unrestricted) — `ui/state/PermissionModes`.
 - **Status priority reducer** (`ui/state/StatusModel`) — a late "Thinking" no longer clobbers "Editing X.kt".
   (Interpreter still *emits* a Thinking status; the reducer demotes it. Verify, don't rebuild.)
+- **First-class `AskUserQuestion`** — the tool rides the `can_use_tool` channel but is user *input*, so
+  it renders as a structured question (radio / checkbox / free-text Other, Continue gated until every
+  question is answered), not a raw-JSON Allow/Deny card. Platform-free `interaction/` core
+  (parser + `QuestionFormState` + response builder, 35 unit tests) with `QuestionCoordinator` for
+  one-shot resolution; status reads "Waiting for your answer"; Cancel denies to unblock the turn.
+  Still needs a live `runIde` click-through (emulator-question fixture) as part of P0 item 4.
 
 ---
 

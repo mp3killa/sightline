@@ -44,6 +44,7 @@
              resolve them through the same logic. Plain classes, so registered here (not annotated). -->
         <projectService serviceImplementation="io.mp.claudecodepanel.ide.ApprovalCoordinator"/>
         <projectService serviceImplementation="io.mp.claudecodepanel.ide.DiffReviewCoordinator"/>
+        <projectService serviceImplementation="io.mp.claudecodepanel.ide.QuestionCoordinator"/>
         <projectService serviceImplementation="io.mp.claudecodepanel.ui.SightlineUiState"/>
         <applicationConfigurable parentId="tools"
                                  id="io.mp.claudecodepanel.settings"

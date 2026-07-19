@@ -60,9 +60,14 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
 
     fun taskStarted(): StatusView = force(StatusView(StatusKind.WORKING, WORKING_FALLBACK, null, P_WORKING, true, clock()))
 
-    fun permissionRequested(): StatusView {
+    /**
+     * A blocking user interaction (tool-permission approval, or — with a different [prompt], e.g.
+     * "Waiting for your answer" — an `AskUserQuestion`). Both take the highest priority and pause the
+     * prior status, which [permissionResolved] restores.
+     */
+    fun permissionRequested(prompt: String = "Waiting for approval"): StatusView {
         if (view.priority > P_PERMISSION) savedBeforePermission = view
-        return force(StatusView(StatusKind.PERMISSION, "Waiting for approval", null, P_PERMISSION, true, clock()))
+        return force(StatusView(StatusKind.PERMISSION, prompt, null, P_PERMISSION, true, clock()))
     }
 
     fun permissionResolved(): StatusView {

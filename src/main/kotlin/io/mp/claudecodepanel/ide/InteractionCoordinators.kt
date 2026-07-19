@@ -1,5 +1,6 @@
 package io.mp.claudecodepanel.ide
 
+import io.mp.claudecodepanel.interaction.UserQuestionRequest
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -68,6 +69,64 @@ class ApprovalCoordinator {
     }
 
     /** Drop a pending approval without running its handler (e.g. the session was cleared). */
+    fun cancel(id: String) { if (pending.remove(id) != null) notifyListeners() }
+
+    fun clear() { if (pending.isNotEmpty()) { pending.clear(); notifyListeners() } }
+
+    private fun notifyListeners() { listeners.forEach { runCatching { it.run() } } }
+}
+
+/**
+ * How a pending [PendingQuestion] resolves. This is **not** an approval: cancelling is the user
+ * declining to answer, and a valid option named "Skip" is a normal answer, never a denial.
+ */
+sealed interface QuestionResolution {
+    /** [updatedInputJson] is the full control-response input (original questions + the answers object). */
+    data class Answered(val updatedInputJson: String) : QuestionResolution
+    /** The user dismissed the question without answering; the CLI request is denied to unblock the turn. */
+    object Cancelled : QuestionResolution
+}
+
+/**
+ * A pending `AskUserQuestion` control request. [handler] performs the real response (CLI control
+ * response + status refresh + card update); the coordinator invokes it exactly once when resolved.
+ */
+class PendingQuestion(
+    val id: String,              // the control-protocol request_id
+    val toolUseId: String?,
+    val request: UserQuestionRequest,
+    private val handler: (QuestionResolution) -> Unit,
+) {
+    internal fun invoke(resolution: QuestionResolution) = handler(resolution)
+}
+
+/**
+ * Pending `AskUserQuestion` interactions — structured user input, distinct from tool-permission
+ * approvals. Mirrors [ApprovalCoordinator] so the UI and the sandbox test bridge resolve through the
+ * same one-shot handler, keeping automation on the production path.
+ */
+class QuestionCoordinator {
+
+    private val pending = ConcurrentHashMap<String, PendingQuestion>()
+    private val listeners = CopyOnWriteArrayList<Runnable>()
+
+    fun addListener(l: Runnable) { listeners.add(l) }
+
+    fun register(question: PendingQuestion) { pending[question.id] = question; notifyListeners() }
+
+    fun listPending(): List<PendingQuestion> = pending.values.toList()
+    fun get(id: String): PendingQuestion? = pending[id]
+    fun hasPending(): Boolean = pending.isNotEmpty()
+
+    /** Resolve a pending question (Continue or Cancel). Runs its handler exactly once; ignores repeats. */
+    fun respond(id: String, resolution: QuestionResolution): Boolean {
+        val question = pending.remove(id) ?: return false
+        question.invoke(resolution)
+        notifyListeners()
+        return true
+    }
+
+    /** Drop a pending question without running its handler (e.g. the session was cleared). */
     fun cancel(id: String) { if (pending.remove(id) != null) notifyListeners() }
 
     fun clear() { if (pending.isNotEmpty()) { pending.clear(); notifyListeners() } }
