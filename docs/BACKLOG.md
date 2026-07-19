@@ -128,13 +128,19 @@ Skip Maven/Bazel/npm/yarn/pnpm unless targeting IntelliJ products beyond Android
 as static-analysis runs whose output is parsed into **file-attributed** errors/warnings
 (`OutputParsers.parseAnalysisDiagnostics`, `analysisTool`, `adbAction`) — all unit-tested.
 
+**Done (graph edges):** command/gradle/test nodes now link to the results they produced via a
+`PRODUCED` edge (`ActivityGraph.linkProduced`, tracked by `lastCommandNodeId`, only advanced by
+command-type events so interleaved reads don't steal it) — so the map shows command → build outcome /
+test report / diagnostic, and diagnostics still link on to the file they name (`AFFECTED_BY`),
+completing the command → … → referenced-files chain. Unit-tested.
+
 **Remaining:**
 - Prefer **structured outputs** (JUnit XML, Gradle test-result XML, lint/detekt XML/SARIF, task exit
   status) over console text. These live in files the console doesn't echo, so this needs a small
   IDE-side reader (off-EDT) that the interpreter consumes — not pure text parsing.
-- Correlate command → build → suite → failures → **referenced files** as real graph edges (today the
-  analysis findings create their own diagnostic nodes; link them back to the command/gradle node).
 - emulator/device launch outcomes; `logcat` crash extraction.
+- `PRODUCED` correlation is sequential (best-effort); parallel tool_use in one turn could mis-link —
+  revisit if/when the CLI emits parallel results, ideally threading the tool_use_id into result events.
 
 ## 7. PSI Phase 2a — cheap, reliable relationships only
 

@@ -62,6 +62,8 @@ enum class ActivityEdgeType {
     CONTAINS, IMPORTS, REFERENCES, CALLS, IMPLEMENTS, EXTENDS, READS, EDITS, CREATES,
     DELETES, SEARCHES, TESTS, TESTED_BY, CONFIGURED_BY, DEPENDS_ON, NAVIGATES_TO,
     GENERATED_FROM, AFFECTED_BY, RELATED_TO, SEQUENTIAL_ACTIVITY,
+    // A command/gradle/test run produced this result (build outcome, test report, diagnostic).
+    PRODUCED,
 }
 
 data class ActivityNode(

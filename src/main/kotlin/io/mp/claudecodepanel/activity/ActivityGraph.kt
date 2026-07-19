@@ -25,6 +25,10 @@ class ActivityGraph(
     private val timelineList = ArrayList<TimelineEntry>()
 
     private var lastFocusNodeId: String? = null
+    // The most recent command/gradle/test node, so its result (build/test/diagnostic) can link back to
+    // it (command → PRODUCED → result). Only command-type events update this, so interleaved reads
+    // don't disturb the correlation; the sequential tool model keeps it accurate in the common case.
+    private var lastCommandNodeId: String? = null
     var focus: Focus = Focus("Idle", "Agent active", "Waiting for contextual activity…", null, clock())
         private set
 
@@ -41,6 +45,7 @@ class ActivityGraph(
     fun clear() {
         nodesMap.clear(); edgesMap.clear(); timelineList.clear()
         lastFocusNodeId = null
+        lastCommandNodeId = null
         focus = Focus("Idle", "Agent active", "Waiting for contextual activity…", null, clock())
     }
 
@@ -87,9 +92,9 @@ class ActivityGraph(
             }
             is FileSearched -> searchNode(event, now)
             is SymbolInspected -> symbolNode(event, now)
-            is CommandRun -> commandNode(event, now)
-            is GradleTaskRun -> gradleNode(event.task, now, event.confidence)
-            is TestStarted -> testSuiteNode(event.target, ActivityNodeState.TESTING, "Testing", now)
+            is CommandRun -> commandNode(event, now).also { lastCommandNodeId = it }
+            is GradleTaskRun -> gradleNode(event.task, now, event.confidence).also { lastCommandNodeId = it }
+            is TestStarted -> testSuiteNode(event.target, ActivityNodeState.TESTING, "Testing", now).also { lastCommandNodeId = it }
             is TestReported -> testReport(event, now)
             is BuildReported -> buildNode(event, now)
             is ErrorObserved -> errorNode(event, now)
@@ -176,6 +181,7 @@ class ActivityGraph(
             if (e.failed > 0) ActivityNodeState.FAILED else ActivityNodeState.PASSED,
             if (e.failed > 0) "Tests failed" else "Tests passed", now)
         nodesMap[suiteId]?.let { nodesMap[suiteId] = it.copy(subtitle = "${e.passed} passed · ${e.failed} failed") }
+        linkProduced(suiteId, now)
         val cat = ensureCategory(ActivityCategory.TESTING, now)
         for (fname in e.failedNames.take(20)) {
             val id = "test:${hash(fname)}"
@@ -195,6 +201,7 @@ class ActivityGraph(
             category = ActivityCategory.GRADLE_BUILD, confidence = 1f, now = now, subtitle = e.summary)
         edge(cat, id, ActivityEdgeType.CONTAINS, now, weight = 0.5f)
         setFocus(if (e.success) "Build succeeded" else "Build failed", "build", e.summary, id, now)
+        linkProduced(id, now)
         return id
     }
 
@@ -209,6 +216,7 @@ class ActivityGraph(
             if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.7f)
         }
         setFocus("Error", trim(e.message, 44), e.path, id, now)
+        linkProduced(id, now)
         return id
     }
 
@@ -223,6 +231,7 @@ class ActivityGraph(
             if (nodesMap.containsKey(fileId)) edge(id, fileId, ActivityEdgeType.AFFECTED_BY, now, weight = 0.5f)
         }
         setFocus("Warning", trim(e.message, 44), e.path, id, now)
+        linkProduced(id, now)
         return id
     }
 
@@ -265,6 +274,13 @@ class ActivityGraph(
             .forEach { edgesMap.remove(it) }
         setFocus(verb, node.label, "blocked before running", id, now)
         return id
+    }
+
+    /** Links the command/gradle/test node that just ran to a result node it produced. */
+    private fun linkProduced(resultId: String, now: Instant) {
+        val src = lastCommandNodeId ?: return
+        if (src == resultId || !nodesMap.containsKey(src)) return
+        edge(src, resultId, ActivityEdgeType.PRODUCED, now, weight = 0.5f)
     }
 
     private fun linkEdit(fileId: String, now: Instant) {

@@ -105,6 +105,40 @@ class ActivityGraphTest {
         assertEquals(ActivityNodeState.CANCELLED, g.node("file:/a/Foo.kt")!!.state)
     }
 
+    @Test fun commandLinksToBuildOutcomeItProduced() {
+        val g = freshGraph()
+        g.apply(GradleTaskRun("assembleDebug", tick()))
+        g.apply(BuildReported(success = true, summary = "BUILD SUCCESSFUL", at = tick()))
+        assertTrue(g.edges.any {
+            it.sourceNodeId == "gradle:assembleDebug" && it.targetNodeId == "gradle:build" &&
+                it.type == ActivityEdgeType.PRODUCED
+        })
+    }
+
+    @Test fun commandLinksToDiagnosticItProduced() {
+        val g = freshGraph()
+        g.apply(CommandRun("detekt", "static analysis", tick()))
+        g.apply(WarningObserved("/app/App.kt", "magic number", tick()))
+        val cmdId = g.nodes.first { it.type == ActivityNodeType.COMMAND }.id
+        val warnId = g.nodes.first { it.type == ActivityNodeType.WARNING }.id
+        assertTrue(g.edges.any {
+            it.sourceNodeId == cmdId && it.targetNodeId == warnId && it.type == ActivityEdgeType.PRODUCED
+        })
+    }
+
+    @Test fun interleavedReadDoesNotBreakProducedLink() {
+        // Only command-type events move the "active command"; an interleaved read must not steal it.
+        val g = freshGraph()
+        g.apply(CommandRun("./gradlew test", "run tests", tick()))
+        g.apply(FileRead("/app/Foo.kt", tick()))
+        g.apply(ErrorObserved("/app/Foo.kt", "boom", tick()))
+        val cmdId = g.nodes.first { it.type == ActivityNodeType.COMMAND }.id
+        val errId = g.nodes.first { it.type == ActivityNodeType.ERROR }.id
+        assertTrue(g.edges.any {
+            it.sourceNodeId == cmdId && it.targetNodeId == errId && it.type == ActivityEdgeType.PRODUCED
+        })
+    }
+
     @Test fun confidenceTakesTheMaximum() {
         val g = freshGraph()
         g.apply(FileRead("/a/Foo.kt", tick(), confidence = 0.3f))
