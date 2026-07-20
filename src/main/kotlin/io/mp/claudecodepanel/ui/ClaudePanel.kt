@@ -43,6 +43,7 @@ import io.mp.claudecodepanel.ui.state.ProcessingSummary
 import io.mp.claudecodepanel.activity.ActivityNode
 import javax.swing.Timer
 import io.mp.claudecodepanel.ui.state.TranscriptRetention
+import com.intellij.ide.projectView.ProjectView
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -315,7 +316,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
-    private val markdownRenderer = BlockRenderer(project) { openMarkdownLink(it) }
+    private val markdownRenderer = BlockRenderer(
+        project,
+        onLink = { openMarkdownLink(it) },
+        onReveal = { href -> revealMarkdownLink(href) },
+    )
     private val turns = ArrayList<AssistantTurn>()
 
     private val modes = PermissionModes.all
@@ -640,6 +645,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 runCatching { BrowserUtil.browse(href) }
             href.startsWith("file:") -> openFileRef(href.removePrefix("file:"))
         }
+    }
+
+    /** "Reveal in Project" for a `file:` Markdown reference — selects it in the Project view. */
+    private fun revealMarkdownLink(href: String) {
+        val spec = href.removePrefix("file:")
+        val vf = resolveProjectFile(spec) ?: return
+        runCatching { ProjectView.getInstance(project).select(null, vf, true) }
     }
 
     private fun openFileRef(spec: String) {

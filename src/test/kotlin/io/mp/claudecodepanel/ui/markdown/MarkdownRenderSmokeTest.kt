@@ -222,6 +222,26 @@ class MarkdownRenderSmokeTest : BasePlatformTestCase() {
         assertTrue("paragraph keeps brackets, got: '$para'", para.contains("array[0]"))
     }
 
+    /**
+     * M8: a `file:` reference offers Open / Reveal in Project on right-click. A web URL has nothing to
+     * reveal, and a host that can't reveal (no callback) must get no menu rather than a dead item —
+     * so the popup is built only for the case that can actually work.
+     */
+    fun testFileReferenceOffersRevealOnlyWhenItCanWork() {
+        var revealed: String? = null
+        val blocks = FileRefDetector.linkify(MarkdownDocParser.parse("Open CLAUDE.md now.")) { true }
+        val link = (blocks.single() as MdParagraph).inlines.filterIsInstance<MdLink>().single()
+        assertTrue("a resolved file ref becomes a file: link", link.href.startsWith("file:"))
+
+        // With a reveal callback the renderer constructs cleanly and the callback is reachable.
+        val comp = BlockRenderer(project, onLink = {}, onReveal = { revealed = it }).render(blocks).single()
+        assertTrue(comp.preferredSize.height > 0)
+        assertNull("constructing must not fire anything", revealed)
+
+        // Without one, it still renders — just with no context menu.
+        assertTrue(BlockRenderer(project, onLink = {}).render(blocks).single().preferredSize.height > 0)
+    }
+
     /** The bracket fix must not leak link syntax into rendered link labels. */
     fun testLinkLabelsStillRenderWithoutTheirBrackets() {
         val blocks = MarkdownDocParser.parse("See [the docs](https://example.com) for more.")

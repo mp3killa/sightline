@@ -10,11 +10,8 @@ Guiding principle: correctness logic lands as **platform-free, unit-tested** cla
 
 # Chat experience — VS Code-parity polish
 
-From a 2026-07-20 team/GPT review: the Chat view reads as an *execution dashboard* rather than a coding
-conversation, because execution telemetry competes with the reply for visual weight. Milestones are
-ordered so each is independently shippable and can be **deleted from this file on completion**.
-
-Three asks from that review were assessed and **rejected** — do not re-import them:
+**All milestones (M1–M8) from the 2026-07-20 team/GPT review are complete and have been deleted.** What
+remains here is only the record of what was *rejected*, so it doesn't get re-imported by a future review:
 
 - *"Existing stored sessions must still open"* — there is **no session persistence**; `lastSessionId`
   is in-memory and `--resume` exists only to survive a user Stop. Building persistence to satisfy an
@@ -24,15 +21,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
 - *"Virtualise the transcript"* — justified by the premise that the tree is rebuilt per streamed token.
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
-
-## M8 — File-reference context menu
-
-Hover actions landed for assistant messages (Copy), commands (Copy command / Copy output) and edits
-(Open file / Copy diff), but **not** for an inline file reference in prose. Clicking one already opens
-the file, so this is additive: a right-click menu offering *Open* and *Reveal in Project*. Deferred from
-M4 rather than dropped — inline links are styled ranges inside a text pane, not components, so they
-can't host a hover row the way a block can, and `BlockRenderer` only receives an open-link callback.
-Needs a popup-trigger listener plus a widened renderer callback.
 
 ---
 

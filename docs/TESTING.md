@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**364 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**422 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -35,7 +35,7 @@ only automated visual channel available, and one that has already caught real de
 | `activity/ActivityMapPreviewTest` | `activity-map-preview-{dark,light}.png` | The force-directed graph, label placement/collision |
 | ″ | `activity-map-dense-{dark,light}.png` | A **61-node** graph — past `MapDensity.IMPORTANT_ABOVE` (40), so label **thinning** is actually exercised |
 | `ui/ChatLayoutPreviewTest` | `chat-layout-{narrow,medium,wide}.png` | Panel layout at each `ResponsiveLayout` width class |
-| `ui/ChatGalleryPreviewTest` | `chat-gallery-{light,dark}.png` | Every block type — Markdown (headings/lists/task lists/tables/fences/quotes/callouts), routine vs failed tool cards, an edit diff, the **ApprovalBlock**, and **AskUserQuestion** single- and multi-select — in **both themes** |
+| `ui/ChatGalleryPreviewTest` | `chat-gallery-{light,dark,compact,queued}.png` | Every block type — Markdown (headings/lists/task lists/tables/fences/quotes/callouts), routine vs failed tool cards, an edit diff, the **ApprovalBlock**, and **AskUserQuestion** single- and multi-select — in **both themes**, plus `compact` (details off, showing the per-turn processing summary) and `queued` (a message parked behind a running turn) |
 
 `ChatLayoutPreviewTest` builds a real `ClaudePanel` and seeds it through the **production event path**
 (`ClaudePanel.renderProtocolLineForPreview` / `addUserMessageForPreview` — `@TestOnly internal` seams),
@@ -56,12 +56,20 @@ waiting to be noticed in a picture. Assert on something specific: an early versi
 `JScrollPane` exists somewhere", which the activity pane satisfied too, so it passed while the layout
 was wrong. The image caught it.
 
-**Track record — four real defects this channel found that every existing assertion missed:** a narrow
+**Track record — the defects this channel found this channel found that every existing assertion missed:** a narrow
 panel still rendering the split; the header reading "Activity" while showing Chat; task-list markers
 truncated to "…" (the marker slot was sized by list *kind*, and a task list is unordered); and every
 literal `(`/`)`/`[`/`]` being **silently deleted from assistant prose** (dropped as "delimiter tokens"
 globally instead of only inside a link label). Three of those were on screen while the suite was green.
-**Look at the PNG.**
+A fourth pass added two more: a `ClaudePanel` that never released its project-service registrations on
+dispose, and an assertion that passed because it matched the code fence's always-visible `Copy` rather
+than the hover action it meant to check. **Look at the PNG.**
+
+> [!WARNING]
+> **A cached `test` task writes no PNGs.** Gradle can restore `test` from the build cache without
+> executing it (the images aren't declared task outputs, so they are not restored either) — you then
+> read a stale or missing image and believe you verified the current code. When the images matter, run
+> `./gradlew test --rerun-tasks`, and check the file timestamps before trusting what you see.
 
 **This does not replace the live pass.** Anything needing a *click, hover, focus, drag or a live CLI
 session* still needs a human in `runIde` — see [BACKLOG.md](BACKLOG.md).
@@ -131,7 +139,8 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 371 unit tests (also writes the preview PNGs under build/)
+./gradlew test                 # the 422 unit tests
+./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)
 ./gradlew runIde -PtestBridge  # sandbox AS with the test bridge ENABLED (sets SIGHTLINE_TEST_BRIDGE=true)

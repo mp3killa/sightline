@@ -28,6 +28,9 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JPopupMenu
+import javax.swing.JMenuItem
+import javax.swing.SwingUtilities
 import javax.swing.JPanel
 import javax.swing.JTextPane
 import javax.swing.JViewport
@@ -51,6 +54,11 @@ import javax.swing.text.StyledDocument
 class BlockRenderer(
     private val project: Project? = null,
     private val onLink: (String) -> Unit = { runCatching { BrowserUtil.browse(it) } },
+    /**
+     * Optional "Reveal in Project" for a `file:` reference, offered on right-click. Null means the
+     * host can't reveal (or doesn't want to), and no context menu is shown — never a dead menu item.
+     */
+    private val onReveal: ((String) -> Unit)? = null,
 ) {
 
     fun render(blocks: List<MdBlock>): List<JComponent> = blocks.map { block(it) }
@@ -420,8 +428,33 @@ class BlockRenderer(
             val offset = pane.viewToModel2D(e.point)
             return links.firstOrNull { offset in it.start until it.end }?.href
         }
+
+        /**
+         * Right-click on a file reference offers the actions a click can't. Inline links are styled
+         * ranges inside a text pane rather than components, so they can't host a hover row the way a
+         * block can — a popup is the affordance that fits.
+         */
+        fun maybePopup(e: MouseEvent): Boolean {
+            if (!e.isPopupTrigger) return false
+            val href = hrefAt(e) ?: return false
+            val reveal = onReveal ?: return false
+            // Only project files can be revealed; a web URL has nothing to reveal in the tree.
+            if (!href.startsWith("file:")) return false
+            val menu = JPopupMenu()
+            menu.add(JMenuItem("Open").apply { addActionListener { onLink(href) } })
+            menu.add(JMenuItem("Reveal in Project").apply { addActionListener { reveal(href) } })
+            menu.show(pane, e.x, e.y)
+            return true
+        }
+
         pane.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) { hrefAt(e)?.let { onLink(it) } }
+            // Popup triggers differ by platform: macOS fires on press, others on release.
+            override fun mousePressed(e: MouseEvent) { maybePopup(e) }
+            override fun mouseReleased(e: MouseEvent) { maybePopup(e) }
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.isPopupTrigger || SwingUtilities.isRightMouseButton(e)) return
+                hrefAt(e)?.let { onLink(it) }
+            }
         })
         pane.addMouseMotionListener(object : MouseAdapter() {
             override fun mouseMoved(e: MouseEvent) {
