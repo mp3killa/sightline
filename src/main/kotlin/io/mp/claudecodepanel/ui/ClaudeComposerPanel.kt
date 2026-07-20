@@ -5,10 +5,15 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import io.mp.claudecodepanel.android.AndroidContext
+import io.mp.claudecodepanel.android.AndroidContextFormatter
+import io.mp.claudecodepanel.android.ContextChipKind
 import io.mp.claudecodepanel.theme.ClaudeIcons
 import io.mp.claudecodepanel.theme.ClaudeUiTokens
+import io.mp.claudecodepanel.ui.android.AndroidContextStrip
 import io.mp.claudecodepanel.ui.components.ContextChip
 import io.mp.claudecodepanel.ui.components.IconActionButton
+import io.mp.claudecodepanel.ui.components.WrapLayout
 import io.mp.claudecodepanel.ui.state.ComposerModel
 import java.awt.BorderLayout
 import java.awt.Color
@@ -47,10 +52,24 @@ class ClaudeComposerPanel(
     private val onAttach: () -> Unit,
     private val onSlash: (Component) -> Unit,
     private val onModeMenu: (Component) -> Unit,
+    /** Re-resolve the Android context on demand. No-op by default so tests and previews stay simple. */
+    private val onRefreshAndroidContext: () -> Unit = {},
 ) : JPanel(BorderLayout()) {
 
     private val box = ComposerBox()
-    private val chipsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
+    // WrapLayout, not FlowLayout: FlowLayout reports a one-row preferred height however many rows it
+    // actually lays out, so on a narrow panel the last chip was silently clipped away.
+    private val chipsRow = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
+
+    /** Current Android state, for chip labels. Empty until the host pushes one in. */
+    private var androidContext: AndroidContext = AndroidContext.NOT_ANDROID
+
+    /** The one-line Android summary; hides itself outside an Android project. */
+    private val contextStrip = AndroidContextStrip(
+        onToggleChip = { kind, enabled -> model.setChipEnabled(kind, enabled); refreshChips() },
+        isChipEnabled = { model.isChipEnabled(it) },
+        onRefresh = { onRefreshAndroidContext() },
+    )
 
     /** "N messages queued" — visible only while messages are parked behind a running turn. */
     private val queueLabel = JBLabel("").apply {
@@ -76,6 +95,7 @@ class ClaudeComposerPanel(
         chipsRow.isOpaque = false
         chipsRow.isVisible = false
         val north = JPanel(BorderLayout()); north.isOpaque = false
+        north.add(contextStrip, BorderLayout.NORTH)
         north.add(chipsRow, BorderLayout.CENTER); north.add(queueLabel, BorderLayout.SOUTH)
         box.add(north, BorderLayout.NORTH)
 
@@ -192,15 +212,41 @@ class ClaudeComposerPanel(
         modeChip.repaint()
     }
 
+    /** Push a freshly resolved Android context in — updates the strip and the context chips. */
+    fun setAndroidContext(context: AndroidContext) {
+        androidContext = context
+        contextStrip.update(context)
+        refreshChips()
+    }
+
+    /**
+     * Rebuilds the chip row from two sources: the Android context facts, then file attachments.
+     *
+     * Context leads because it describes the framing of the message; attachments are its content.
+     * Removing a context chip disables that fact for subsequent messages — it is not merely hiding a
+     * label — and the strip's menu is the way back, which is why removing one leaves the strip visible.
+     */
     fun refreshChips() {
         chipsRow.removeAll()
+
+        val contextChips = AndroidContextFormatter.availableChips(androidContext)
+            .filter { model.isChipEnabled(it) }
+        for (kind in contextChips) {
+            val chip = ContextChip(kind.id, AndroidContextFormatter.chipLabel(kind, androidContext)) { id ->
+                ContextChipKind.byId(id)?.let { model.removeContextChip(it) }
+                refreshChips()
+            }
+            chip.toolTipText = AndroidContextFormatter.chipTooltip(kind, androidContext)
+            chipsRow.add(chip)
+        }
+
         for (path in model.attachments) {
             chipsRow.add(ContextChip(path, basename(path)) { removed ->
                 model.removeAttachment(removed)
                 refreshChips()
             })
         }
-        chipsRow.isVisible = model.hasAttachments
+        chipsRow.isVisible = model.hasAttachments || contextChips.isNotEmpty()
         chipsRow.revalidate(); chipsRow.repaint()
         revalidate(); repaint()
     }

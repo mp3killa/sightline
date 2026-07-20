@@ -1,14 +1,43 @@
 package io.mp.claudecodepanel.ui.state
 
+import io.mp.claudecodepanel.android.ContextChipKind
+
 /**
- * Presentation state for the composer: attached-context files and send/stop enablement. Structured
- * attachments are kept as project-relative paths and only rendered into Claude's `@mention` prompt
- * format at submit time, so the input box never carries raw `@path` noise. Platform-free/testable.
+ * Presentation state for the composer: attached-context files, Android context chips, and send/stop
+ * enablement. Structured attachments are kept as project-relative paths and only rendered into Claude's
+ * `@mention` prompt format at submit time, so the input box never carries raw `@path` noise.
+ * Platform-free/testable.
  */
 class ComposerModel {
 
     private val attachmentsSet = LinkedHashSet<String>()
     var running: Boolean = false
+
+    // ---- Android context (docs/ANDROID.md M1) ----
+
+    /**
+     * Which context chips contribute to the next message. The chips *are* the control: unchecking one
+     * genuinely drops it from the prompt rather than just hiding a label describing it.
+     */
+    private val enabledChips = ContextChipKind.DEFAULT_ENABLED.toMutableSet()
+
+    /**
+     * Supplies the Android context block at send time. A supplier rather than a stored string because
+     * facts go stale: a message typed before an emulator booted must not still claim there was no device
+     * when it is finally sent. Defaults to contributing nothing, which is what a non-Android project and
+     * every existing test see.
+     */
+    var androidContextBlock: (Set<ContextChipKind>) -> String = { "" }
+
+    val enabledContextChips: Set<ContextChipKind> get() = enabledChips.toSet()
+
+    fun isChipEnabled(kind: ContextChipKind): Boolean = kind in enabledChips
+
+    fun setChipEnabled(kind: ContextChipKind, enabled: Boolean) {
+        if (enabled) enabledChips += kind else enabledChips -= kind
+    }
+
+    fun removeContextChip(kind: ContextChipKind) = setChipEnabled(kind, false)
 
     val attachments: List<String> get() = attachmentsSet.toList()
     val hasAttachments: Boolean get() = attachmentsSet.isNotEmpty()
@@ -64,11 +93,21 @@ class ComposerModel {
         else -> "${queue.size} messages queued"
     }
 
-    /** Builds the message Claude receives: attachments as leading `@mentions`, then the prompt. */
+    /**
+     * Builds the message Claude receives: the Android context block, then attachments as leading
+     * `@mentions`, then the prompt.
+     *
+     * Context leads because it is framing rather than content — the model should know which variant and
+     * device it is reasoning about before it reads the request. It is gathered **here, at send time**,
+     * which matters for a queued message: one typed before an emulator booted is sent after it did, and
+     * must describe the device that exists now, not the absence that existed while it waited.
+     *
+     * A blank body still sends: attaching a file and pressing Enter is a legitimate "look at this".
+     */
     fun buildMessage(text: String): String {
         val body = text.trim()
-        if (attachmentsSet.isEmpty()) return body
+        val context = if (enabledChips.isEmpty()) "" else androidContextBlock(enabledContextChips)
         val mentions = attachmentsSet.joinToString(" ") { "@$it" }
-        return if (body.isEmpty()) mentions else "$mentions\n\n$body"
+        return listOf(context, mentions, body).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
 }

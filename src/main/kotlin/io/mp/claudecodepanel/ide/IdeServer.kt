@@ -32,6 +32,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.JBUI
+import io.mp.claudecodepanel.ide.android.AndroidMcpTools
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -77,6 +78,9 @@ class IdeServer(private val project: Project) : Disposable {
 
     /** Sandbox-only automation tools; contributes nothing unless -Dsightline.testBridge=true. */
     private val testBridge: SightlineTestBridge by lazy { SightlineTestBridge(project) }
+
+    /** `android.*` tools; contributes nothing outside an Android project or with the feature off. */
+    private val androidTools: AndroidMcpTools by lazy { AndroidMcpTools(project) }
 
     private companion object {
         const val DIFF_TIMEOUT_MINUTES = 10L
@@ -182,6 +186,10 @@ class IdeServer(private val project: Project) : Disposable {
                 if (testBridge.handles(name)) {
                     val r = testBridge.call(name, args)
                     reply(conn, id, toolResult(r.text, r.imagePng))
+                } else if (androidTools.handles(name)) {
+                    // Already off the EDT (this is the WebSocket thread), which is what the resolver's
+                    // file walks and adb round-trips require.
+                    reply(conn, id, toolResult(androidTools.call(name, args)))
                 } else {
                     reply(conn, id, toolResult(callTool(name, args)))
                 }
@@ -249,6 +257,7 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("closeAllDiffTabs", "Close all diff tabs"))
         tools.add(tool("checkDocumentDirty", "Check whether a document has unsaved changes"))
         tools.add(tool("saveDocument", "Save a document"))
+        androidTools.addToolDefs(tools) // no-op unless the Android features are on
         testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
     }

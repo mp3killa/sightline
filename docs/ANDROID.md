@@ -207,7 +207,7 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.7.0** = M1–M2,
+Each is independently shippable with a stated gate. Release mapping: **0.7.0** = M2,
 **0.8.0** = M3, **0.9.0** = M4–M5.
 
 Shipped milestones are **deleted from this file**, not annotated — the same rule
@@ -216,30 +216,8 @@ milestone move to **Standing decisions** in [../CLAUDE.md](../CLAUDE.md); the ar
 introduced is described in that file's architecture table. (M0 — foundations, the fact ladder, the
 optional-dependency boundary, the action gate, the persistence guardrails and the Health rows — shipped
 2026-07-20 and has been removed accordingly. Its four standing-decision amendments, formerly Appendix B,
-are now in CLAUDE.md.)
-
-### M1 — Android context *(proposal §1)*
-
-The differentiator, and the dependency for everything after it.
-
-- `AndroidContext` + the fact ladder (§1.2): module, variant, product flavours, `minSdk`/`targetSdk`/
-  `compileSdk`, applicationId, version code/name, device, running process, current editor file and
-  symbol, Compose-vs-XML, version-catalogue summary, recently changed files.
-- `AndroidContextStrip` above the composer:
-  `app · stagingDebug | Pixel 8 API 35 · Running | MainActivity → RouteDetails`
-- **Chips are removable before sending** — `[Current file] [Selection] [Logcat: 2m] [stagingDebug] [Pixel 8]`.
-  Requires generalising `refreshChips()` (attachments-only today) to merge two sources, and a
-  non-removable informational `ContextChip` variant.
-- Injection through `ComposerModel.buildMessage()` as a compact, labelled block; **not** echoed into the
-  user's visible bubble, matching how attachments already behave (`ClaudePanel.kt:594-599`).
-- MCP: `android.getContext` — same facts, same tier labels, for when Claude wants them mid-turn.
-- `/android-context` slash action.
-
-**Gate:** in `sample-android-app`, Claude answers "which variant and device am I on?" with **zero** tool
-calls, and correctly says *"last built, may be stale"* when Android Studio's own selection is
-unavailable. Strip renders correctly at all three width classes in the headless PNG harness.
-
----
+are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt injection, `android.getContext`
+and the tier-2/3 parsers — shipped 2026-07-20 too.)
 
 ### M2 — Build & test cockpit *(§5, §6, plus stack-trace-to-source from §8)*
 

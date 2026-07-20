@@ -12,6 +12,8 @@ import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
@@ -70,6 +72,8 @@ import io.mp.claudecodepanel.interaction.QuestionFormState
 import io.mp.claudecodepanel.interaction.UserQuestionOption
 import io.mp.claudecodepanel.interaction.UserQuestionRequest
 import io.mp.claudecodepanel.process.ClaudeSession
+import io.mp.claudecodepanel.android.AndroidContextFormatter
+import io.mp.claudecodepanel.ide.android.AndroidContextResolver
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
 import io.mp.claudecodepanel.theme.ClaudeIcons
@@ -412,7 +416,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             onAttach = { attachFile() },
             onSlash = { anchor -> showSlashMenu(anchor) },
             onModeMenu = { anchor -> showModesPopup(anchor) },
+            onRefreshAndroidContext = { refreshAndroidContext(force = true) },
         )
+        installAndroidContext()
         statusStrip = ClaudeStatusStrip(this)
 
         southHost.add(statusStrip, BorderLayout.NORTH)
@@ -422,6 +428,67 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         updateModeChip()
         installShortcuts(root)
         return root
+    }
+
+    // ---- Android context (docs/ANDROID.md M1) ----
+
+    /**
+     * Wires the composer to the Android fact ladder.
+     *
+     * The block is supplied through a **lambda evaluated at send time**, not a stored string. That is
+     * what makes a queued message honest: one typed before an emulator booted is sent after it did, and
+     * must describe the device that exists then rather than the absence that existed while it waited.
+     * `ComposerModel.buildMessage` is re-entered on queue drain, so this happens for free.
+     */
+    private fun installAndroidContext() {
+        composerModel.androidContextBlock = { enabled ->
+            if (!ClaudeSettings.getInstance().state.androidFeatures) {
+                ""
+            } else {
+                // Cached-only: this runs on the EDT at send time, and the resolver shells out to adb.
+                // A miss costs the first message its context and is repaired by the refresh below —
+                // far better than blocking the UI thread on a device that may not answer.
+                val cached = AndroidContextResolver.getInstance(project).cachedOrNull()
+                cached?.let { AndroidContextFormatter.promptBlock(it, enabled) }.orEmpty()
+            }
+        }
+        // Keep the strip honest as the user navigates. The resolver re-reads only the editor fact on a
+        // cache hit, so this is a ReadAction per file switch, not a build-tree walk.
+        project.messageBus.connect(this).subscribe(
+            FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            object : FileEditorManagerListener {
+                override fun selectionChanged(event: FileEditorManagerEvent) {
+                    refreshAndroidContext(force = false)
+                }
+            },
+        )
+        refreshAndroidContext(force = false)
+    }
+
+    /**
+     * Set by the preview seam so an in-flight background refresh can't overwrite an injected context.
+     * Without it the preview races the resolver's startup pass, which — in a fixture project with no
+     * build files — resolves to NOT_ANDROID and silently hides the very strip under test.
+     */
+    private var androidContextPinned = false
+
+    /** Resolves off-EDT and pushes the result into the composer. Safe to call often; the resolver caches. */
+    private fun refreshAndroidContext(force: Boolean) {
+        if (androidContextPinned) return
+        if (!ClaudeSettings.getInstance().state.androidFeatures) return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val context = try {
+                AndroidContextResolver.getInstance(project).resolve(force = force)
+            } catch (e: Exception) {
+                thisLogger().info("android: context refresh failed (${e.javaClass.simpleName})")
+                return@executeOnPooledThread
+            }
+            ApplicationManager.getApplication().invokeLater({
+                // Re-check the pin here, not only on entry: a refresh scheduled before the pin was set
+                // is still in flight, and delivering its result would clobber the pinned context.
+                if (!project.isDisposed && !androidContextPinned) composer.setAndroidContext(context)
+            }, ModalityState.any())
+        }
     }
 
     private fun installEmptyState() {
@@ -820,6 +887,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(Separator.create("Context"))
         group.add(action("Catch up on project") { primeProject() })
         group.add(action("Attach file…") { attachFile() })
+        androidContextAction()?.let { group.add(it) }
         group.add(Separator.create("Conversation"))
         group.add(action("Clear conversation") { session.newConversation() })
         popup("Actions", group, anchor)
@@ -875,6 +943,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun action(text: String, run: () -> Unit): AnAction = object : AnAction(text) {
         override fun actionPerformed(e: AnActionEvent) { run() }
+    }
+
+    /**
+     * The `/android-context` action, or null outside an Android project.
+     *
+     * Returning null rather than a disabled item is the deliberate half: a menu of things that don't
+     * apply is worse than a shorter menu. Where an action *could* apply but can't right now — no device,
+     * nothing built — it stays visible and says why, which is the pattern the later milestones' commands
+     * inherit (see docs/ANDROID.md, "Availability gating is mandatory").
+     */
+    private fun androidContextAction(): AnAction? {
+        if (!ClaudeSettings.getInstance().state.androidFeatures) return null
+        val cached = AndroidContextResolver.getInstance(project).cachedOrNull()
+        // Only ever consults the cache: this builds a menu on the EDT, and the resolver shells out.
+        if (cached == null || cached.notAndroid) return null
+        return action("Refresh Android context") { refreshAndroidContext(force = true) }
     }
 
     private fun showModesPopup(anchor: Component) {
@@ -1004,6 +1088,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         showEmptyState(false)
         addUserBubble(text, emptyList())
     }
+
+    /**
+     * Test-only: pushes an Android context straight into the composer, bypassing the resolver.
+     *
+     * The resolver needs a real Android project on disk, an SDK and a device; a preview needs neither.
+     * This seam feeds the **same** `setAndroidContext` the live path calls, so the strip and chips under
+     * test are the production ones — only the fact-gathering is substituted.
+     */
+    @TestOnly
+    internal fun setAndroidContextForPreview(context: io.mp.claudecodepanel.android.AndroidContext) {
+        androidContextPinned = true
+        composerModel.androidContextBlock = { chips -> AndroidContextFormatter.promptBlock(context, chips) }
+        composer.setAndroidContext(context)
+    }
+
+    /** Test-only: the message that would actually be sent, context block and all. */
+    @TestOnly
+    internal fun buildMessageForPreview(text: String): String = composerModel.buildMessage(text)
 
     /**
      * Test-only: selects an activity-map node by path, exercising the **real** map→chat callback

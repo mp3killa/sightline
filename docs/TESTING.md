@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**566 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**644 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -32,7 +32,13 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
   && adb uninstall …` is not a device listing), `-s <serial>` doesn't hide the sub-command, and anything
   unrecognised — including a quoted `adb shell '…'` — is confirmed rather than assumed safe;
   `AndroidStorePolicyTest` — the persistence carve-out's guardrails: paths outside the project are
-  refused rather than stored absolute, and an unknown schema version is discarded rather than migrated.
+  refused rather than stored absolute, and an unknown schema version is discarded rather than migrated;
+  `GradleModuleParserTest` — brace-matched blocks (a regex stops at the first flavour and reports one
+  where there are five), both quote styles, and `alias(libs.plugins.android.application)`;
+  `OutputMetadataParserTest` — real AGP output, and that a wrong-typed field costs that field only;
+  `AndroidContextFormatterTest` — that a build-output variant renders as `(last build)`, that removing a
+  chip genuinely removes the fact from the prompt, and that a tight strip budget drops **whole segments**
+  rather than cutting one in half.
 - `ide/PathAccessPolicy`, `ide/InteractionCoordinators`, `ide/QuestionCoordinator` — path guard +
   the approval/diff/question decision logic; `SightlineTestBridgeQuestionTest` drives the bridge.
 
@@ -167,7 +173,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 566 unit tests
+./gradlew test                 # the 644 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

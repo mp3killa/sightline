@@ -1,5 +1,6 @@
 package io.mp.claudecodepanel.ui.state
 
+import io.mp.claudecodepanel.android.ContextChipKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -117,5 +118,81 @@ class ComposerModelTest {
         assertEquals("1 message queued", m.queueLabel())
         m.submit("b")
         assertEquals("2 messages queued", m.queueLabel())
+    }
+
+    // ---- Android context injection (docs/ANDROID.md M1) ----
+
+    @Test fun noAndroidContextByDefaultSoNothingChangesForANonAndroidProject() {
+        val m = ComposerModel()
+        assertEquals("hello", m.buildMessage("hello"))
+    }
+
+    @Test fun contextLeadsTheMessage() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "<android-context>\nVariant: debug\n</android-context>" }
+        assertEquals(
+            "<android-context>\nVariant: debug\n</android-context>\n\nwhy is this failing?",
+            m.buildMessage("why is this failing?"),
+        )
+    }
+
+    @Test fun contextThenAttachmentsThenBody() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "CTX" }
+        m.addAttachment("app/Main.kt")
+        assertEquals("CTX\n\n@app/Main.kt\n\nlook at this", m.buildMessage("look at this"))
+    }
+
+    /** Unchecking a chip must genuinely drop the fact, not merely hide a label describing it. */
+    @Test fun disabledChipsAreNotPassedToTheSupplier() {
+        val m = ComposerModel()
+        var sawChips: Set<ContextChipKind>? = null
+        m.androidContextBlock = { chips -> sawChips = chips; "CTX" }
+        m.setChipEnabled(ContextChipKind.DEVICE, false)
+        m.buildMessage("hi")
+        assertFalse(ContextChipKind.DEVICE in sawChips!!)
+        assertTrue(ContextChipKind.VARIANT in sawChips!!)
+    }
+
+    @Test fun removingEveryChipSuppressesTheBlockEntirely() {
+        val m = ComposerModel()
+        var called = false
+        m.androidContextBlock = { called = true; "CTX" }
+        ContextChipKind.entries.forEach { m.removeContextChip(it) }
+        assertEquals("hi", m.buildMessage("hi"))
+        assertFalse("the supplier should not even be consulted", called)
+    }
+
+    @Test fun chipsCanBeTurnedBackOn() {
+        val m = ComposerModel()
+        m.removeContextChip(ContextChipKind.DEVICE)
+        assertFalse(m.isChipEnabled(ContextChipKind.DEVICE))
+        m.setChipEnabled(ContextChipKind.DEVICE, true)
+        assertTrue(m.isChipEnabled(ContextChipKind.DEVICE))
+    }
+
+    /**
+     * The reason the block is a lambda rather than a stored string: a message typed before an emulator
+     * booted is *sent* after it did, and must describe the device that exists then.
+     */
+    @Test fun contextIsGatheredAtSendTimeNotAtQueueTime() {
+        val m = ComposerModel()
+        var device = "none"
+        m.androidContextBlock = { "Device: $device" }
+
+        m.running = true
+        assertEquals(ComposerModel.Submit.QUEUED, m.submit("run the app"))
+
+        device = "Pixel 8" // the emulator finished booting while the message waited
+        m.running = false
+        val drained = m.takeQueued()!!
+        assertEquals("Device: Pixel 8\n\nrun the app", m.buildMessage(drained))
+    }
+
+    @Test fun aBlankBodyStillSendsItsContextAndAttachments() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "CTX" }
+        m.addAttachment("app/Main.kt")
+        assertEquals("CTX\n\n@app/Main.kt", m.buildMessage("   "))
     }
 }

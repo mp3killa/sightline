@@ -3,7 +3,15 @@ package io.mp.claudecodepanel.ui
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.JBSplitter
 import com.intellij.util.ui.UIUtil
+import io.mp.claudecodepanel.android.AndroidContext
+import io.mp.claudecodepanel.android.DeviceContext
+import io.mp.claudecodepanel.android.DeviceState
+import io.mp.claudecodepanel.android.EditorContext
+import io.mp.claudecodepanel.android.Fact
+import io.mp.claudecodepanel.android.FactTier
+import io.mp.claudecodepanel.android.ModuleContext
 import io.mp.claudecodepanel.settings.ClaudeSettings
+import io.mp.claudecodepanel.ui.components.ContextChip
 import io.mp.claudecodepanel.ui.state.ResponsiveLayout
 import java.awt.Component
 import java.awt.Container
@@ -39,6 +47,40 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
     )
 
     private fun panel(): ClaudePanel = ClaudePanel(project, testRootDisposable)
+
+    /**
+     * A representative Android context — the sample-android-app shape: two flavour dimensions, a
+     * connected emulator, an open Compose screen. Deliberately **mixed provenance**: the variant comes
+     * from a build output and so must render its "(last build)" qualifier, which is the thing worth
+     * looking at in the PNG.
+     */
+    private fun androidContext() = AndroidContext(
+        modules = listOf(
+            ModuleContext(
+                name = "app",
+                gradlePath = ":app",
+                variant = Fact.known("demoStagingDebug", FactTier.BUILD_OUTPUT),
+                flavors = Fact.known(listOf("demo", "staging"), FactTier.BUILD_OUTPUT),
+                buildType = Fact.known("debug", FactTier.BUILD_OUTPUT),
+                applicationId = Fact.known("com.example.driver.staging", FactTier.BUILD_OUTPUT),
+                minSdk = Fact.known(24, FactTier.STATIC_PARSE),
+                targetSdk = Fact.known(36, FactTier.STATIC_PARSE),
+                compileSdk = Fact.known("36", FactTier.STATIC_PARSE),
+                usesCompose = Fact.known(true, FactTier.STATIC_PARSE),
+            ),
+            ModuleContext(name = "core", gradlePath = ":core"),
+        ),
+        activeModuleName = "app",
+        device = DeviceContext(
+            serial = "emulator-5554",
+            name = "Pixel 8",
+            state = DeviceState.ONLINE,
+            apiLevel = Fact.known(35, FactTier.DEVICE),
+            androidRelease = Fact.known("15", FactTier.DEVICE),
+            appRunning = Fact.known(true, FactTier.DEVICE),
+        ),
+        editor = EditorContext("app/src/main/java/com/example/ui/RouteDetailsScreen.kt"),
+    )
 
     /**
      * A representative turn: prose with Markdown, a routine read, a command, and an edit with a diff.
@@ -152,6 +194,7 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
             val h = 900
             comp.preferredSize = Dimension(w, h)
             seedTranscript(p)
+            p.setAndroidContextForPreview(androidContext())
             layoutTree(comp, w, h)
 
             val out = File(dir, "chat-layout-$name.png")
@@ -233,5 +276,124 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
             "the conversation should fill its column: column=$column pad=$pad content=$content",
             content > column * 0.8,
         )
+    }
+
+    // ---- Android context strip (docs/ANDROID.md M1) ----
+
+    /**
+     * The strip and one chip per enabled fact are in the tree at every width. Asserted on the component
+     * tree rather than on pixels: the harness's own lesson is that an image plus a vague assertion
+     * ("a JScrollPane exists somewhere") passes while the thing under test is broken.
+     */
+    fun testAndroidContextStripAndChipsRenderAtEveryWidth() {
+        for ((name, w) in widths) {
+            val p = panel()
+            seedTranscript(p)
+            p.setAndroidContextForPreview(androidContext())
+            layoutTree(p.component, w, 900)
+
+            val strip = findByAccessibleName(p.component, A11yNames.ANDROID_CONTEXT_STRIP)
+            assertNotNull("[$name] the Android context strip should be in the tree", strip)
+            assertTrue("[$name] the strip should be visible", strip!!.isVisible)
+
+            val text = collectLabels(p.component)
+            assertTrue("[$name] the strip should name the variant, got: $text", text.any { it.contains("demoStagingDebug") })
+            assertTrue("[$name] the strip should name the device, got: $text", text.any { it.contains("Pixel 8") })
+
+            // Four chips: module, variant, device, current file — the defaults. At narrow width they
+            // wrap onto a second row, which only works because the row uses WrapLayout: plain
+            // FlowLayout reports a one-row preferred height and the fourth chip is clipped away.
+            val chips = mutableListOf<Component>()
+            walk(p.component) { if (it is ContextChip) chips += it }
+            assertEquals("[$name] one chip per enabled fact", 4, chips.size)
+            val chipsRow = chips.first().parent
+            assertTrue(
+                "[$name] every chip must be inside the row's bounds, not clipped",
+                chips.all { it.y + it.height <= chipsRow.height },
+            )
+        }
+    }
+
+    /**
+     * At the narrowest width the strip sheds its lowest-priority segment rather than running off the
+     * edge. Found by reading the PNG: the first version clipped `RouteDetailsScreen.kt` mid-word.
+     */
+    fun testTheStripShedsSegmentsRatherThanClippingWhenNarrow() {
+        fun stripText(width: Int): String {
+            val p = panel()
+            seedTranscript(p)
+            p.setAndroidContextForPreview(androidContext())
+            layoutTree(p.component, width, 900)
+            val strip = findByAccessibleName(p.component, A11yNames.ANDROID_CONTEXT_STRIP) as JComponent
+            return collectLabels(strip).joinToString(" ")
+        }
+
+        val narrow = stripText(420)
+        val medium = stripText(720)
+
+        assertTrue("medium should show the file: $medium", medium.contains("RouteDetailsScreen.kt"))
+        assertFalse("narrow should drop the file rather than clip it: $narrow", narrow.contains("RouteDetailsScreen"))
+        // …but the facts that matter most survive, and nothing is half-rendered.
+        assertTrue("narrow should keep the variant: $narrow", narrow.contains("demoStagingDebug"))
+        assertTrue("narrow should keep the device: $narrow", narrow.contains("Pixel 8"))
+    }
+
+    /** A non-Android project must take no vertical space at all — not an empty frame. */
+    fun testTheStripIsAbsentOutsideAnAndroidProject() {
+        val p = panel()
+        seedTranscript(p)
+        p.setAndroidContextForPreview(AndroidContext.NOT_ANDROID)
+        layoutTree(p.component, 720, 900)
+
+        val strip = findByAccessibleName(p.component, A11yNames.ANDROID_CONTEXT_STRIP)
+        assertNotNull(strip)
+        assertFalse("the strip should hide itself entirely", strip!!.isVisible)
+        assertEquals(0, strip.height)
+
+        val chips = mutableListOf<Component>()
+        walk(p.component) { if (it is ContextChip) chips += it }
+        assertTrue("no context chips outside an Android project", chips.isEmpty())
+    }
+
+    /**
+     * The end-to-end claim of M1: the facts on screen are the facts Claude receives, with their
+     * provenance. Drives the real `ComposerModel.buildMessage`, so a regression in either the formatter
+     * or the wiring fails here rather than silently sending a bare prompt.
+     */
+    fun testTheContextOnScreenIsWhatGetsSent() {
+        val p = panel()
+        p.setAndroidContextForPreview(androidContext())
+
+        val message = p.buildMessageForPreview("why is the loading spinner stuck?")
+        assertTrue(message.contains("<android-context>"))
+        // The variant came from a build output, so it must arrive qualified — not as current truth.
+        assertTrue("variant should be labelled stale: $message", message.contains("demoStagingDebug (last build)"))
+        assertTrue(message.contains("Device: Pixel 8 (emulator-5554)"))
+        assertTrue(message.contains("Application ID: com.example.driver.staging"))
+        assertTrue(message.contains("Other modules: core"))
+        assertTrue(message.endsWith("why is the loading spinner stuck?"))
+    }
+
+    private fun walk(c: Component, visit: (Component) -> Unit) {
+        visit(c)
+        if (c is Container) c.components.forEach { walk(it, visit) }
+    }
+
+    private fun findByAccessibleName(root: Component, name: String): Component? {
+        var found: Component? = null
+        walk(root) { c ->
+            if (found == null && c is JComponent &&
+                runCatching { c.getAccessibleContext()?.accessibleName }.getOrNull() == name
+            ) {
+                found = c
+            }
+        }
+        return found
+    }
+
+    private fun collectLabels(root: Component): List<String> {
+        val out = mutableListOf<String>()
+        walk(root) { if (it is javax.swing.JLabel) it.text?.takeIf { t -> t.isNotBlank() }?.let(out::add) }
+        return out
     }
 }
