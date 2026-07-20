@@ -21,7 +21,25 @@ newer IPGP) and fix anything it flags (internal/experimental API usage, binary c
 ## Live Android Studio verification (manual)
 
 The interactive flows need a human pass in `./gradlew runIde` — the studio MCP can't click the plugin's
-own tool window. Verify:
+own tool window.
+
+**Confirmed live 2026-07-20** from a real dark-theme session (installed build, "My Application"), so these
+need no second pass: headings render without `#`; bullet lists; inline **bold** and `code`; **clickable
+project-file links** resolving real docs (`CLAUDE.md`, `docs/ARCHITECTURE.md`, …); the per-turn **footer**
+carrying cost/duration/turns (`Completed · 32.6s · 9 turns · $0.2229`); the **status strip never echoing
+the response** (it read "Waiting for your answer" while a question was pending); user turns as rounded
+bubbles; the collapsed **thinking** row; the header (wordmark, state dot, Chat/Activity segmented control,
+split toggle); the composer (attach, slash, `Auto` mode chip, stop button). For AskUserQuestion: the
+**radio** single-select render with per-option descriptions, the **Other…** row, **Continue disabled until
+answered**, Cancel present, and the streamed tool card reading **`Asked · Demo location`** rather than raw
+JSON.
+
+> [!NOTE]
+> That session predates (or may predate) the 2026-07-20 chat-polish and map-density commits, and showed no
+> code fence, table or activity map — so it says nothing either way about that work. Everything below still
+> needs the pass.
+
+Verify:
 
 - CLI missing / unauthenticated / outdated. New & existing Android projects. Indexing. Kotlin & Java.
 - Read-only files, unsaved docs, file create / delete. Diff accepted / rejected. Tool denied.
@@ -31,11 +49,11 @@ own tool window. Verify:
   double-prompt question — reproduce before any approval-flow refactor).
 - `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open — check
   for deadlock / UI-block.
-- **Markdown rendering (needs eyes):** headings (no `#`), real tables, lists (incl. task lists), fenced
-  code (Copy + horizontal scroll), quotes, `> [!WARNING]` callouts, inline styles, and clickable project
-  file links all render in light + dark; the turn footer shows cost/duration/turns and the status strip
-  never echoes the response; malformed/half-streamed Markdown stays readable; auto-scroll follows only at
-  the bottom (scrolling up pauses it, sending re-follows).
+- **Markdown rendering — partly confirmed** (dark theme, live session 2026-07-20; see the confirmed list
+  above). Still needs eyes: real **tables**, **fenced code** (Copy + horizontal scroll), **quotes**,
+  `> [!WARNING]` **callouts**, **task lists**, the whole set again in **light theme**,
+  malformed/half-streamed Markdown staying readable, and auto-scroll following only at the bottom
+  (scrolling up pauses it, sending re-follows).
 - **Chat polish (needs eyes):** fenced code is **syntax-highlighted** in the IDE's own colours and stays
   legible in both themes (an unknown/unlexable fence must fall back to plain monospace, not garble);
   a >24-line block renders capped with a working **Expand/Collapse** and Copy still yields the whole text;
@@ -52,10 +70,12 @@ own tool window. Verify:
   their labels at every density; zooming in restores detail; the **"N of M · Show more"** counter is
   clickable and actually reveals more nodes; **Fit** frames the bulk of the graph (a single stray node
   must not shrink everything to a speck) and leaves room for edge labels.
-- **AskUserQuestion visual click-through:** render (radio / checkbox / Other), Continue-gating,
-  Cancel-denies, "Skip"-as-answer, and the returned `answers` object. Logic is unit-tested and the bridge
-  can drive it (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`); only the
-  **visual** render still needs eyes.
+- **AskUserQuestion — render partly confirmed** (dark theme, live session 2026-07-20). Still needs eyes:
+  the **multi-select checkbox** variant, **Other…** free-text actually accepting input, Continue
+  **enabling** once every question is answered, **Cancel** genuinely denying and unblocking the turn,
+  a "Skip"-style option coming back as a normal answer, and the returned `answers` object being keyed by
+  full question text. The bridge can drive the non-visual half
+  (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`).
 
 ## Marketplace listing submission
 
