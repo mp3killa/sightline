@@ -19,6 +19,7 @@ import io.mp.claudecodepanel.activity.ActivityColorRole
 import io.mp.claudecodepanel.activity.ActivityColorRoles
 import io.mp.claudecodepanel.activity.ActivityGraph
 import io.mp.claudecodepanel.activity.ClusterCollapser
+import io.mp.claudecodepanel.activity.MapDensity
 import io.mp.claudecodepanel.ide.ProjectStructureEnricher
 import io.mp.claudecodepanel.activity.ActivityNode
 import io.mp.claudecodepanel.activity.ActivityNodeState
@@ -36,6 +37,7 @@ import io.mp.claudecodepanel.ui.state.TimelineDockState
 import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -203,6 +205,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         left.add(liveDot)
         countLabel.foreground = ClaudeUiTokens.textSecondary()
         countLabel.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        // The counter doubles as the "Show more" control once the cap is truncating the graph.
+        countLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) = showMoreNodes()
+        })
         left.add(countLabel)
         header.add(left, BorderLayout.WEST)
 
@@ -400,7 +406,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private fun refreshHeader() {
         val total = graph.nodes.count { it.type != ActivityNodeType.CATEGORY }
         val shown = visibleNodeIds().count { graph.node(it)?.type != ActivityNodeType.CATEGORY }
-        countLabel.text = if (shown < total) "$shown of $total" else "$total node" + if (total == 1) "" else "s"
+        val hidden = MapDensity.hiddenCount(shown, total)
+        countLabel.text = MapDensity.countText(shown, total)
+        countLabel.cursor = if (hidden > 0) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
+        countLabel.toolTipText = if (hidden > 0) "$hidden more node" + (if (hidden == 1) "" else "s") + " hidden by the visible-node cap — click to show more" else null
         val active = !reduceMotion && hasFreshGlow()
         liveDot.icon = dotIcon(if (active) ClaudeUiTokens.success() else ClaudeUiTokens.textSecondary())
         pauseButton.isVisible = timer.isRunning || paused
@@ -461,7 +470,23 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     // ---------- layout / physics ----------
 
     private fun retainedCap(): Int = ClaudeSettings.getInstance().state.activityMaxRetained.coerceIn(50, 5000)
-    private fun visibleCap(): Int = ClaudeSettings.getInstance().state.activityMaxNodes.coerceIn(20, 2000)
+    /**
+     * Session-only lift of the visible-node cap, set by "Show more". Deliberately not persisted: the
+     * setting stays the user's standing preference, and one busy session shouldn't quietly rewrite it.
+     */
+    private var capOverride: Int? = null
+
+    private fun visibleCap(): Int =
+        maxOf(ClaudeSettings.getInstance().state.activityMaxNodes.coerceIn(20, MapDensity.MAX_VISIBLE_CAP), capOverride ?: 0)
+
+    /** Raise the cap one step so more of the graph is drawn; no-op once everything already fits. */
+    private fun showMoreNodes() {
+        val total = graph.nodes.count { it.type != ActivityNodeType.CATEGORY }
+        val next = MapDensity.nextVisibleCap(visibleCap(), total)
+        if (next <= visibleCap()) return
+        capOverride = next
+        ensurePositions(); refreshHeader(); canvas.repaint()
+    }
     private fun currentFilter(): Filter = (filterCombo.selectedItem as? Filter) ?: Filter.ALL
 
     private fun visibleNodeIds(): Set<String> {
@@ -594,13 +619,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         val ids = visibleNodeIds()
         val pts = ids.mapNotNull { canvas.positions[it] }
         if (pts.isEmpty()) return
-        val minX = pts.minOf { it.x }; val maxX = pts.maxOf { it.x }
-        val minY = pts.minOf { it.y }; val maxY = pts.maxOf { it.y }
-        val w = max(1.0, maxX - minX); val h = max(1.0, maxY - minY)
-        val cw = max(1, canvas.width - JBUI.scale(80)); val ch = max(1, canvas.height - JBUI.scale(80))
+        // On a big graph, frame the bulk rather than letting a couple of stragglers dictate the zoom, and
+        // leave more edge room for the labels that hang off each node.
+        val b = MapDensity.fitBounds(pts.map { it.x }, pts.map { it.y }) ?: return
+        val pad = JBUI.scale(MapDensity.fitPadding(pts.size))
+        val w = max(1.0, b.maxX - b.minX); val h = max(1.0, b.maxY - b.minY)
+        val cw = max(1, canvas.width - pad); val ch = max(1, canvas.height - pad)
         canvas.scale = min(3.0, min(cw / w, ch / h)).coerceIn(0.15, 3.0)
-        canvas.offset.x = -(minX + maxX) / 2 * canvas.scale
-        canvas.offset.y = -(minY + maxY) / 2 * canvas.scale
+        canvas.offset.x = -(b.minX + b.maxX) / 2 * canvas.scale
+        canvas.offset.y = -(b.minY + b.maxY) / 2 * canvas.scale
         canvas.repaint()
     }
 
@@ -793,6 +820,9 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             }
             g2.stroke = BasicStroke(1f)
 
+            // One tier for the whole frame: labelling must not flicker per-node as the graph grows.
+            val labelTier = MapDensity.labelTier(ids.size, scale)
+
             for (id in ids) {
                 val n = graph.node(id) ?: continue
                 val p = positions[id] ?: continue
@@ -856,10 +886,15 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     g2.drawOval((s.x - sr).toInt(), (s.y - sr).toInt(), (sr * 2).toInt(), (sr * 2).toInt())
                     g2.stroke = BasicStroke(1f)
                 }
-                // Labels: task/category/patch/error/focus/selected/hovered always; others when zoomed in.
-                val alwaysLabel = n.type == ActivityNodeType.TASK || n.type == ActivityNodeType.CATEGORY ||
-                    n.type == ActivityNodeType.PATCH || n.type == ActivityNodeType.ERROR
-                val showLabel = alwaysLabel || id == focusId || id == selectedId || id == hoveredId || (scale >= 0.78 && r >= 6)
+                // Labels thin out as the graph grows (MapDensity): anchors and errors always keep theirs,
+                // whatever the user is pointing at keeps its own, and ordinary nodes drop out first.
+                val showLabel = MapDensity.showsLabel(
+                    tier = labelTier,
+                    type = n.type,
+                    attention = id == focusId || id == selectedId || id == hoveredId,
+                    radius = r,
+                    scale = scale,
+                )
                 if (showLabel) {
                     g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUIScale.scale(11f) else JBUIScale.scale(10.5f))
                     val label = truncateLabel(cleanLabel(n), 26)

@@ -47,6 +47,11 @@ own tool window. Verify:
 - **Activity map (needs eyes):** a touched resource links to its referencing sources; the inspector
   "Find usages" action adds usage edges; "Collapse finished history" folds clusters and the "N commands"
   chips expand/collapse in place. Logic is unit-tested; only the visual behaviour needs eyes.
+- **Map density (needs eyes):** on a genuinely busy session, labels thin out as the graph grows without
+  the map flickering between tiers as nodes arrive; errors, anchors and the hovered/selected node keep
+  their labels at every density; zooming in restores detail; the **"N of M · Show more"** counter is
+  clickable and actually reveals more nodes; **Fit** frames the bulk of the graph (a single stray node
+  must not shrink everything to a speck) and leaves room for edge labels.
 - **AskUserQuestion visual click-through:** render (radio / checkbox / Other), Continue-gating,
   Cancel-denies, "Skip"-as-answer, and the returned `answers` object. Logic is unit-tested and the bridge
   can drive it (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`); only the
@@ -56,32 +61,6 @@ own tool window. Verify:
 
 Naming (Sightline), plugin icon, `<vendor>`, `<description>`, `<change-notes>`, and the "requires the
 Claude CLI" wording are all in place — the remaining step is actually submitting the listing.
-
----
-
-# P1 differentiators — complete
-
-The P1 differentiators are done (see [../CLAUDE.md](../CLAUDE.md)): Android device/logcat diagnostics,
-nav-graph enrichment, evidence provenance, exit-status + parallel `tool_use` correlation, **resource →
-referencing source** (reverse lookup), on-demand **find-usages** (lazy tier), the **Kotlin
-`BasePlatformTestCase`**, and cluster collapsing with **expand-in-place chips**. Only minor optional polish
-remains:
-
-- Cluster collapsing: the aggregate chips + expand-in-place ship; the fuller multi-stage progression
-  (hide low-value labels → "Show more" → better Fit at very high node counts) is a small UX refinement.
-
----
-
-# Chat transcript rendering — complete
-
-The Markdown renderer overhaul shipped (phases A–3, see [../CLAUDE.md](../CLAUDE.md)): the status-echo fix
-+ turn footer, the platform-free `ui/markdown/` parser → model → component pipeline
-(headings/lists/tables/code/quotes/callouts + inline styles), project-file links, and the scroll-follow
-guard. The remaining polish is now done too — **syntax highlighting** (IDE lexer + colour scheme, via
-`CodeHighlighting`/`CodeLanguages`), the **code-block height cap** with Expand/Collapse (`CodeBlockLayout`),
-**wide-table horizontal scroll** (`TableLayout`), and the **"Jump to latest"** overlay
-(`ScrollFollow.shouldOfferJumpToLatest`). All four are unit-tested; the visual pass is folded into the live
-Android Studio gate above.
 
 ---
 
