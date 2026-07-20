@@ -39,6 +39,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.mp.claudecodepanel.ui.state.DiffLayout
 import io.mp.claudecodepanel.ui.state.DiffPresentation
 import java.awt.GridLayout
+import io.mp.claudecodepanel.ui.state.PathDisplay
 import io.mp.claudecodepanel.ui.state.ProcessingSummary
 import io.mp.claudecodepanel.activity.ActivityNode
 import javax.swing.Timer
@@ -166,6 +167,15 @@ private const val PRIME_PROMPT =
 private const val SIM_REQ_PREFIX = "sim-question-"
 
 /**
+ * Bottom gutter the transcript reserves for the "Jump to latest" overlay (unscaled; [JBUI] scales it
+ * alongside the button's own scaled font). The button floats over the transcript so that showing and
+ * hiding it never shifts the text being read — but without room to scroll into, that same overlay sits
+ * on top of the last line once the reader reaches the bottom. Reserved unconditionally: a gutter that
+ * appeared with the button would reintroduce exactly the shifting the overlay exists to avoid.
+ */
+private const val JUMP_TO_LATEST_GUTTER = 46
+
+/**
  * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
  * workspace (transcript / activity map / split), a coordinated [ClaudeStatusStrip], and the
  * [ClaudeComposerPanel]. Stream parsing feeds both the transcript blocks and a normalised activity
@@ -222,7 +232,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = true
             background = ClaudeUiTokens.surface()
-            border = JBUI.Borders.empty(12, 14)
+            border = JBUI.Borders.empty(12, 14, JUMP_TO_LATEST_GUTTER, 14)
         }
         override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
         override fun getScrollableUnitIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(20)
@@ -258,6 +268,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             lastScrollMaximum = bar.maximum
             lastScrollValue = bar.value
             if (programmaticScroll) return@addAdjustmentListener
+            // A real gesture moves the content out from under the pointer, leaving hover actions
+            // revealed on a row that is no longer hovered. Pure growth must *not* close them, or they
+            // would flicker away mid-stream just as the user reaches for one.
+            if (moved) hideRevealedHoverActions?.invoke()
             // Content arriving is not a user gesture. While following, pure growth (the maximum moved
             // but the value didn't) must **re-pin** to the new bottom; reading it as "no longer near
             // the end" is what silently killed follow mid-stream and popped "Jump to latest" without
@@ -634,12 +648,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         runCatching { CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(text)) }
     }
 
+    /** Closes whichever hover-action row is currently revealed; at most one ever is. */
+    private var hideRevealedHoverActions: (() -> Unit)? = null
+
     /**
      * Builds a row of secondary actions that stays hidden until the pointer is over [host] (or one of
      * the buttons takes keyboard focus), so the default view stays clean without the actions being
      * unreachable. Focus is included deliberately: hover-only actions are invisible to keyboard users.
+     *
+     * [enabled] is consulted each time the row is revealed, not once at construction, so an action can
+     * depend on content that has not streamed in yet.
      */
-    private fun hoverActions(host: JComponent, vararg actions: Pair<String, () -> Unit>): JComponent {
+    private fun hoverActions(
+        host: JComponent,
+        vararg actions: Pair<String, () -> Unit>,
+        enabled: (String) -> Boolean = { true },
+    ): JComponent {
         val row = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
         row.isOpaque = false
         val buttons = actions.map { (label, run) -> smallLink(label, run) }
@@ -653,12 +677,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         row.minimumSize = reserved
         buttons.forEach { it.isVisible = false }
 
+        // Tracked here rather than read back off the buttons: `enabled` can leave some of them hidden
+        // while the row is revealed, so no single button's visibility answers "is this row showing?".
+        var shown = false
         fun show(v: Boolean) {
             // Never hide while a button still holds focus, or tabbing into it makes it vanish.
             if (!v && buttons.any { it.hasFocus() }) return
-            if (buttons.firstOrNull()?.isVisible == v) return
-            buttons.forEach { it.isVisible = v }
+            if (shown == v) return
+            // Only one row is ever revealed, and whoever reveals one closes the last. Swing delivers no
+            // mouseExited when the content moves out from under a *stationary* pointer — which is what
+            // scrolling and a growing stream both do — so without this a row scrolls away still showing
+            // its actions, and two rows appear to offer them at once.
+            if (v) hideRevealedHoverActions?.invoke()
+            shown = v
+            // An action with nothing to act on is not offered at all: "Copy" on a turn that streamed no
+            // text would put an empty string on the clipboard and look like it had worked.
+            buttons.forEach { it.isVisible = v && enabled(it.text) }
             row.repaint()
+            hideRevealedHoverActions = if (v) ({ show(false) }) else null
         }
 
         val hover = object : MouseAdapter() {
@@ -1680,7 +1716,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun relayout() { SwingUtilities.invokeLater { transcript.revalidate(); transcript.repaint() } }
 
     private fun basename(p: String): String { val q = p.replace('\\', '/').trimEnd('/'); val i = q.lastIndexOf('/'); return if (i >= 0) q.substring(i + 1) else q }
-    private fun shortPath(p: String?): String { if (p.isNullOrEmpty()) return ""; return if (p.length > 72) "…" + p.substring(p.length - 71) else p }
+    /**
+     * A file path as a transcript row should show it: project-relative where possible, and shortened at
+     * segment boundaries. See [PathDisplay] — a plain character cut lands mid-segment and renders the
+     * prefix as garbage, and an absolute in-project path spends the row on text every other row repeats.
+     */
+    private fun shortPath(p: String?): String =
+        PathDisplay.display(p, project.basePath, System.getProperty("user.home"))
     private fun oneLine(s: String, max: Int): String { val one = s.replace("\n", " ").trim(); return if (one.length > max) one.substring(0, max) + "…" else one }
     private fun truncate(t: String): String {
         val lines = t.split("\n")
@@ -1791,7 +1833,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             val roleRow = JPanel(BorderLayout()); roleRow.isOpaque = false
             roleRow.border = JBUI.Borders.emptyBottom(3)
             roleRow.add(role, BorderLayout.WEST)
-            roleRow.add(hoverActions(this, "Copy" to { copyToClipboard(markdownText()) }), BorderLayout.EAST)
+            // Gated: a turn can be nothing but tool activity, and Copy would then yield an empty string.
+            roleRow.add(
+                hoverActions(
+                    this,
+                    "Copy" to { copyToClipboard(markdownText()) },
+                    enabled = { markdownText().isNotBlank() },
+                ),
+                BorderLayout.EAST,
+            )
             add(roleRow, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
             add(body, BorderLayout.CENTER)
