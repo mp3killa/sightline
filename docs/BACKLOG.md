@@ -8,6 +8,94 @@ Guiding principle: correctness logic lands as **platform-free, unit-tested** cla
 
 ---
 
+# Chat experience — VS Code-parity polish
+
+From a 2026-07-20 team/GPT review: the Chat view reads as an *execution dashboard* rather than a coding
+conversation, because execution telemetry competes with the reply for visual weight. Milestones are
+ordered so each is independently shippable and can be **deleted from this file on completion**.
+
+Three asks from that review were assessed and **rejected** — do not re-import them:
+
+- *"Existing stored sessions must still open"* — there is **no session persistence**; `lastSessionId`
+  is in-memory and `--resume` exists only to survive a user Stop. Building persistence to satisfy an
+  acceptance criterion would pre-empt the P2 design below (which has deliberate privacy constraints).
+- *"1,100–1,250px max content width"* — that figure is for a full-screen editor window. A docked tool
+  window is typically 400–700px, so the cap would never engage. The existing 760 stays.
+- *"Virtualise the transcript"* — justified by the premise that the tree is rebuilt per streamed token.
+  It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
+  block. The real cost is unbounded turn retention → **M6**.
+
+## M2 — Compact tool-activity rows
+
+The root cause of "equally weighted panels" is that `showDetails` is binary: either **no** tool cards
+or **every** tool call at full card weight, where `ToolCard.paintComponent` draws a filled rounded rect
+plus border unconditionally — the same recipe as the user message bubble. A successful `Read` is as
+loud as your own prompt; success vs failure differ only by a 13px icon.
+
+Add the missing middle tier. Routine successful operations (Read/Grep/Glob, and commands that exited 0)
+render as a single compact row — icon, verb, target, state, optional duration, disclosure chevron — with
+no border or fill. Failures and warnings keep stronger treatment. Expanded output stays behind disclosure.
+
+Land the decision as a platform-free `ui/state` class (e.g. `ToolEventPresentation`) taking **structured**
+metadata (tool name, error flag, exit status) — never a display string — and returning a presentation
+tier. Unit-test the tiering; keep the Swing half thin.
+
+## M3 — File edits as first-class blocks
+
+Edits deserve more weight than reads, and today have less structure than either:
+
+- No edit header, no added/removed line counts (nothing consumes `lineDiff`'s output beyond the loop).
+- `MultiEdit` concatenates every edit into one document with **no separator or per-edit header**.
+- **Diffs are never truncated** — `truncate()` applies only to results, so `Write` renders an entire new
+  file inline as all-adds. Fix this first; it is a real perf/usability defect, not polish.
+- No collapse, no "Open file", no "Copy diff".
+- Unified only, with no width-responsive selection (side-by-side where wide, unified when narrow).
+- Diff colours are fixed `JBColor` pairs (`ClaudePanel.kt` ~line 402) rather than the editor's own
+  `DiffColors`/`EditorColors` scheme keys, so they don't track a custom theme. The scheme is already
+  consulted for fonts and syntax highlighting — extend that.
+
+Responsive diff selection is pure logic → `ui/state`, unit-tested.
+
+## M4 — Processing summary + hover actions
+
+- Collapse "Processing details" into a compact expandable summary once meaningful content begins —
+  e.g. *"17 operations · 4 files edited · 3 checks passed"*. Nothing counts operations today;
+  `CompletionSummary` covers only the cost/duration/turns footer. Extend it or add a sibling.
+- Hover/focus-revealed actions, which currently do not exist anywhere in the transcript (the only Copy
+  is the always-visible one on code fences): Copy on an assistant message; Copy command / Copy output on
+  a command; Open file / Reveal in Project on a file reference.
+
+## M5 — Activity map ↔ chat linking
+
+`ActivityMapPanel` has no outbound callback at all — selecting a node opens the file in the editor and
+never touches the transcript, and there is no chat→node path. Add a bidirectional link (select a node →
+reveal the originating transcript event, and optionally the reverse). This is what earns the graph its
+place as an *inspection surface* rather than a second, competing view. Note that with details on, tool
+activity is currently rendered twice (transcript cards **and** the timeline dock) — resolve that overlap
+here.
+
+## M6 — Long-session cost
+
+- **Unbounded turn retention**: `turns` is appended to and never pruned (contrast the graph, which has
+  `activityMaxRetained`). Add an eviction cap with a "load earlier" affordance.
+- **Paragraph wrap clipping — reproduces headlessly, not yet confirmed live.** In
+  `chat-layout-medium.png` (720px) an assistant paragraph renders as a single line with the trailing
+  text cut (`…the guard existed but` — "was dead code." missing) instead of wrapping. Consistent across
+  regenerations, and the same text wraps fine at 1400px. Suspicious rather than proven: a wrapping
+  `JTextPane`'s preferred height depends on a width the detached tree may not have settled — though the
+  diff pane in the same image *does* wrap, which argues against a pure harness artifact. Reproduce in
+  `runIde` at a ~720px tool window before chasing it.
+
+## M7 — Composer: queue while running
+
+Today `doSend` hard-returns while running and `sendEnabled = !running && ...`, but the input is never
+disabled — so a user can type a full message, press Enter, and have **nothing happen, with no feedback**.
+Fix the silent failure first (cheap), then decide whether to queue the message or explicitly block it.
+stdin is writable mid-turn (it already carries `control_response`), so queueing is feasible; it needs a
+deliberate "send now" vs "queue next" distinction.
+
+---
+
 # Release gates (before the Marketplace listing)
 
 ## Run `verifyPlugin` on CI
@@ -20,39 +108,12 @@ newer IPGP) and fix anything it flags (internal/experimental API usage, binary c
 
 ## Live Android Studio verification (manual)
 
-The interactive flows need a human pass in `./gradlew runIde` — the studio MCP can't click the plugin's
-own tool window.
-
-**Confirmed live 2026-07-20** from a real dark-theme session (installed build, "My Application"), so these
-need no second pass: headings render without `#`; bullet lists; inline **bold** and `code`; **clickable
-project-file links** resolving real docs (`CLAUDE.md`, `docs/ARCHITECTURE.md`, …); the per-turn **footer**
-carrying cost/duration/turns (`Completed · 32.6s · 9 turns · $0.2229`); the **status strip never echoing
-the response** (it read "Waiting for your answer" while a question was pending); user turns as rounded
-bubbles; the collapsed **thinking** row; the header (wordmark, state dot, Chat/Activity segmented control,
-split toggle); the composer (attach, slash, `Auto` mode chip, stop button). For AskUserQuestion: the
-**radio** single-select render with per-option descriptions, the **Other…** row, **Continue disabled until
-answered**, Cancel present, and the streamed tool card reading **`Asked · Demo location`** rather than raw
-JSON.
-
-**Activity map, also confirmed live 2026-07-20** (Activity tab, same session, 18 nodes / 21 events): the
-force-directed graph renders with category cluster nodes (Documentation, Errors / Warnings, Shell / Command,
-Gradle / Build, Android Framework, Unknown / Unclassified) and file/command nodes; the **focus card**
-("COMPLETED · Added three self-contained de…"); the **filter combo** ("All activity"), **Fit** and overflow
-controls; the node counter ("18 nodes"); the **collapsed timeline dock** with its summary ("Activity log ·
-21 events · Latest: …"); and the **inspector drawer** showing Category / Interactions / Last active plus
-pin and hide actions. Two behaviours worth calling out as confirmed end-to-end:
-
-- **Exit-status correlation** — a non-zero exit with no parseable failure line still produced a real
-  `Exit code 1` error node (`Error · failed`), drawn with the error ring.
-- **Evidence provenance with `COMMAND_OUTPUT`** — the inspector's *Related* list reads
-  "cd /Users/devuser/AndroidStudioProjects… **produced an error · command output**", i.e. the `PRODUCED`
-  edge carrying its evidence source and human explanation, exactly as designed.
-
-> [!NOTE]
-> Neither session tells us anything about the 2026-07-20 chat-polish or map-density commits. The chat
-> screenshot showed no code fence or table; the map screenshot has **18 nodes**, which is below
-> `MapDensity.IMPORTANT_ABOVE` (40), so the tier is `ALL` — which renders *identically* to the old
-> behaviour. Both are still unverified.
+Only what genuinely needs a human is listed. Static rendering — every Markdown block type, tool cards,
+diffs, the approval card, both AskUserQuestion variants, panel layout at each width class, and map label
+density — is covered by the headless PNG harnesses described in [TESTING.md](TESTING.md); read those
+images instead of re-checking any of it by hand. What remains needs a **click, hover, focus traversal,
+drag, scroll, clipboard round-trip, or a live CLI session** — none of which the `studio` MCP can drive,
+since it has no screenshot tool and cannot see this plugin's tool window.
 
 Verify:
 
@@ -64,44 +125,36 @@ Verify:
   double-prompt question — reproduce before any approval-flow refactor).
 - `IdeServer.onEdt` uses `invokeAndWait` from the WS thread while a **modal** diff dialog is open — check
   for deadlock / UI-block.
-- **Markdown rendering — partly confirmed** (dark theme, live session 2026-07-20; see the confirmed list
-  above). Still needs eyes: real **tables**, **fenced code** (Copy + horizontal scroll), **quotes**,
-  `> [!WARNING]` **callouts**, **task lists**, the whole set again in **light theme**,
-  malformed/half-streamed Markdown staying readable, and auto-scroll following only at the bottom
-  (scrolling up pauses it, sending re-follows).
-- **Chat polish (needs eyes):** fenced code is **syntax-highlighted** in the IDE's own colours and stays
-  legible in both themes (an unknown/unlexable fence must fall back to plain monospace, not garble);
-  a >24-line block renders capped with a working **Expand/Collapse** and Copy still yields the whole text;
-  a wide table **scrolls horizontally** rather than squeezing its columns; the **"Jump to latest ↓"** overlay
-  appears only when follow is paused, doesn't cover the last line of text, and re-arms follow when clicked.
-- **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
-  `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
-  clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
-- **Activity map — chrome confirmed** (see above); the *features* still need eyes: a touched **resource**
-  linking to its referencing sources; the inspector **"Find usages"** action adding usage edges (the
-  confirmed shot had an error node selected, where that action correctly does not appear — select a
-  **source** node); and **"Collapse finished history"** folding clusters with the "N commands" chips
+- **Streaming Markdown**: malformed / half-streamed Markdown staying readable mid-stream, and auto-scroll
+  following only at the bottom (scrolling up pauses it, sending re-follows).
+- **"Jump to latest ↓"**: appears only when follow is paused, doesn't cover the last line of text, and
+  re-arms follow when clicked. Plus the **Copy** clipboard round-trip on a code fence.
+- **Keyboard a11y**: Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split `JButton`),
+  the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc clears from
+  anywhere in the drawer). Confirm nothing traps focus.
+- **Activity map features**: a touched **resource** linking to its referencing sources; the inspector
+  **"Find usages"** action adding usage edges (select a **source** node — it correctly does not appear for
+  an error node); and **"Collapse finished history"** folding clusters with the "N commands" chips
   expanding/collapsing in place.
-- **Label collision (needs eyes):** the fix is verified in the headless preview (regenerate with
-  `./gradlew test`, then open `build/activity-map-preview-{dark,light}.png` — no label overprints another).
-  Live, confirm the same on a busy graph, that a label withheld in a crowded neighbourhood **comes back on
-  hover**, and that labels don't visibly flip sides or flicker while the layout is still settling.
-- **Map density (needs eyes):** on a genuinely busy session, labels thin out as the graph grows without
-  the map flickering between tiers as nodes arrive; errors, anchors and the hovered/selected node keep
-  their labels at every density; zooming in restores detail; the **"N of M · Show more"** counter is
-  clickable and actually reveals more nodes; **Fit** frames the bulk of the graph (a single stray node
-  must not shrink everything to a speck) and leaves room for edge labels.
-- **AskUserQuestion — render partly confirmed** (dark theme, live session 2026-07-20). Still needs eyes:
-  the **multi-select checkbox** variant, **Other…** free-text actually accepting input, Continue
-  **enabling** once every question is answered, **Cancel** genuinely denying and unblocking the turn,
-  a "Skip"-style option coming back as a normal answer, and the returned `answers` object being keyed by
-  full question text. The bridge can drive the non-visual half
+- **Label behaviour in motion**: a label withheld in a crowded neighbourhood **comes back on hover**, and
+  labels don't visibly flip sides or flicker while the layout is still settling.
+- **Map density in motion**: no **flicker** between tiers as nodes arrive live; **zoom** restoring detail;
+  the hovered/selected node keeping its label; the **"N of M · Show more"** counter actually revealing more
+  nodes when clicked; **Fit** framing the bulk of the graph rather than shrinking it to a speck around a
+  stray node.
+  Open design question: failed **command/test** nodes (`build`, `test suite`) lose their labels at the
+  IMPORTANT tier while `ERROR`-type nodes keep theirs. That follows the tier rules as written, but a
+  *failed* node arguably deserves anchor status — decide before M5.
+- **AskUserQuestion interaction**: **Other…** free-text actually accepting input, Continue **enabling**
+  once every question is answered, **Cancel** genuinely denying and unblocking the turn, and a
+  "Skip"-style option coming back as a normal answer. The `answers`-keyed-by-full-question-text contract
+  is already unit-tested (`AskUserQuestionResponseBuilderTest`); the bridge drives the non-visual half
   (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`).
-- **Health panel (needs eyes):** **More ▸ Health check…** opens the dialog; it shows a brief "Checking…"
-  then a row per check with the right colour/glyph; **Recheck** re-runs (try it mid-indexing → diagnostics
-  should WARN, then OK once indexed); **Open settings** opens Sightline settings; **Copy report** puts a
-  **sanitised** report on the clipboard — paste it and confirm no home path, username, email or token
-  survives. Sanitiser logic is heavily unit-tested; this pass is for the render + the copy round-trip.
+- **Health panel**: **More ▸ Health check…** opens the dialog; a brief "Checking…" then a row per check;
+  **Recheck** re-runs (try it mid-indexing → diagnostics should WARN, then OK once indexed); **Open
+  settings** opens Sightline settings; **Copy report** puts a **sanitised** report on the clipboard —
+  paste it and confirm no home path, username, email or token survives. The sanitiser is heavily
+  unit-tested; this pass is the copy round-trip.
 
 ## Marketplace listing submission
 

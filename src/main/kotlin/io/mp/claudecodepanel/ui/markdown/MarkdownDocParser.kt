@@ -141,7 +141,15 @@ object MarkdownDocParser {
 
     // ---- inlines ----
 
-    private fun inlines(node: ASTNode, text: String): List<MdInline> {
+    /**
+     * @param inLinkLabel true while walking a link's `LINK_TEXT`, whose own children include the
+     *   surrounding `[` / `]` tokens. Those are structural *there* and must be dropped — but the same
+     *   token types also carry **literal** brackets in ordinary prose, so they may only be dropped in
+     *   that scope. Parentheses are never structural here at all (`link()` reads `LINK_DESTINATION`
+     *   directly and `inlines()` is never called on the `INLINE_LINK` node), so they are always text.
+     *   Dropping them globally silently deleted every literal "(…)" from assistant prose.
+     */
+    private fun inlines(node: ASTNode, text: String, inLinkLabel: Boolean = false): List<MdInline> {
         val out = ArrayList<MdInline>()
         for (c in node.children) {
             when (c.type.name) {
@@ -158,8 +166,12 @@ object MarkdownDocParser {
                     val url = c.getTextInNode(text).toString().trim('<', '>')
                     out.add(MdLink(listOf(MdText(url)), url))
                 }
+                // Structural only inside a link label; literal text anywhere else.
+                "[", "]" -> if (!inLinkLabel) out.add(MdText(c.getTextInNode(text).toString()))
+                // Never structural in this walk — always literal prose.
+                "(", ")" -> out.add(MdText(c.getTextInNode(text).toString()))
                 // Delimiter / punctuation leaf tokens carried inside inline containers — drop them.
-                "BACKTICK", "EMPH_MARKER", "!", "[", "]", "(", ")", "LT", "GT" -> Unit
+                "BACKTICK", "EMPH_MARKER", "!", "LT", "GT" -> Unit
                 else ->
                     if (c.children.isEmpty()) {
                         val t = c.getTextInNode(text).toString()
@@ -179,7 +191,7 @@ object MarkdownDocParser {
 
     private fun link(node: ASTNode, text: String): MdInline {
         val labelNode = node.children.firstOrNull { it.type.name == "LINK_TEXT" }
-        val label = labelNode?.let { inlines(it, text) }?.let { trimEnds(it) }
+        val label = labelNode?.let { inlines(it, text, inLinkLabel = true) }?.let { trimEnds(it) }
             ?: listOf(MdText(node.getTextInNode(text).toString()))
         val href = node.children.firstOrNull { it.type.name == "LINK_DESTINATION" }
             ?.getTextInNode(text)?.toString()?.trim('<', '>')?.trim() ?: ""

@@ -52,4 +52,49 @@ class ActivityMapPreviewTest {
         assertTrue("dark preview not written", darkFile.length() > 2000)
         assertTrue("light preview not written", lightFile.length() > 2000)
     }
+
+    /**
+     * A **dense** graph, past every [MapDensity] tier threshold, so label thinning can actually be
+     * eyeballed. The live sessions captured so far topped out at 18 nodes — below
+     * `MapDensity.IMPORTANT_ABOVE` (40), where the tier is `ALL` and the density code renders
+     * identically to the old behaviour, i.e. those screenshots could never have verified it.
+     *
+     * Writes `build/activity-map-dense-{dark,light}.png`. Read them and confirm: labels thin out as the
+     * graph grows, errors/anchors keep theirs, and no label overprints another.
+     */
+    @Test fun writesDenseMapPreviewImages() {
+        feed(interp.taskStarted("Migrate the driver feature to Compose and fix the fallout"))
+        val packages = listOf("driver", "data", "network", "ui", "db", "sync", "auth", "settings")
+        var n = 0
+        for (pkg in packages) {
+            for (type in listOf("ViewModel", "Repository", "Screen", "Dao", "Api")) {
+                n++
+                read("r$n", "app/src/main/java/com/x/$pkg/Driver$type.kt")
+            }
+        }
+        for (pkg in packages.take(5)) {
+            n++
+            edit("e$n", "app/src/main/java/com/x/$pkg/Driver${pkg.replaceFirstChar { it.uppercase() }}.kt")
+        }
+        feed(interp.toolUse("b1", "Bash", obj("""{"command":"./gradlew :app:assembleDebug"}""")))
+        feed(interp.toolResult("b1", "e: app/src/main/java/com/x/ui/DriverScreen.kt: (18, 5): unresolved reference: Modifier\nBUILD FAILED", isError = true))
+        feed(interp.toolUse("b2", "Bash", obj("""{"command":"./gradlew :app:testDebugUnitTest"}""")))
+        feed(interp.toolResult("b2", "12 tests completed, 3 failed\nBUILD FAILED", isError = true))
+
+        val nodeCount = graph.nodes.size
+        assertTrue(
+            "dense fixture must clear MapDensity.IMPORTANT_ABOVE (${MapDensity.IMPORTANT_ABOVE}) to exercise thinning, got $nodeCount",
+            nodeCount > MapDensity.IMPORTANT_ABOVE,
+        )
+
+        val dir = File("build")
+        val dark = File(dir, "activity-map-dense-dark.png")
+        val light = File(dir, "activity-map-dense-light.png")
+        ActivityMapRenderer.renderToFile(graph, dark, dark = true)
+        ActivityMapRenderer.renderToFile(graph, light, dark = false)
+        println("[activity-map-dense] $nodeCount nodes -> ${dark.absolutePath}")
+        println("[activity-map-dense] $nodeCount nodes -> ${light.absolutePath}")
+        assertTrue("dense dark preview not written", dark.length() > 2000)
+        assertTrue("dense light preview not written", light.length() > 2000)
+    }
 }

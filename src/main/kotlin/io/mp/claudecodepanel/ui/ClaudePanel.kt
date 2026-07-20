@@ -35,6 +35,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
 import io.mp.claudecodepanel.activity.AgentActivityEvent
 import io.mp.claudecodepanel.activity.BuildReportScanner
@@ -164,9 +165,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val composerModel = ComposerModel()
     private val transcriptPresenter = TranscriptPresenter()
 
-    private val mapSplitter = JBSplitter(false, 0.58f)
+    // proportionKey persists the user's dragged divider position across restarts; the default keeps
+    // the conversation the dominant pane.
+    private val mapSplitter = JBSplitter(false, "sightline.chatMapSplitter", 0.62f)
     private val centerHost = JPanel(BorderLayout())
     private val chatHost = JPanel(BorderLayout())
+    /** Status strip + composer. Padded in [applyProfile] so it lines up with the transcript column. */
+    private val southHost = JPanel(BorderLayout())
 
     private lateinit var header: ClaudeToolHeader
     private lateinit var composer: ClaudeComposerPanel
@@ -174,6 +179,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private lateinit var emptyState: EmptyStatePanel
 
     private enum class ViewMode { CHAT, SPLIT, MAP }
+
+    /**
+     * What the user chose (and what we persist). Kept separate from [viewMode], the mode actually
+     * on screen: a panel too narrow for SPLIT shows CHAT without rewriting the preference, so
+     * widening the tool window again restores the split.
+     */
+    private var preferredMode = ViewMode.SPLIT
     private var viewMode = ViewMode.SPLIT
     private var lastProfile: LayoutProfile? = null
 
@@ -281,7 +293,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     init {
         Disposer.register(parent, this)
         initStyles()
-        viewMode = initialViewMode()
+        preferredMode = initialViewMode()
+        // Start on the preference; applyProfile() demotes it once a real width is known.
+        viewMode = preferredMode
         component = build()
         component.getAccessibleContext()?.accessibleName = A11yNames.TOOL_WINDOW_ROOT
         uiState.rootComponent = component
@@ -325,10 +339,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         )
         statusStrip = ClaudeStatusStrip(this)
 
-        val south = JPanel(BorderLayout())
-        south.add(statusStrip, BorderLayout.NORTH)
-        south.add(composer, BorderLayout.CENTER)
-        root.add(south, BorderLayout.SOUTH)
+        southHost.add(statusStrip, BorderLayout.NORTH)
+        southHost.add(composer, BorderLayout.CENTER)
+        root.add(southHost, BorderLayout.SOUTH)
 
         updateModeChip()
         installShortcuts(root)
@@ -376,17 +389,29 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         if (component.width < JBUI.scale(80)) return
         val scale = JBUI.scale(1000) / 1000f
         val profile = ResponsiveLayout.profile(component.width, scale)
+        val profileChanged = profile != lastProfile
+        lastProfile = profile
         header.applyProfile(profile)
         activityMap.applyProfile(profile)
-        // Narrow panels can't split — fall back to the activity view.
-        if (profile == LayoutProfile.NARROW && viewMode == ViewMode.SPLIT) setWorkspace(ViewMode.MAP)
-        // Constrain the transcript to a comfortable reading width once wide.
-        val maxW = ResponsiveLayout.maxReadableWidth(profile)
+        // SPLIT only survives on a genuinely wide panel; below that the conversation wins. The
+        // preference is untouched, so widening restores the split.
+        if (profileChanged) applyEffectiveMode()
+        // Reading width is a property of the *chat column*, not the whole panel: in SPLIT the
+        // transcript only gets its share of the width, so measuring the panel here would leave the
+        // cap permanently disengaged.
+        val textWidth = scroll.viewport.width.takeIf { it > 0 } ?: component.width
+        val maxW = ResponsiveLayout.maxReadableWidth(ResponsiveLayout.profile(textWidth, scale))
         val hpad = if (maxW != Int.MAX_VALUE) {
-            ((scroll.viewport.width - JBUI.scale(maxW)) / 2).coerceIn(JBUI.scale(14), JBUI.scale(400))
+            ((textWidth - JBUI.scale(maxW)) / 2).coerceIn(JBUI.scale(14), JBUI.scale(400))
         } else JBUI.scale(14)
         transcript.border = JBUI.Borders.empty(12, hpad)
-        if (profile != lastProfile) { lastProfile = profile; transcript.revalidate(); transcript.repaint() }
+        // Keep the composer on the same column as the conversation it belongs to (CHAT/MAP only —
+        // in SPLIT it spans both panes, which Tier 2 addresses when the composer moves into the
+        // chat pane).
+        val composerPad = if (viewMode == ViewMode.SPLIT) JBUI.scale(0) else (hpad - JBUI.scale(14)).coerceAtLeast(0)
+        southHost.border = JBUI.Borders.empty(0, composerPad)
+        if (profileChanged) { transcript.revalidate(); transcript.repaint() }
+        southHost.revalidate()
     }
 
     private fun initStyles() {
@@ -650,28 +675,45 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         ViewMode.MAP -> WorkspaceMode.ACTIVITY
     }
 
-    private fun initialViewMode(): ViewMode {
-        val s = ClaudeSettings.getInstance().state
-        return when (WorkspaceModes.fromSettings(s.showActivityMap, s.activityViewMode)) {
-            WorkspaceMode.CHAT -> ViewMode.CHAT
-            WorkspaceMode.SPLIT -> ViewMode.SPLIT
-            WorkspaceMode.ACTIVITY -> ViewMode.MAP
-        }
+    private fun fromWorkspace(ws: WorkspaceMode): ViewMode = when (ws) {
+        WorkspaceMode.CHAT -> ViewMode.CHAT
+        WorkspaceMode.SPLIT -> ViewMode.SPLIT
+        WorkspaceMode.ACTIVITY -> ViewMode.MAP
     }
 
+    private fun initialViewMode(): ViewMode {
+        val s = ClaudeSettings.getInstance().state
+        return fromWorkspace(WorkspaceModes.fromSettings(s.showActivityMap, s.activityViewMode))
+    }
+
+    /** A deliberate user choice: persist it, then show whatever the current width can carry. */
     private fun setWorkspace(mode: ViewMode) {
-        viewMode = mode
+        preferredMode = mode
         val s = ClaudeSettings.getInstance().state
         val ws = toWorkspace(mode)
         s.showActivityMap = WorkspaceModes.toShowActivityMap(ws)
         s.activityViewMode = WorkspaceModes.toViewMode(ws)
-        header.setWorkspace(ws)
-        uiState.workspace = ws.name
-        installCenter()
+        applyEffectiveMode()
+    }
+
+    /**
+     * Re-derive the on-screen mode from the preference plus the current width. Never writes
+     * settings — only [setWorkspace] does — so a transient narrow layout can't clobber the choice.
+     */
+    private fun applyEffectiveMode() {
+        val profile = lastProfile ?: LayoutProfile.WIDE
+        val effective = fromWorkspace(WorkspaceModes.effectiveMode(toWorkspace(preferredMode), profile))
+        val changed = effective != viewMode
+        viewMode = effective
+        // The header names where you *are*, not what you asked for: showing "Activity" selected while
+        // a demoted panel displays the transcript reads as a bug.
+        header.setWorkspace(toWorkspace(effective))
+        uiState.workspace = toWorkspace(effective).name
+        if (changed || centerHost.componentCount == 0) installCenter()
     }
 
     private fun toggleSplit() {
-        setWorkspace(if (viewMode == ViewMode.SPLIT) ViewMode.MAP else ViewMode.SPLIT)
+        setWorkspace(if (preferredMode == ViewMode.SPLIT) ViewMode.MAP else ViewMode.SPLIT)
     }
 
     private fun installCenter() {
@@ -698,6 +740,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onLine(line: String) {
         ApplicationManager.getApplication().invokeLater({ handleEvent(line) }, ModalityState.any())
+    }
+
+    /**
+     * Feed one raw protocol line straight into the renderer, synchronously.
+     *
+     * Test-only seam for the headless layout preview (`ChatLayoutPreviewTest`), which needs a
+     * transcript with real content — bubbles, tool cards, diffs — to render. It is deliberately the
+     * *same* path a live session takes ([handleEvent]), so a preview cannot drift from production
+     * rendering. Nothing in the plugin calls this; it never touches the CLI or the session.
+     */
+    @TestOnly
+    internal fun renderProtocolLineForPreview(line: String) = handleEvent(line)
+
+    /** Test-only companion to [renderProtocolLineForPreview]: the user half of a turn. */
+    @TestOnly
+    internal fun addUserMessageForPreview(text: String) {
+        showEmptyState(false)
+        addUserBubble(text, emptyList())
     }
 
     private fun handleEvent(line: String) {
@@ -1424,7 +1484,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             area.border = JBUI.Borders.empty(2, 16, 2, 0)
             add(head, BorderLayout.NORTH); add(area, BorderLayout.CENTER)
         }
-        fun append(t: String) { area.text = area.text + t; scrollToBottomSoon() }
+        /**
+         * Append via the document, not `area.text = area.text + t`: the latter rebuilds the whole
+         * string on every delta, which is O(n²) over a long thinking block and visibly stutters.
+         */
+        fun append(t: String) {
+            try { area.document.insertString(area.document.length, t, null) } catch (e: BadLocationException) { /* drop */ }
+            scrollToBottomSoon()
+        }
         private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
     }
 

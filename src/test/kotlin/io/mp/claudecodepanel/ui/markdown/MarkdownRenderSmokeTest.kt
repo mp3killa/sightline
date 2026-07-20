@@ -174,6 +174,77 @@ class MarkdownRenderSmokeTest : BasePlatformTestCase() {
         assertTrue("table still has a real height", comp.preferredSize.height > 0)
     }
 
+    /**
+     * Regression: the marker slot was a fixed width by list *kind*, so a task list — which is
+     * unordered — gave the wider ☑/☐ glyph the narrow "•" slot and JBLabel truncated it to "…".
+     * Caught by the headless gallery preview, invisible to every prior assertion.
+     */
+    fun testTaskAndWideMarkersAreNotTruncated() {
+        fun markerLabels(md: String) = descendants(BlockRenderer().render(MarkdownDocParser.parse(md)).single())
+            .filterIsInstance<javax.swing.JLabel>()
+            .filter { it.text.isNotBlank() && it.text.length <= 5 }
+
+        for (label in markerLabels("- [x] done\n- [ ] todo")) {
+            val slot = label.parent
+            assertTrue(
+                "task marker '${label.text}' must fit its slot (slot=${slot.preferredSize.width}, marker=${label.preferredSize.width})",
+                slot.preferredSize.width >= label.preferredSize.width,
+            )
+        }
+        // An ordered list past "99." outgrows the ordered slot for the same reason.
+        for (label in markerLabels("100. hundred\n101. hundred one")) {
+            val slot = label.parent
+            assertTrue(
+                "ordered marker '${label.text}' must fit its slot",
+                slot.preferredSize.width >= label.preferredSize.width,
+            )
+        }
+    }
+
+    /**
+     * Regression: `(` / `)` / `[` / `]` were dropped as "delimiter tokens" everywhere, so every
+     * **literal** parenthesis or bracket vanished from assistant prose — "(Tier 2)" rendered as
+     * "Tier 2". It only looked fine in code spans, which take a verbatim path. Spotted in the
+     * headless gallery preview; no prior assertion covered it.
+     */
+    fun testLiteralParensAndBracketsSurviveInProse() {
+        fun itemText(md: String) =
+            textOf(MarkdownDocParser.parse(md).filterIsInstance<MdList>().single().items.single().blocks)
+        fun paraText(md: String) = textOf(MarkdownDocParser.parse(md))
+
+        val plain = itemText("- Composer alignment inside SPLIT (Tier 2)")
+        val task = itemText("- [ ] Composer alignment inside SPLIT (Tier 2)")
+        assertTrue("plain bullet keeps parens, got: '$plain'", plain.contains("(Tier 2)"))
+        assertTrue("task item keeps parens, got: '$task'", task.contains("(Tier 2)"))
+
+        val para = paraText("Call it later (optional) and index with array[0] too.")
+        assertTrue("paragraph keeps parens, got: '$para'", para.contains("(optional)"))
+        assertTrue("paragraph keeps brackets, got: '$para'", para.contains("array[0]"))
+    }
+
+    /** The bracket fix must not leak link syntax into rendered link labels. */
+    fun testLinkLabelsStillRenderWithoutTheirBrackets() {
+        val blocks = MarkdownDocParser.parse("See [the docs](https://example.com) for more.")
+        val link = (blocks.single() as MdParagraph).inlines.filterIsInstance<MdLink>().single()
+        assertEquals("the docs", link.inlines.plainText())
+        assertEquals("https://example.com", link.href)
+        assertFalse("no stray brackets in the label", link.inlines.plainText().contains("["))
+    }
+
+    private fun textOf(blocks: List<MdBlock>): String = buildString {
+        fun walk(bs: List<MdBlock>) {
+            bs.forEach { b ->
+                when (b) {
+                    is MdParagraph -> append(b.inlines.plainText())
+                    is MdHeading -> append(b.inlines.plainText())
+                    is MdList -> b.items.forEach { walk(it.blocks) }
+                    else -> {}
+                }
+            }
+        }
+        walk(blocks)
+    }
+
     private fun descendants(root: Component): List<Component> {
         val out = ArrayList<Component>()
         fun walk(c: Component) {

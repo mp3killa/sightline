@@ -5,13 +5,66 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Platform-free, deterministic JUnit4 (~130 tests, no IDE fixture — needs
-`testFramework(TestFrameworkType.Platform)` so the test JVM boots):
+Mostly platform-free, deterministic JUnit4 (**364 tests**, green as of 2026-07-20; no IDE fixture for
+the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
-  9-step sequence, `BuildReportScanner`.
-- `ui/state/*` — status/composer/workspace/responsive/transcript/permission presentation logic.
-- `ide/PathAccessPolicy`, `ide/InteractionCoordinators` — path guard + the approval/diff decision logic.
+  9-step sequence, `BuildReportScanner`, `ClusterCollapser`, `MapDensity`, `LabelPlacement`,
+  `NavGraphParser`, `AndroidResourceParser`, `SourceStructureParser`, plus the headless
+  `ActivityMapPreviewTest` (writes `build/activity-map-preview-{dark,light}.png`).
+- `ui/state/*` — status/composer/workspace/responsive/transcript/permission/scroll-follow/
+  timeline-dock/completion-summary presentation logic.
+- `ui/markdown/*` — doc parser, file-ref detection, code-block collapse, table layout, fence
+  languages, plus a Swing render smoke test.
+- `interaction/*` — AskUserQuestion parser, form state, response builder.
+- `health/*` — checker, report ranking, sanitiser (+ a `HealthDialog` smoke test).
+- `ide/PathAccessPolicy`, `ide/InteractionCoordinators`, `ide/QuestionCoordinator` — path guard +
+  the approval/diff/question decision logic; `SightlineTestBridgeQuestionTest` drives the bridge.
+
+Several **do** need an IDE fixture (`BasePlatformTestCase`): `ProjectStructureEnricherTest` /
+`ProjectStructureEnricherKotlinTest` (UAST enrichment for Java and Kotlin), the Markdown and health
+render smoke tests, and `ChatLayoutPreviewTest` (below).
+
+## Headless visual review (read the PNGs)
+
+Two tests render to PNG so **layout and rendering can be reviewed without launching the IDE** — the
+only automated visual channel available, and one that has already caught real defects:
+
+| Test | Writes | Covers |
+|---|---|---|
+| `activity/ActivityMapPreviewTest` | `activity-map-preview-{dark,light}.png` | The force-directed graph, label placement/collision |
+| ″ | `activity-map-dense-{dark,light}.png` | A **61-node** graph — past `MapDensity.IMPORTANT_ABOVE` (40), so label **thinning** is actually exercised |
+| `ui/ChatLayoutPreviewTest` | `chat-layout-{narrow,medium,wide}.png` | Panel layout at each `ResponsiveLayout` width class |
+| `ui/ChatGalleryPreviewTest` | `chat-gallery-{light,dark}.png` | Every block type — Markdown (headings/lists/task lists/tables/fences/quotes/callouts), routine vs failed tool cards, an edit diff, the **ApprovalBlock**, and **AskUserQuestion** single- and multi-select — in **both themes** |
+
+`ChatLayoutPreviewTest` builds a real `ClaudePanel` and seeds it through the **production event path**
+(`ClaudePanel.renderProtocolLineForPreview` / `addUserMessageForPreview` — `@TestOnly internal` seams),
+so a preview cannot drift from what a live session renders. Two headless gotchas are handled in
+`layoutTree`: the tree has no peers, so `doLayout()` is driven down manually; and the responsive pass
+runs from a queued `invokeLater`/`componentResized`, so the EDT queue is pumped between passes —
+**without that pump the preview silently shows a stale layout** (this is exactly how the first version
+of the test passed while the image showed the bug).
+
+The gallery drives `control_request` through the same path, so the approval and question blocks are the
+**real** ones a live session builds, not hand-made lookalikes. `ChatGalleryPreviewTest.applyTheme` sets
+both `JBColor.setDark` *and* the editor colour scheme, then **verifies the resulting surface luminance**
+before rendering — setting only the flag leaves a dark surface under light text, which is exactly how the
+first "light" render came out dark and would have been filed as verified.
+
+Alongside the images these assert the layout invariants, so regressions fail the build rather than
+waiting to be noticed in a picture. Assert on something specific: an early version checked "a
+`JScrollPane` exists somewhere", which the activity pane satisfied too, so it passed while the layout
+was wrong. The image caught it.
+
+**Track record — four real defects this channel found that every existing assertion missed:** a narrow
+panel still rendering the split; the header reading "Activity" while showing Chat; task-list markers
+truncated to "…" (the marker slot was sized by list *kind*, and a task list is unordered); and every
+literal `(`/`)`/`[`/`]` being **silently deleted from assistant prose** (dropped as "delimiter tokens"
+globally instead of only inside a link label). Three of those were on screen while the suite was green.
+**Look at the PNG.**
+
+**This does not replace the live pass.** Anything needing a *click, hover, focus, drag or a live CLI
+session* still needs a human in `runIde` — see [BACKLOG.md](BACKLOG.md).
 
 **The report scanner is also verified against real Gradle output** (see below) — do that after touching
 `ReportParsers`/`BuildReportScanner`, since real lint/JUnit XML diverges from synthetic fixtures.
@@ -67,7 +120,9 @@ is why the bridge exists. (What an outside session *can* do today: run Gradle vi
 
 Controls a driver must find carry stable, semantic accessible names from `ui/A11yNames` (`sightline.*`),
 **not** visible text (which changes during UX work): `approval.allow/allowAlways/deny`,
-`diff.accept/reject`, `composer.send`, `workspace.chat/activity`, `toolWindow.root`. Set via the getter
+`diff.accept/reject`, `question.continue/cancel` plus the indexed `question.option.<q>.<o>` and
+`question.other.<q>`, `composer.send`, `workspace.chat/activity`, `toolWindow.root`,
+`activity.graph`, `transcript.jumpToLatest`. Set via the getter
 explicitly (`getAccessibleContext()`), because a raw `JComponent`'s inherited `accessibleContext` field
 is null-until-lazy.
 
@@ -76,7 +131,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the ~130 headless unit tests
+./gradlew test                 # the 371 unit tests (also writes the preview PNGs under build/)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)
 ./gradlew runIde -PtestBridge  # sandbox AS with the test bridge ENABLED (sets SIGHTLINE_TEST_BRIDGE=true)

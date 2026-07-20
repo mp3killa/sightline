@@ -153,7 +153,11 @@ class BlockRenderer(
         val bulletWrap = JPanel(BorderLayout())
         bulletWrap.isOpaque = false
         bulletWrap.add(bullet, BorderLayout.NORTH)
-        bulletWrap.preferredSize = Dimension(JBUI.scale(if (l.ordered) 22 else 14), bullet.preferredSize.height)
+        // The slot must never be narrower than the marker itself, or JBLabel truncates it to "…".
+        // A task marker (☑/☐) is wider than "•" yet a task list *is* unordered, and an ordered list
+        // past "99." outgrows the ordered slot — both clipped before this floor was added.
+        val slotW = maxOf(JBUI.scale(if (l.ordered) 22 else 14), bullet.preferredSize.width)
+        bulletWrap.preferredSize = Dimension(slotW, bullet.preferredSize.height)
 
         val content = JPanel()
         content.layout = BoxLayout(content, BoxLayout.Y_AXIS)

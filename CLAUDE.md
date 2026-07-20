@@ -15,7 +15,7 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 
 | File | Role |
 |---|---|
-| `ClaudeToolWindowFactory.kt` | Registers the right-dock "Claude" tool window |
+| `ClaudeToolWindowFactory.kt` | Registers the right-dock "Sightline" tool window (`<toolWindow id="Sightline">`) |
 | `ui/ClaudePanel.kt` | The whole UI: Swing transcript (per-turn block components), composer, modes popup, `/` actions menu, interactive-approval cards, event rendering. Feeds every observable tool/stream event into the activity map. Assistant text renders through `ui/markdown/` (below). Auto-scroll follows the bottom only while the user is near it (`ScrollFollow`); scrolling up pauses following and floats a **"Jump to latest ↓"** button over the transcript (a `JLayeredPane` overlay, so showing/hiding it never shifts the text being read) which scrolls to the end and re-arms follow. |
 | `ui/markdown/*.kt` | Platform-free, unit-tested **Markdown rendering** for assistant messages: `MarkdownModel` (block/inline model), `MarkdownDocParser` (adapter over the platform-bundled `org.intellij.markdown` GFM parser → model; no added dependency; graceful plain-text fallback; explicit `> [!WARNING]` callouts, never inferred), `FileRefDetector` (conservative file-reference detection + a pure `linkify` transform gated by an injected resolver — never guesses), `CodeBlockLayout` (collapse rules for long fences), `TableLayout` (column-width floor → when a wide table scrolls), `CodeLanguages` (fence tag → file extension; a fixed table, so an unknown tag renders plain rather than confidently wrong). `CodeHighlighting` is the one platform-touching helper: it lexes a fence with the IDE's own `SyntaxHighlighter` + colour scheme (read-only, best-effort — an unlexable fragment degrades to plain monospace). `BlockRenderer` is the thin Swing half: theme-aware components for headings/paragraphs/lists (incl. task lists)/GFM tables (h-scroll when wide)/fenced code (**syntax-highlighted**, Copy, h-scroll, Expand/Collapse past 24 lines)/quotes/callouts, with inline bold/italic/strikethrough/code/links. Replaces the old regex renderer. |
 | `ui/ActivityMapPanel.kt` | The **Agent Activity Map**: force-directed Swing graph, current-focus card, node details (open/reveal/pin/hide, plus **Find usages** for a source node → `ProjectStructureEnricher.findUsages`), timeline, filter combo, legend, and pause/reduce-motion/fit/clear controls. A "Collapse finished history" toggle folds finished command/test/gradle clusters (`ClusterCollapser`) into clickable **"N commands" chips** that expand in place. Density is staged by `MapDensity`: labels thin out as the graph grows (anchors/errors and whatever the user is pointing at always keep theirs), the node counter becomes a clickable **"N of M · Show more"** that lifts the visible cap for the session only, and **Fit** pads for labels and trims far-flung outliers so a couple of stragglers can't shrink the graph to a speck. Renders only; theme-aware colours. |
@@ -29,7 +29,13 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | `interaction/*.kt` | Platform-free, unit-tested **AskUserQuestion** core: `AskUserQuestionModels` (provider-neutral `UserQuestionRequest`/`UserQuestion`/`UserQuestionOption` + `ParseResult`), `AskUserQuestionParser` (protocol JSON → model; refuses empty/fabricated questions), `QuestionFormState` (radio/checkbox/Other selection + validity + `resolvedAnswers`), `AskUserQuestionResponseBuilder` (answers keyed by full question text, original `questions` preserved, non-mutating). The Swing view is `ClaudePanel.AskUserQuestionBlock`. |
 | `ide/SightlineTestBridge.kt` | **Sandbox-only** MCP tools (`sightline.test.*`) gated by `TestBridgeGuard` (`-Dsightline.testBridge=true`): inspect/resolve pending approvals, diffs & **questions** (incl. `simulate_question` to inject one + `respond_question` to answer via the production builder), capture the tool window. See [docs/TESTING.md](docs/TESTING.md). |
 | `health/*.kt` | Platform-free, unit-tested **Health / preflight** core: `HealthModel` (`HealthStatus` OK/WARN/**UNKNOWN**/FAIL with UNKNOWN ranked between WARN and FAIL — not-knowing never masquerades as OK; `HealthCheck`/`HealthReport` + headline/overall/actionable), `HealthChecker` (pure `HealthInputs` → `HealthReport`; every check states what it verified and carries a concrete hint when not OK), `HealthSanitizer` (scrubs a report for the "Copy report" action — tokens/keys/bearer creds, home path → `~`, foreign user paths → tail, username/email/IP; allow-nothing-sensitive, idempotent), `HealthGatherer` (the one platform-touching part: resolves the CLI, shells `claude --version` off-EDT, reads the IDE-server port + settings into `HealthInputs`). The Swing view is `ui/HealthDialog` (modal, non-blocking; **Recheck / Open settings / Copy report / Close**), opened from the composer overflow **More ▸ Health check…**. |
-| `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI |
+| `ui/ClaudeToolHeader.kt`, `ui/ClaudeComposerPanel.kt`, `ui/ClaudeStatusStrip.kt` | The three Swing chrome pieces around the transcript: header (wordmark, state dot, Chat/Split/Map switch), composer (textarea, attach, `/` actions, mode chip, Send/Stop, **More ▸ Health check…**), and the status strip (concise session state only — never the response text, never cost/duration; those live in the turn footer). |
+| `ui/SightlineUiState.kt` | `<projectService>` holding cross-component UI state (tool-window visibility, workspace mode, session state) — also what the test bridge's `get_ui_state` reads. |
+| `ui/A11yNames.kt` | Stable `sightline.*` accessible-name constants for UI automation, kept separate from visible text. See [docs/TESTING.md](docs/TESTING.md). |
+| `ui/components/*.kt` | Small reusable Swing widgets: `SegmentedControl` (the Chat/Activity switch, arrow-key navigable), `IconActionButton`, `ContextChip`, `EmptyStatePanel`. |
+| `ui/state/*.kt` | Platform-free, unit-tested **presentation logic** — no Swing: `StatusModel` (session state → status text), `ComposerModel` (input/send enablement), `PermissionModes` (the five modes + display names; `auto` is the default), `WorkspaceModes` (chat/split/map, plus `effectiveMode` — SPLIT is demoted to **CHAT** below the WIDE breakpoint without rewriting the user's preference, so a cramped panel never leaves you with a graph and no transcript), `ResponsiveLayout` (width → layout decisions), `ScrollFollow` (follow-the-bottom + jump-to-latest arming), `TranscriptPresenter`, `TimelineDockState`, `CompletionSummary` (the per-turn `Completed · 51.6s · 13 turns · $0.404` footer). |
+| `theme/ClaudeUiTokens.kt`, `theme/ClaudeIcons.kt` | Theme-aware colour/spacing tokens and icons, resolved from the IDE's own scheme so both themes work. |
+| `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI (Settings → Tools → **Sightline for Claude Code**) |
 
 ### Agent Activity Map (v0.6.0)
 
@@ -47,6 +53,12 @@ Structured tool events are high-confidence; text/heuristic guesses are lower-con
 subtler. Prose is **never** mined for file names. The map physics run on a Swing `Timer` that only
 ticks while the component is showing and auto-suspends when idle; "reduce motion" settles statically.
 Header layout button switches **Chat / Split / Map** (`activityViewMode`).
+
+**Headless visual review (dev):** two tests render to PNG so layout can be eyeballed without the IDE —
+`ui/ChatLayoutPreviewTest` writes `build/chat-layout-{narrow,medium,wide}.png` (a real `ClaudePanel`,
+seeded through the production event path, at each width class) and the map preview below. Read the PNGs
+directly; this is the only automated visual channel (the `studio` MCP has no screenshot tool and cannot
+see the plugin's tool window). See [docs/TESTING.md](docs/TESTING.md).
 
 **Headless preview (dev):** `activity/ActivityMapRenderer.kt` paints an `ActivityGraph` to a PNG
 using plain `java.awt` (no platform deps), so the map can be eyeballed without launching the IDE.
@@ -115,8 +127,12 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - `showDetails` (default off) → compact vs detailed transcript.
 - `showActivityMap` (default on) → show the Agent Activity Map; `activityViewMode`
   (`chat`|`split`|`map`, default `split`), `activityReduceMotion`, `activityMaxNodes`
-  (visible cap, default 200), `activityMaxRetained` (session cap, default 500).
+  (visible cap, default 200), `activityMaxRetained` (session cap, default 500),
+  `activityTimelineExpanded` (default off — the dock starts as the compact collapsed summary), and
+  `activityAboutDismissed` (whether the one-time "observable activity only" disclaimer was dismissed).
 - `permissionMode` (default `auto`) — set via the composer mode chip or the Settings dropdown.
   `auto` (⚡) is **model-gated** (Sonnet/Opus only; silently falls back to `default` on Haiku).
-  Composes with `interactiveApproval`: Manual prompts all, acceptEdits only commands, Bypass never prompts.
+  Composes with `interactiveApproval`. The five modes and their chip names live in
+  `ui/state/PermissionModes`: `default` "Ask" (prompts all), `acceptEdits` "Auto-edit" (only commands),
+  `plan` "Plan", `auto` "Auto", `bypassPermissions` "Unrestricted" (never prompts; flagged dangerous).
 - `extraArgs` — advanced: extra CLI args appended verbatim to every `claude` invocation.

@@ -31,4 +31,37 @@ class WorkspaceModesTest {
             assertEquals(mode, restored)
         }
     }
+
+    // ---- effectiveMode: SPLIT is a wide-panel-only layout ----
+
+    @Test fun splitSurvivesOnlyOnAWidePanel() {
+        assertEquals(WorkspaceMode.SPLIT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.WIDE))
+        assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.MEDIUM))
+        assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.NARROW))
+    }
+
+    /** Regression: a cramped panel used to fall back to the *graph*, leaving no conversation at all. */
+    @Test fun tooNarrowSplitFallsBackToChatNeverToActivity() {
+        for (p in listOf(LayoutProfile.NARROW, LayoutProfile.MEDIUM)) {
+            assertEquals(
+                "a demoted SPLIT must keep the conversation, not the graph",
+                WorkspaceMode.CHAT,
+                WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, p),
+            )
+        }
+    }
+
+    @Test fun explicitChatOrActivityChoiceIsNeverOverridden() {
+        for (p in LayoutProfile.values()) {
+            assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(WorkspaceMode.CHAT, p))
+            assertEquals(WorkspaceMode.ACTIVITY, WorkspaceModes.effectiveMode(WorkspaceMode.ACTIVITY, p))
+        }
+    }
+
+    /** The preference is a pure read — widening the panel must bring SPLIT back. */
+    @Test fun demotionIsNotDestructive() {
+        val preferred = WorkspaceMode.SPLIT
+        assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(preferred, LayoutProfile.NARROW))
+        assertEquals(WorkspaceMode.SPLIT, WorkspaceModes.effectiveMode(preferred, LayoutProfile.WIDE))
+    }
 }

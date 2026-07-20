@@ -83,6 +83,8 @@ object ActivityMapRenderer {
 
         // Nodes.
         val pending = ArrayList<PendingLabel>(graph.nodes.size)
+        // Scale 1.0: a static preview has no zoom, so the tier is driven purely by node count.
+        val tier = MapDensity.labelTier(graph.nodes.size, scale = 1.0)
         for (n in graph.nodes.sortedBy { it.type == ActivityNodeType.CATEGORY }) {
             val p = pos[n.id] ?: continue
             val x = sx(p); val y = sy(p)
@@ -119,6 +121,11 @@ object ActivityMapRenderer {
                 g.drawLine(x - (r * 0.7).toInt(), y - (r * 0.7).toInt(), x + (r * 0.7).toInt(), y + (r * 0.7).toInt())
                 g.stroke = BasicStroke(1f)
             }
+            // Honour the same density tier the live panel applies, or the preview would show every
+            // label on a graph where the real map thins them — i.e. it would not be representative of
+            // the thing it exists to preview. `attention` is false here: a still image has no
+            // hover/selection.
+            if (!MapDensity.showsLabel(tier, n.type, attention = false, radius = r.toDouble(), scale = 1.0)) continue
             // Measured now, drawn once every node body is down — a pill alone does not make two
             // overprinted labels legible, so LabelPlacement drops the lower-priority one instead.
             val labelFont = Font(Font.SANS_SERIF, if (n.type == ActivityNodeType.CATEGORY) Font.BOLD else Font.PLAIN, if (n.type == ActivityNodeType.TASK) 15 else 12)
