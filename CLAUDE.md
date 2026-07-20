@@ -10,6 +10,10 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 > Read that before touching `ClaudeSession` or `IdeServer`.
 > How the interactive flows are verified (coordinators + the sandbox test bridge) lives in
 > **[docs/TESTING.md](docs/TESTING.md)** — read it before touching approval/diff wiring.
+> The plan to turn Sightline into an **Android control centre** — the fact ladder, the CLI-first /
+> AS-optional dependency strategy, and milestones M0–M5 — lives in
+> **[docs/ANDROID.md](docs/ANDROID.md)**. It records four standing-decision amendments (Appendix B)
+> that must land with M0.
 
 ## Architecture
 
