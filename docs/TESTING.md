@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**431 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**566 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -17,7 +17,22 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
 - `ui/markdown/*` — doc parser, file-ref detection, code-block collapse, table layout, fence
   languages, plus a Swing render smoke test.
 - `interaction/*` — AskUserQuestion parser, form state, response builder.
-- `health/*` — checker, report ranking, sanitiser (+ a `HealthDialog` smoke test).
+- `health/*` — checker, report ranking, sanitiser (+ a `HealthDialog` smoke test), and the Android
+  rows: that they're absent outside an Android project, and that "adb couldn't answer" stays UNKNOWN
+  rather than collapsing into "no devices connected".
+- `android/*` — the Android core (docs/ANDROID.md). Worth knowing what these actually pin down, because
+  each guards a specific way of being confidently wrong:
+  `AndroidFactsTest` — a value can never carry the UNKNOWN tier, and the ladder short-circuits;
+  `AndroidSdkLocatorTest` — discovery order, and Gradle's `C\:\\Users\\…` escaping in `local.properties`;
+  `VariantNameTest` — the flavour-order ambiguity (`stagingDebug` is both a valid flavour name and a
+  valid flavour+buildType split), and that an unmatched name reports *no* flavours rather than a wrong one;
+  `AdbOutputParsersTest` — real `adb devices -l` output, every device state kept distinct, and that an
+  unrecognised line costs one line rather than the listing;
+  `AndroidActionPolicyTest` — the gate. Chained commands take the **worst** segment's risk (`adb devices
+  && adb uninstall …` is not a device listing), `-s <serial>` doesn't hide the sub-command, and anything
+  unrecognised — including a quoted `adb shell '…'` — is confirmed rather than assumed safe;
+  `AndroidStorePolicyTest` — the persistence carve-out's guardrails: paths outside the project are
+  refused rather than stored absolute, and an unknown schema version is discarded rather than migrated.
 - `ide/PathAccessPolicy`, `ide/InteractionCoordinators`, `ide/QuestionCoordinator` — path guard +
   the approval/diff/question decision logic; `SightlineTestBridgeQuestionTest` drives the bridge.
 
@@ -56,7 +71,7 @@ waiting to be noticed in a picture. Assert on something specific: an early versi
 `JScrollPane` exists somewhere", which the activity pane satisfied too, so it passed while the layout
 was wrong. The image caught it.
 
-**Track record — the defects this channel found this channel found that every existing assertion missed:** a narrow
+**Track record — the defects this channel found that every existing assertion missed:** a narrow
 panel still rendering the split; the header reading "Activity" while showing Chat; task-list markers
 truncated to "…" (the marker slot was sized by list *kind*, and a task list is unordered); and every
 literal `(`/`)`/`[`/`]` being **silently deleted from assistant prose** (dropped as "delimiter tokens"
@@ -152,7 +167,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 431 unit tests
+./gradlew test                 # the 566 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

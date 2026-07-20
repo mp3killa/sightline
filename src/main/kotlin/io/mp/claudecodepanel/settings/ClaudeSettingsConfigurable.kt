@@ -103,6 +103,42 @@ class ClaudeSettingsConfigurable : Configurable {
                         .comment("Session history size before the oldest non-pinned nodes are evicted.")
                 }
             }
+            group("Android") {
+                row {
+                    checkBox("Android context, device actions and logcat")
+                        .bindSelected({ state.androidFeatures }, { state.androidFeatures = it })
+                        .comment(
+                            "Gives Claude the build variant, device, module and running process without " +
+                                "having to rediscover them. Only ever active in an Android project.",
+                        )
+                }
+                row("Android SDK:") {
+                    textField()
+                        .bindText({ state.androidSdkPath ?: "" }, { state.androidSdkPath = it })
+                        .columns(COLUMNS_LARGE)
+                        .comment(
+                            "Leave blank to auto-detect (<code>ANDROID_HOME</code>, <code>ANDROID_SDK_ROOT</code>, " +
+                                "<code>local.properties</code>, then the default location). Set it only if " +
+                                "auto-detection picks the wrong one of several SDKs.",
+                        )
+                }
+                row {
+                    checkBox("Remember Android results between sessions")
+                        .bindSelected({ state.androidPersistCache }, { state.androidPersistCache = it })
+                        .comment(
+                            "Writes a small cache to <code>.sightline/</code> in the project so flaky-test " +
+                                "history, screenshot baselines and artifact sizes survive a restart. " +
+                                "<b>Off by default.</b> Only workspace-relative paths are stored — never source " +
+                                "contents, prompts or reasoning.",
+                        )
+                }
+                row("Cache entries per store:") {
+                    textField()
+                        .bindIntText({ state.androidCacheMaxEntries }, { state.androidCacheMaxEntries = it })
+                        .columns(6)
+                        .comment("Oldest entries are dropped past this cap.")
+                }
+            }
             row("Extra CLI args:") {
                 textField()
                     .bindText({ state.extraArgs ?: "" }, { state.extraArgs = it })

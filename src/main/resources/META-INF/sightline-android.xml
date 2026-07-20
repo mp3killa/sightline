@@ -1,0 +1,18 @@
+<!--
+  Optional descriptor: the platform loads this file ONLY when `org.jetbrains.android` is present
+  (Android Studio, or IntelliJ IDEA with the Android plugin). In a plain IntelliJ IDEA it is ignored,
+  so StudioFactProvider — whose `com.android.tools.idea.*` imports don't resolve there — is never
+  loaded and never fails.
+
+  This is the isolation boundary described in docs/ANDROID.md §1.1. Everything Android that does NOT
+  need Android Studio's own model lives in the main descriptor and works everywhere, driven by adb,
+  the emulator binary, Gradle and file parsing. Only the facts with no other source belong here.
+
+  Keep this file small. Each entry is a piece of Android-Studio-internal API to re-verify on upgrade.
+-->
+<idea-plugin>
+    <extensions defaultExtensionNs="io.mp.claudecodepanel">
+        <androidFactProvider
+            implementation="io.mp.claudecodepanel.ide.android.studio.StudioFactProvider"/>
+    </extensions>
+</idea-plugin>

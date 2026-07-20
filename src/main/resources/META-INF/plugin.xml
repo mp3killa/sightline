@@ -34,6 +34,19 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
 
+    <!-- Optional: Android Studio's own project model, for the one fact nothing else knows — the
+         *currently selected* build variant. Everything else Android works without it (adb, the emulator
+         binary, Gradle, and AGP's build output), so a plain IntelliJ IDEA loses a qualifier on a chip,
+         not a feature. See docs/ANDROID.md §1.1. -->
+    <depends optional="true" config-file="sightline-android.xml">org.jetbrains.android</depends>
+
+    <extensionPoints>
+        <!-- Implemented only from sightline-android.xml, so the implementation class never loads
+             where its Android-Studio-internal imports can't resolve. -->
+        <extensionPoint name="androidFactProvider" dynamic="true"
+                        interface="io.mp.claudecodepanel.ide.android.AndroidStudioFactProvider"/>
+    </extensionPoints>
+
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Sightline"
                     anchor="right"

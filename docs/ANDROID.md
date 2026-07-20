@@ -207,29 +207,16 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.7.0** = M0–M2,
+Each is independently shippable with a stated gate. Release mapping: **0.7.0** = M1–M2,
 **0.8.0** = M3, **0.9.0** = M4–M5.
 
-### M0 — Foundations *(no user-visible change)*
-
-The load-bearing plumbing, landed alone so the first feature milestone is not also an architecture
-milestone.
-
-- `android/` package skeleton; `AndroidEnvironment` (SDK resolution, off-EDT runner with timeout and
-  cancellation, adb/emulator discovery via `ANDROID_HOME`/`ANDROID_SDK_ROOT`/default path).
-- Optional-dependency wiring: `sightline-android.xml`, `bundledPlugin("org.jetbrains.android")`,
-  `StudioFactProvider` isolated behind it.
-- `AndroidActionPolicy` — the destructive-action gate. Classifies each device action as read-only /
-  mutating / **destructive** (`pm clear`, `uninstall`, `pm revoke`). Destructive actions route through
-  the existing `ApprovalCoordinator` so UI and test bridge share one path, exactly as approvals do.
-- Health integration: new rows for Android SDK, `adb` version, connected devices, and whether the AS
-  fact provider loaded — reusing `HealthStatus.UNKNOWN` for "no SDK found" rather than inventing a state.
-- Persistence substrate per §1.3, with the settings toggles, wired but with no store yet.
-
-**Gate:** `HealthDialog` shows the Android rows and reports honestly on a machine with no SDK, with an
-SDK but no device, and inside a non-Android project. `verifyPlugin` runnable on CI and clean.
-
----
+Shipped milestones are **deleted from this file**, not annotated — the same rule
+[BACKLOG.md](BACKLOG.md) follows, so what's left stays honest and short. Decisions that outlive a
+milestone move to **Standing decisions** in [../CLAUDE.md](../CLAUDE.md); the architecture a milestone
+introduced is described in that file's architecture table. (M0 — foundations, the fact ladder, the
+optional-dependency boundary, the action gate, the persistence guardrails and the Health rows — shipped
+2026-07-20 and has been removed accordingly. Its four standing-decision amendments, formerly Appendix B,
+are now in CLAUDE.md.)
 
 ### M1 — Android context *(proposal §1)*
 
@@ -397,17 +384,10 @@ Not "no forever" — "not now, and here is what would change the answer."
 
 ---
 
-## Appendix B — amendments required to standing decisions
+## Appendix B — standing-decision amendments *(done)*
 
-These must be edited in `CLAUDE.md` as part of M0, not left to drift:
-
-1. **"Nothing is persisted to disk except settings"** → name the §1.3 Android-cache exception, with its
-   guardrails, so the carve-out is a recorded decision rather than an erosion of the original one.
-2. **"The graph never claims a relationship it can't evidence"** → add the M5 clarification: PSI-resolved
-   DI and constructor injection are permitted evidence; naming may colour a node's cluster but may never
-   create an edge.
-3. **New decision — the fact ladder.** Record §1.2: every Android fact carries its source tier, staleness
-   is surfaced, and UNKNOWN is a valid answer. This is the Android analogue of `HealthStatus.UNKNOWN` and
-   deserves the same protection from future "just default it to something sensible" pressure.
-4. **New decision — CLI-first, AS-optional.** Record §1.1 so the reach-vs-richness trade is not
-   silently re-litigated the first time a tier-1-only fact is wanted.
+All four landed in `CLAUDE.md` with M0 on 2026-07-20: the persistence carve-out named against the
+"nothing but settings" decision, the "naming may colour a cluster, never create an edge" sharpening of
+the no-unevidenced-relationships rule (**read this before implementing M5's graph modes**), and the two
+new decisions — the fact ladder (§1.2) and CLI-first/AS-optional (§1.1). They are constraints on the
+milestones below, not roadmap.

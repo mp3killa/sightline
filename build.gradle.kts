@@ -48,6 +48,13 @@ dependencies {
         // does NOT declare a runtime <depends> on it — it only calls language-neutral UAST — so this is
         // effectively test-scoped. Always bundled in Android Studio / IntelliJ IDEA.
         bundledPlugin("org.jetbrains.kotlin")
+
+        // Android Studio's project model, for `ide/android/studio/StudioFactProvider` only. Declared in
+        // plugin.xml as an OPTIONAL <depends> (config-file="sightline-android.xml"), so the artifact
+        // still installs and runs on a plain IntelliJ IDEA — this is a compile-time dependency, not a
+        // runtime requirement. See docs/ANDROID.md §1.1 for why the rest of the Android work
+        // deliberately avoids it.
+        bundledPlugin("org.jetbrains.android")
     }
 
     // Bundled into the plugin: used to parse the CLI's streaming-JSON events.

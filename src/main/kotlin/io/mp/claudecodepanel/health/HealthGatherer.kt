@@ -5,7 +5,10 @@ import com.intellij.execution.util.ExecUtil
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import io.mp.claudecodepanel.android.AdbOutputParsers
 import io.mp.claudecodepanel.ide.IdeServer
+import io.mp.claudecodepanel.ide.android.AndroidEnvironment
+import io.mp.claudecodepanel.ide.android.AndroidStudioFactProvider
 import io.mp.claudecodepanel.process.ClaudePathResolver
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import java.io.File
@@ -55,6 +58,45 @@ class HealthGatherer(private val project: Project) {
             ideDescription = describeIde(),
             model = model,
             activityEventCount = session.activityEventCount,
+        ).let { withAndroid(it, settings.androidFeatures) }
+    }
+
+    /**
+     * Fold in the Android rows. Everything here shells out, so it inherits [gather]'s off-EDT contract;
+     * it is skipped wholesale for a non-Android project, which is also the cheap path.
+     */
+    private fun withAndroid(base: HealthInputs, featuresEnabled: Boolean): HealthInputs {
+        val env = runCatching { AndroidEnvironment.getInstance(project) }.getOrNull()
+        val isAndroid = env?.let { runCatching { it.looksLikeAndroidProject() }.getOrDefault(false) } ?: false
+        if (!isAndroid) return base.copy(androidProject = false)
+        if (!featuresEnabled) return base.copy(androidProject = true, androidFeaturesEnabled = false)
+
+        val sdk = runCatching { env?.sdk(refresh = true) }.getOrNull()
+        val adbVersion = sdk?.adb?.let {
+            runCatching { env?.adb("--version", timeoutMs = 4000) }.getOrNull()
+                ?.takeIf { r -> r.ok }?.let { r -> AdbOutputParsers.parseAdbVersion(r.stdout) }
+        }
+        // Null (couldn't ask) and empty (nothing plugged in) mean different things to the checker, so
+        // a failed or timed-out probe must stay null rather than collapse to an empty list.
+        val devices = sdk?.adb?.let {
+            runCatching { env?.adb("devices", "-l", timeoutMs = 6000) }.getOrNull()
+                ?.takeIf { r -> r.ok }
+                ?.let { r ->
+                    AdbOutputParsers.parseDevices(r.stdout).map { d ->
+                        AndroidDeviceSummary(d.displayName, d.state.label, d.state.isUsable)
+                    }
+                }
+        }
+
+        return base.copy(
+            androidProject = true,
+            androidFeaturesEnabled = true,
+            androidSdkPath = sdk?.root,
+            androidSdkSource = sdk?.source,
+            adbPath = sdk?.adb,
+            adbVersion = adbVersion,
+            androidDevices = devices,
+            studioModelAvailable = runCatching { AndroidStudioFactProvider.isAvailable() }.getOrDefault(false),
         )
     }
 

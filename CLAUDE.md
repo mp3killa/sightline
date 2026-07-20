@@ -39,6 +39,8 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | `ui/components/*.kt` | Small reusable Swing widgets: `SegmentedControl` (the Chat/Activity switch, arrow-key navigable), `IconActionButton`, `ContextChip`, `EmptyStatePanel`. |
 | `ui/state/*.kt` | Platform-free, unit-tested **presentation logic** — no Swing: `StatusModel` (session state → status text), `ComposerModel` (input/send enablement plus the **message queue**: submitting mid-turn parks the message rather than silently doing nothing — send stays enabled while running, blank input is never queued, the placeholder says whether Enter will send or queue, and the host drains one message per finished turn so their output can't interleave), `PermissionModes` (the five modes + display names; `auto` is the default), `WorkspaceModes` (chat/split/map, plus `effectiveMode` — SPLIT is demoted to **CHAT** below the WIDE breakpoint without rewriting the user's preference, so a cramped panel never leaves you with a graph and no transcript), `ToolEventPresentation` (**compact row vs card** for a tool event, decided from structured metadata — tool name + outcome — never a display string: routine successful reads/commands recede to a borderless row, while failures, denials and edits keep card weight), `TranscriptRetention` (caps live turns at 150 and **really releases** the oldest — components dropped, id maps pruned — with a notice worded so it never promises a "load earlier" that has nothing to load from), `ProcessingSummary` (per-turn tally — *"17 operations · 4 files edited · 3 checks passed"* — shown in place of the hidden tool cards when `showDetails` is off, which is the default; files edited are counted **distinctly**, so three edits to one file is one file), `DiffPresentation` (added/removed **line counts** + header text with correct singulars, unified vs **side-by-side** by column width, collapse past 24 rows and a hard `MAX_ROWS` ceiling so a whole-file `Write` can't bury the transcript — any capped remainder is *stated*, never silently dropped), `ResponsiveLayout` (width → layout decisions, incl. `readablePadding` — the reading cap is measured against the **chat column**, never the whole panel, with a `MIN_CONTENT_WIDTH` floor so the conversation can't be squeezed into a sliver), `ScrollFollow` (follow-the-bottom + jump-to-latest arming), `PathDisplay` (a file path as a tool row should show it: project-relative where possible — the absolute prefix is identical on every row and crowds out the filename — then shortened **at segment boundaries**, since a plain character cut lands mid-segment and renders as damage; the filename is never cut), `TranscriptPresenter`, `TimelineDockState`, `CompletionSummary` (the per-turn `Completed · 51.6s · 13 turns · $0.404` footer). |
 | `theme/ClaudeUiTokens.kt`, `theme/ClaudeIcons.kt` | Theme-aware colour/spacing tokens and icons, resolved from the IDE's own scheme so both themes work. |
+| `android/*.kt` | Platform-free, unit-tested **Android core** (docs/ANDROID.md): `AndroidFacts` (`FactTier` IDE→BUILD_OUTPUT→STATIC_PARSE→DEVICE→UNKNOWN + `Fact<T>`, whose constructor makes a value-without-provenance unrepresentable; `Fact.ladder` short-circuits so a cheap IDE hit never pays for a device probe), `AndroidSdkLocator` (where the SDK is, in a deliberate order — setting → env → `local.properties` → per-OS default — with an injected `exists` probe so the ordering is tested with no filesystem; hand-rolls `sdk.dir` unescaping because Gradle writes `C\:\\Users\\…` on Windows), `VariantName` (`demoStagingDebug` → flavours + build type; needs **dimension order** because the name alone is genuinely ambiguous, and reports no flavours rather than forcing a wrong split), `AdbOutputParsers` (`adb devices -l`, AVD names, adb version — skips what it doesn't recognise so one future field costs one line, not the listing), `AndroidActionPolicy` (risk gate, below), `AndroidStorePolicy` (persistence guardrails, below). |
+| `ide/android/*.kt` | Thin platform layer: `AndroidEnvironment` (`<projectService>` — resolves the SDK, runs `adb`/`emulator` **off-EDT with mandatory timeouts**, detects whether the project is Android at all; deliberately has **no** Android Studio dependency), `AndroidStudioFactProvider` (the `androidFactProvider` EP — tier 1, and the only thing that knows the *currently selected* variant). `ide/android/studio/StudioFactProvider` implements it and **loads only via `META-INF/sightline-android.xml`**, so its `com.android.tools.idea.*` imports never resolve in a plain IDEA. Any failure there degrades to null → tier 2. |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI (Settings → Tools → **Sightline for Claude Code**) |
 
 ### Agent Activity Map (v0.6.0)
@@ -132,12 +134,36 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 
 These outlived the backlog items that recorded them. They are constraints on future work, not roadmap.
 
-- **Nothing is persisted to disk except settings.** There is no session/transcript persistence:
-  `ClaudeSession.lastSessionId` is in-memory and `--resume` exists only to survive a user Stop. If
-  persistence is ever built it must be **workspace-relative paths only** — **never** absolute paths,
-  source contents, prompts, or reasoning — with a versioned schema, a session cap + retention limit,
-  delete-one / clear-all, and **off by default**. Do not let persistence arrive as a side effect of
-  satisfying some other requirement.
+- **Nothing is persisted to disk except settings — and the one named Android exception.** There is no
+  session/transcript persistence: `ClaudeSession.lastSessionId` is in-memory and `--resume` exists only
+  to survive a user Stop. Any persistence must be **workspace-relative paths only** — **never** absolute
+  paths, source contents, prompts, or reasoning — with a versioned schema, a session cap + retention
+  limit, delete-one / clear-all, and **off by default**. Do not let persistence arrive as a side effect
+  of satisfying some other requirement.
+  **The exception** (decided 2026-07-20, docs/ANDROID.md §1.3): an opt-in `.sightline/` store under the
+  project for Android results that are worthless without history — flaky-test history, screenshot
+  baselines, artifact-size snapshots, saved workflows. It is `androidPersistCache`, **off by default**,
+  and `android/AndroidStorePolicy` *enforces* every guardrail above in code rather than by convention:
+  `toRelative` refuses anything outside the project instead of falling back to an absolute path,
+  `accepts` discards an unknown schema version rather than migrating on a guess, and `looksSensitive` is
+  a backstop against a credential or `$HOME` path reaching a file that outlives the session. Extending
+  the store means extending that policy, not working around it.
+- **Android capability is CLI-first; Android Studio is optional.** (Decided 2026-07-20, docs/ANDROID.md
+  §1.1.) The spine runs on stable contracts — `adb`, the `emulator` binary, `gradlew`, and parsing AGP's
+  own build output — so everything Android keeps working in a plain IntelliJ IDEA and the `sinceBuild=253`
+  Marketplace reach survives. `org.jetbrains.android` is an **optional** `<depends>` whose only
+  implementation lives in `ide/android/studio/`, registered from `META-INF/sightline-android.xml`; that
+  file is the isolation boundary, and the class never loads where its `com.android.tools.idea.*` imports
+  can't resolve. Those imports are internal API the Plugin Verifier flags and Android Studio breaks
+  between releases, so the rule is: **tier 1 is an upgrade, never a prerequisite.** Wanting one more
+  IDE-only fact is not a reason to make it one — put it behind the extension point or find a tier-2 source.
+- **Every Android fact carries its source tier, and UNKNOWN is a valid answer.** (Decided 2026-07-20,
+  docs/ANDROID.md §1.2.) `android/AndroidFacts` resolves facts down a ladder — IDE → AGP build output →
+  static parse → device → UNKNOWN — and `Fact<T>`'s constructor makes "a value with no provenance"
+  unrepresentable. This is the Android analogue of `HealthStatus.UNKNOWN` and exists for the same reason:
+  a variant labelled `(last build)` is useful, the same string presented as current costs an hour. Resist
+  "just default it to something sensible" — a plausible default is precisely the failure mode the ladder
+  is built to prevent.
 - **The transcript's eviction notice must not promise recovery.** `TranscriptRetention` genuinely
   releases old turns, and with no persistence there is nothing to reload them from, so the wording is
   *"N earlier turns were released…"* — never a "load earlier" control that cannot work. A test asserts
@@ -146,6 +172,12 @@ These outlived the backlog items that recorded them. They are constraints on fut
   UseCase→Repository, broad call graphs) was considered and **dropped**: it is heuristic pattern-matching
   presented as structural fact, which is exactly what `RelationshipEvidence`/`EvidenceSource` exist to
   prevent. Structural edges come from PSI/UAST or parsed command output, or they don't exist.
+  **Sharpened 2026-07-20** (docs/ANDROID.md M5) for the Android architecture map: **naming may colour a
+  node's cluster; it may never create an edge.** `ActivityClassifier` already routes `*Repository.kt` to
+  the DATA_REPOSITORIES cluster, and that stays fine — clustering is presentation. What the rejection
+  forbids is turning that same guess into a relationship. PSI-resolved constructor injection and
+  Hilt/Dagger `@Inject`/`@Binds`/`@Provides` **are** real declarations, so a DI graph built from them is
+  permitted and tagged `PSI_DECLARATION`; one built from filename suffixes is not, at any confidence.
 - **Reading width stays ~760px.** A "1,100–1,250px content width" was proposed from a full-screen editor
   window; a docked IntelliJ tool window is typically 400–700px, so that cap would never engage.
 - **The transcript is not virtualised, deliberately.** The case for it assumed the component tree is
@@ -164,6 +196,11 @@ These outlived the backlog items that recorded them. They are constraints on fut
   (visible cap, default 200), `activityMaxRetained` (session cap, default 500),
   `activityTimelineExpanded` (default off — the dock starts as the compact collapsed summary), and
   `activityAboutDismissed` (whether the one-time "observable activity only" disclaimer was dismissed).
+- `androidFeatures` (default on) → the Android control-centre features. Additionally gated on
+  `AndroidEnvironment.looksLikeAndroidProject()`, so a non-Android project sees nothing either way.
+  `androidSdkPath` (blank = auto-detect) overrides SDK discovery when a machine has several.
+- `androidPersistCache` (**default off**) → the `.sightline/` store; `androidCacheMaxEntries`
+  (default 200) caps each store. This is the one disk carve-out — see **Standing decisions**.
 - `permissionMode` (default `auto`) — set via the composer mode chip or the Settings dropdown.
   `auto` (⚡) is **model-gated** (Sonnet/Opus only; silently falls back to `default` on Haiku).
   Composes with `interactiveApproval`. The five modes and their chip names live in

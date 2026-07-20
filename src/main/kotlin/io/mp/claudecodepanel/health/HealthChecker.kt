@@ -42,7 +42,29 @@ data class HealthInputs(
 
     /** Observed activity events this session — 0 is fine (nothing has run yet), just reported as context. */
     val activityEventCount: Int = 0,
+
+    // ---- Android (docs/ANDROID.md). All skipped entirely unless [androidProject] — a Kotlin backend
+    // project reporting "Android SDK: FAIL" would be noise dressed up as a problem.
+    /** Whether this project looks like an Android project at all. */
+    val androidProject: Boolean = false,
+    /** Whether the Android features are switched on in settings. */
+    val androidFeaturesEnabled: Boolean = true,
+    /** Resolved SDK root, or null if none was found. */
+    val androidSdkPath: String? = null,
+    /** How the SDK was located ("ANDROID_HOME", "local.properties", "default location", …). */
+    val androidSdkSource: String? = null,
+    /** Resolved `adb`, or null when the SDK exists but platform-tools doesn't. */
+    val adbPath: String? = null,
+    /** `adb --version`, or null if the probe didn't run. */
+    val adbVersion: String? = null,
+    /** Devices adb reports, or null if the probe couldn't run — null is not "zero devices". */
+    val androidDevices: List<AndroidDeviceSummary>? = null,
+    /** Whether Android Studio's model layer (the optional dependency) is loaded. */
+    val studioModelAvailable: Boolean = false,
 )
+
+/** Just enough of a device for the Health row; the full model lives in `android/AdbOutputParsers`. */
+data class AndroidDeviceSummary(val name: String, val stateLabel: String, val usable: Boolean)
 
 /**
  * Pure evaluator: [HealthInputs] → [HealthReport]. No IO, no platform. Each check states plainly what it
@@ -59,8 +81,97 @@ object HealthChecker {
             diagnostics(i),
             permission(i),
             activity(i),
-        ),
+        ) + androidChecks(i),
     )
+
+    /**
+     * The Android rows, or nothing at all. Omitting them outside an Android project is the point: a
+     * report is only useful if every line on it could plausibly be the user's problem.
+     */
+    private fun androidChecks(i: HealthInputs): List<HealthCheck> {
+        if (!i.androidProject) return emptyList()
+        if (!i.androidFeaturesEnabled) return listOf(
+            HealthCheck(
+                "android", "Android features", HealthStatus.WARN,
+                "Turned off in settings — no build variant, device or logcat context is being gathered.",
+                "Enable Android features in Settings → Sightline.",
+            ),
+        )
+        return listOf(androidSdk(i), androidDevices(i), androidStudioModel(i))
+    }
+
+    private fun androidSdk(i: HealthInputs): HealthCheck = when {
+        i.androidSdkPath == null -> HealthCheck(
+            "android.sdk", "Android SDK", HealthStatus.FAIL,
+            "Not found. Looked at ANDROID_HOME, ANDROID_SDK_ROOT, local.properties and the default location.",
+            "Set the SDK path in Settings → Sightline, or set ANDROID_HOME before launching the IDE.",
+        )
+        i.adbPath == null -> HealthCheck(
+            "android.sdk", "Android SDK", HealthStatus.WARN,
+            "SDK at ${i.androidSdkPath}" + (i.androidSdkSource?.let { " ($it)" } ?: "") +
+                ", but `platform-tools/adb` is missing, so no device action can run.",
+            "Install Platform-Tools from the SDK Manager.",
+        )
+        else -> HealthCheck(
+            "android.sdk", "Android SDK", HealthStatus.OK,
+            "SDK at ${i.androidSdkPath}" + (i.androidSdkSource?.let { " ($it)" } ?: "") +
+                (i.adbVersion?.let { " · adb $it" } ?: "") + ".",
+        )
+    }
+
+    /**
+     * Null devices and empty devices are deliberately different outcomes. "No device connected" is a
+     * normal state with an obvious fix; "we couldn't ask" means adb itself is broken, and telling the
+     * user to plug in a phone would send them the wrong way entirely.
+     */
+    private fun androidDevices(i: HealthInputs): HealthCheck {
+        val devices = i.androidDevices
+        return when {
+            i.adbPath == null -> HealthCheck(
+                "android.devices", "Devices", HealthStatus.UNKNOWN,
+                "Not checked — adb wasn't found.",
+                "Resolve the Android SDK first.",
+            )
+            devices == null -> HealthCheck(
+                "android.devices", "Devices", HealthStatus.UNKNOWN,
+                "adb was found but didn't answer, so the device list is unknown.",
+                "Run `adb devices` in a terminal — if it hangs, `adb kill-server` and try again.",
+            )
+            devices.isEmpty() -> HealthCheck(
+                "android.devices", "Devices", HealthStatus.WARN,
+                "No device or emulator connected.",
+                "Start an emulator or connect a device — device actions and logcat need one.",
+            )
+            devices.none { it.usable } -> HealthCheck(
+                "android.devices", "Devices", HealthStatus.WARN,
+                devices.joinToString(", ") { "${it.name} (${it.stateLabel})" } + " — none ready.",
+                if (devices.any { it.stateLabel.contains("authoris", true) })
+                    "Accept the USB debugging prompt on the device."
+                else "Reconnect the device, or `adb kill-server` and retry.",
+            )
+            else -> HealthCheck(
+                "android.devices", "Devices", HealthStatus.OK,
+                devices.joinToString(", ") { if (it.usable) it.name else "${it.name} (${it.stateLabel})" } + ".",
+            )
+        }
+    }
+
+    /**
+     * Not having Android Studio's model is a normal, supported state, so this is never worse than a
+     * WARN — it costs a qualifier on a chip, not a feature. See docs/ANDROID.md §1.1.
+     */
+    private fun androidStudioModel(i: HealthInputs): HealthCheck = when {
+        i.studioModelAvailable -> HealthCheck(
+            "android.model", "Build variant", HealthStatus.OK,
+            "Android Studio's project model is available — the selected variant is read directly.",
+        )
+        else -> HealthCheck(
+            "android.model", "Build variant", HealthStatus.WARN,
+            "Android Studio's project model isn't available, so the variant is taken from the last " +
+                "build output and may be stale.",
+            "This is expected outside Android Studio. Inside it, a Gradle sync usually restores it.",
+        )
+    }
 
     private fun claudeBinary(i: HealthInputs): HealthCheck = when (val p = i.claudePath) {
         null -> HealthCheck(

@@ -22,6 +22,17 @@ lives at `com.jetbrains.intellij.idea:ideaIC:<v>` — the ZIP exists + downloads
 collides with the compile-time platform dependency. Run it where the IC distribution resolves (CI / a
 newer IPGP) and fix anything it flags (internal/experimental API usage, binary compat across the range).
 
+**This gate got more important with the Android work.** `ide/android/studio/StudioFactProvider` calls
+`com.android.tools.idea.*` — Android-Studio-internal API, and exactly what the verifier is for. The
+design already assumes it may break (any failure degrades to tier 2; the class only loads via the
+optional `META-INF/sightline-android.xml`), but the verifier is what turns "we think it's isolated" into
+a checked fact. Two things to confirm specifically:
+- The verifier is **not** confused by the optional `<depends>` — a plain IC has no `org.jetbrains.android`,
+  so the descriptor and its implementation class should simply be skipped rather than reported missing.
+- Nothing outside `ide/android/studio/` references an Android-Studio-only class. That is the whole
+  isolation claim of docs/ANDROID.md §1.1, and a stray import elsewhere would silently break plain-IDEA
+  installs while still compiling here.
+
 ## Live Android Studio verification (manual)
 
 Only what genuinely needs a human is listed. Static rendering — every Markdown block type, tool cards,
@@ -67,6 +78,17 @@ Verify:
   "Skip"-style option coming back as a normal answer. The `answers`-keyed-by-full-question-text contract
   is already unit-tested (`AskUserQuestionResponseBuilderTest`); the bridge drives the non-visual half
   (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`).
+- **Android rows in Health** (docs/ANDROID.md M0): open **More ▸ Health check…** in a real Android project
+  and confirm the SDK / Devices / Build variant rows read honestly across the states that matter —
+  **no device connected** (WARN, "start an emulator"), a device present but **unauthorised** (WARN,
+  pointing at the on-device prompt), and `adb` present but wedged (UNKNOWN, *not* "0 devices"; force it
+  with `adb kill-server` mid-check). Then open a **non-Android** project and confirm the three rows are
+  absent entirely rather than failing. The SDK path goes through the sanitiser, so **Copy report** must
+  show it as `~/Library/Android/sdk`, never with the username.
+- **Plain IntelliJ IDEA degradation** — the core claim of docs/ANDROID.md §1.1. Install the built zip in an
+  IntelliJ IDEA **without** the Android plugin: the plugin must load with no errors, and the "Build variant"
+  Health row must read WARN ("expected outside Android Studio"), never FAIL or a stack trace. This is the
+  one check the dev environment structurally cannot do — the local platform *is* Android Studio.
 - **Health panel**: **More ▸ Health check…** opens the dialog; a brief "Checking…" then a row per check;
   **Recheck** re-runs (try it mid-indexing → diagnostics should WARN, then OK once indexed); **Open
   settings** opens Sightline settings; **Copy report** puts a **sanitised** report on the clipboard —

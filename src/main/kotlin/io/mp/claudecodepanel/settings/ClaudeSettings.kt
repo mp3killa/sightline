@@ -54,6 +54,32 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Whether the one-time "observable activity only" activity-map disclaimer was dismissed. */
         var activityAboutDismissed by property(false)
 
+        /**
+         * Android SDK location. Blank = auto-detect (ANDROID_HOME, ANDROID_SDK_ROOT, `local.properties`,
+         * then the per-OS default). Set this only when auto-detection picks the wrong one of several SDKs.
+         */
+        var androidSdkPath by string("")
+
+        /**
+         * Master switch for the Android control-centre features (context strip, device actions, logcat).
+         * On by default, but every one of them is additionally gated on the project actually looking like
+         * an Android project, so a non-Android project sees nothing either way.
+         */
+        var androidFeatures by property(true)
+
+        /**
+         * Persist a small Android cache under `.sightline/` in the project — flaky-test history,
+         * screenshot baselines, artifact sizes, saved workflows.
+         *
+         * **Off by default, deliberately.** This is the one carve-out from the standing decision that
+         * nothing but settings is written to disk (docs/ANDROID.md §1.3), and it stays opt-in: only
+         * workspace-relative paths are ever stored, never source contents, prompts or reasoning.
+         */
+        var androidPersistCache by property(false)
+
+        /** Retention cap for each `.sightline/` store; oldest entries are dropped first. */
+        var androidCacheMaxEntries by property(200)
+
         /** Advanced: extra CLI args appended to every invocation (space-separated). */
         var extraArgs by string("")
     }
