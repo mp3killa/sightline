@@ -345,4 +345,104 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         // An edit's Open file / Copy diff are likewise deliberate, always-on affordances.
         assertTrue("the edit block keeps its actions visible", buttons("Copy diff").any { effectivelyVisible(it) })
     }
+
+    /**
+     * Regression: streaming content must not silently cancel auto-follow.
+     *
+     * `scrollToBottomSoon` used to jump to `bar.maximum` right after `revalidate()`, but revalidate only
+     * *schedules* layout — the scrollbar still held the pre-growth maximum, so the jump landed short of
+     * the real bottom and the adjustment listener read that gap as the user scrolling up. Follow died
+     * and "Jump to latest" appeared mid-stream without anyone touching the scrollbar.
+     */
+    fun testStreamingKeepsAutoFollowWithoutUserScrolling() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = true
+        settings.showActivityMap = false
+        settings.activityViewMode = "chat"
+        val p = ClaudePanel(project, testRootDisposable)
+        layoutTree(p.component, 900, 600)
+        assertTrue("follow starts armed", p.isFollowingForTest())
+
+        // Enough content to overflow the viewport several times over.
+        repeat(30) { i ->
+            p.addUserMessageForPreview("turn $i")
+            p.renderProtocolLineForPreview(
+                """{"type":"assistant","message":{"content":[{"type":"text","text":"a fairly long reply line number $i that will wrap and grow the transcript"}]}}"""
+            )
+            p.scrollToBottomForTest()
+            UIUtil.dispatchAllInvocationEvents()
+            layoutTree(p.component, 900, 600)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        assertTrue(
+            "nobody scrolled — auto-follow must still be armed after streaming",
+            p.isFollowingForTest(),
+        )
+    }
+
+    /**
+     * Regression: inline actions must render their text.
+     *
+     * They were JButtons carrying `JButton.buttonType = "square"`, which on the real macOS IDE LaF
+     * forces a fixed square with no room for a label — they showed as two empty boxes. The headless
+     * preview's LaF ignores that property, so the image looked fine; only the live IDE revealed it.
+     * Guard the invariant directly: no transcript control may carry that property, and every action
+     * control must have a label.
+     */
+    fun testInlineActionsCarryNoFixedSizeButtonTypeAndHaveLabels() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = true
+        settings.showActivityMap = false
+        settings.activityViewMode = "chat"
+        val p = ClaudePanel(project, testRootDisposable)
+        seed(p)
+        layoutTree(p.component, 900, 1750)
+
+        val actionLabels = setOf("Open file", "Copy diff", "Copy", "Copy command", "Copy output", "Show in map")
+        val controls = descendants(p.component).filterIsInstance<javax.swing.AbstractButton>()
+        val actions = controls.filter { it.text in actionLabels }
+        assertTrue("expected inline actions to exist", actions.isNotEmpty())
+        actions.forEach {
+            assertTrue("'${it.text}' must keep a visible label", it.text.isNotBlank())
+            assertNull(
+                "'${it.text}' must not force a fixed-size button type — that is what blanked them in the IDE",
+                (it as javax.swing.JComponent).getClientProperty("JButton.buttonType"),
+            )
+        }
+    }
+
+    /**
+     * The other half of the follow rule: a real user scroll must still pause following, **even while
+     * content is arriving**. The re-pin fix above keys on "the maximum moved but the value didn't"
+     * precisely so that a user scrolling mid-stream isn't dragged back to the bottom.
+     */
+    fun testUserScrollingUpStillPausesFollowEvenWhileStreaming() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = true
+        settings.showActivityMap = false
+        settings.activityViewMode = "chat"
+        val p = ClaudePanel(project, testRootDisposable)
+        repeat(20) { i ->
+            p.addUserMessageForPreview("turn $i")
+            p.renderProtocolLineForPreview(
+                """{"type":"assistant","message":{"content":[{"type":"text","text":"reply $i with enough text to grow the transcript past the viewport"}]}}"""
+            )
+        }
+        layoutTree(p.component, 900, 400)
+        UIUtil.dispatchAllInvocationEvents()
+
+        p.scrollUpForTest()
+        UIUtil.dispatchAllInvocationEvents()
+        assertFalse("scrolling up must pause follow", p.isFollowingForTest())
+
+        // More content arrives while the user is reading up-thread — they must not be yanked back.
+        p.addUserMessageForPreview("another turn")
+        p.renderProtocolLineForPreview(
+            """{"type":"assistant","message":{"content":[{"type":"text","text":"more content arriving"}]}}"""
+        )
+        layoutTree(p.component, 900, 400)
+        UIUtil.dispatchAllInvocationEvents()
+        assertFalse("content arriving must not re-arm follow behind the user's back", p.isFollowingForTest())
+    }
 }

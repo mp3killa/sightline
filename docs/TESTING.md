@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**422 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**425 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -70,6 +70,19 @@ than the hover action it meant to check. **Look at the PNG.**
 > executing it (the images aren't declared task outputs, so they are not restored either) — you then
 > read a stale or missing image and believe you verified the current code. When the images matter, run
 > `./gradlew test --rerun-tasks`, and check the file timestamps before trusting what you see.
+
+> [!IMPORTANT]
+> **The preview runs a different Look-and-Feel from the real IDE, and that gap hides real bugs.** The
+> inline actions were `JButton`s carrying `JButton.buttonType = "square"`; on the live macOS IDE LaF that
+> forces a fixed square with no room for a label, so they rendered as **two empty boxes** — while the
+> preview, whose LaF ignores the property, looked perfect. Anything LaF-specific (native button types,
+> platform UI delegates, font metrics) can only be judged in `runIde`. Prefer platform components
+> (`ActionLink`) over client-property styling tricks, and assert the invariant instead of the pixels.
+>
+> Layout *timing* differs too: a detached tree isn't showing, so `revalidate()` never triggers a
+> validation pass and the scrollbar model doesn't update the way it does live. Logic that depends on
+> "layout has run by now" can pass here and fail in the IDE — or the reverse. Prefer designs that don't
+> depend on validation ordering at all.
 
 **This does not replace the live pass.** Anything needing a *click, hover, focus, drag or a live CLI
 session* still needs a human in `runIde` — see [BACKLOG.md](BACKLOG.md).
@@ -139,7 +152,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 422 unit tests
+./gradlew test                 # the 425 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

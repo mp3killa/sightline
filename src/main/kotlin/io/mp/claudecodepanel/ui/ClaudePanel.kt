@@ -44,6 +44,7 @@ import io.mp.claudecodepanel.activity.ActivityNode
 import javax.swing.Timer
 import io.mp.claudecodepanel.ui.state.TranscriptRetention
 import com.intellij.ide.projectView.ProjectView
+import com.intellij.ui.components.ActionLink
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -243,9 +244,33 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         addActionListener { jumpToLatest() }
     }
 
+    /** True while *we* are moving the scrollbar, so our own scroll isn't read as a user gesture. */
+    private var programmaticScroll = false
+
+    private var lastScrollMaximum = 0
+    private var lastScrollValue = 0
+
     private val scroll = JBScrollPane(transcript).apply {
         verticalScrollBar.addAdjustmentListener {
-            following = ScrollFollow.isNearBottom(verticalScrollBar.value, verticalScrollBar.visibleAmount, verticalScrollBar.maximum, JBUI.scale(48))
+            val bar = verticalScrollBar
+            val grew = bar.maximum != lastScrollMaximum
+            val moved = bar.value != lastScrollValue
+            lastScrollMaximum = bar.maximum
+            lastScrollValue = bar.value
+            if (programmaticScroll) return@addAdjustmentListener
+            // Content arriving is not a user gesture. While following, pure growth (the maximum moved
+            // but the value didn't) must **re-pin** to the new bottom; reading it as "no longer near
+            // the end" is what silently killed follow mid-stream and popped "Jump to latest" without
+            // anyone touching anything.
+            //
+            // `!moved` is the important half: if the value changed too, the user is scrolling — even
+            // if content happens to be arriving at the same time — and re-pinning would drag them back
+            // to the bottom, which is the exact behaviour this feature exists to prevent.
+            if (following && grew && !moved) {
+                scrollToBottomNow()
+                return@addAdjustmentListener
+            }
+            following = ScrollFollow.isNearBottom(bar.value, bar.visibleAmount, bar.maximum, JBUI.scale(48))
             updateJumpToLatest()
         }
     }
@@ -577,19 +602,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         return p
     }
 
-    /** Restyles a JButton as a quiet inline action rather than a chunky form control. */
-    private fun styleSmallButton(b: JButton) {
-        b.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
-        b.margin = Insets(1, 6, 1, 6)
-        b.isFocusable = true
-        b.putClientProperty("JButton.buttonType", "square")
-    }
-
-    private fun smallLink(text: String, run: () -> Unit): JButton {
-        val b = JButton(text)
-        styleSmallButton(b)
-        b.addActionListener { run() }
-        return b
+    /**
+     * A quiet inline action.
+     *
+     * These were `JButton`s carrying `JButton.buttonType = "square"`. On the real macOS IDE LaF that
+     * property forces a small fixed-size square that leaves no room for the label, so the actions
+     * rendered as **two empty boxes** — while looking fine in the headless preview, whose LaF ignores
+     * the property. `ActionLink` is the platform's own inline-action component: it always renders its
+     * text, carries no button chrome in a transcript, and keeps focus traversal and accessibility.
+     */
+    private fun smallLink(text: String, run: () -> Unit): ActionLink {
+        val link = ActionLink(text) { run() }
+        link.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        return link
     }
 
     private fun copyToClipboard(text: String) {
@@ -604,14 +629,23 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun hoverActions(host: JComponent, vararg actions: Pair<String, () -> Unit>): JComponent {
         val row = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
         row.isOpaque = false
-        row.isVisible = false
         val buttons = actions.map { (label, run) -> smallLink(label, run) }
         buttons.forEach { row.add(it) }
+
+        // Reserve the row's full size up front and toggle only the links inside it. Hiding the row
+        // itself made it collapse to nothing, so revealing it on hover *pushed the conversation down* —
+        // the text moved out from under the pointer and nothing useful appeared in its place.
+        val reserved = row.preferredSize
+        row.preferredSize = reserved
+        row.minimumSize = reserved
+        buttons.forEach { it.isVisible = false }
 
         fun show(v: Boolean) {
             // Never hide while a button still holds focus, or tabbing into it makes it vanish.
             if (!v && buttons.any { it.hasFocus() }) return
-            if (row.isVisible != v) { row.isVisible = v; row.revalidate(); row.repaint() }
+            if (buttons.firstOrNull()?.isVisible == v) return
+            buttons.forEach { it.isVisible = v }
+            row.repaint()
         }
 
         val hover = object : MouseAdapter() {
@@ -932,6 +966,21 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Test-only: how many turns are still held as live components (see [TranscriptRetention]). */
     @TestOnly
     internal fun liveTurnCountForTest(): Int = turns.size
+
+    /** Test-only: whether auto-scroll is still following the live end. */
+    @TestOnly
+    internal fun isFollowingForTest(): Boolean = following
+
+    /** Test-only: drives the same deferred scroll the streaming path uses. */
+    @TestOnly
+    internal fun scrollToBottomForTest() = scrollToBottomSoon()
+
+    /** Test-only: simulates the user dragging the scrollbar up, away from the live end. */
+    @TestOnly
+    internal fun scrollUpForTest() {
+        val bar = scroll.verticalScrollBar
+        bar.value = 0
+    }
 
     /**
      * Test-only: puts the panel in the running state and parks [message] behind the in-flight turn,
@@ -1568,7 +1617,26 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         SwingUtilities.invokeLater {
             pendingScroll = false
             transcript.revalidate(); transcript.repaint()
-            val bar = scroll.verticalScrollBar; bar.value = bar.maximum
+            // `revalidate()` only *schedules* layout, so the scrollbar's maximum is still the
+            // pre-growth value right now. Jumping to it lands short of the real bottom by the height
+            // of whatever was just added; the adjustment listener then sees that gap and concludes the
+            // user scrolled up, silently killing follow and popping "Jump to latest" mid-stream.
+            // Defer one more EDT turn so the model has caught up.
+            SwingUtilities.invokeLater { scrollToBottomNow() }
+        }
+    }
+
+    /** Snaps to the live end without letting our own scroll be mistaken for the user scrolling. */
+    private fun scrollToBottomNow() {
+        val bar = scroll.verticalScrollBar
+        programmaticScroll = true
+        try {
+            bar.value = bar.maximum - bar.visibleAmount
+            lastScrollValue = bar.value
+            lastScrollMaximum = bar.maximum
+        } finally {
+            // Cleared after the resulting adjustment events have been dispatched.
+            SwingUtilities.invokeLater { programmaticScroll = false; updateJumpToLatest() }
         }
     }
 
@@ -1696,8 +1764,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             layout = BorderLayout()
             border = JBUI.Borders.empty(2, 2, 6, 2)
             val role = JBLabel("Claude")
-            role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat()); role.border = JBUI.Borders.emptyBottom(3)
-            add(role, BorderLayout.NORTH)
+            role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat())
+            // Copy lives on the role line, a row that already exists — so revealing it on hover can
+            // never move the reply underneath it.
+            val roleRow = JPanel(BorderLayout()); roleRow.isOpaque = false
+            roleRow.border = JBUI.Borders.emptyBottom(3)
+            roleRow.add(role, BorderLayout.WEST)
+            roleRow.add(hoverActions(this, "Copy" to { copyToClipboard(markdownText()) }), BorderLayout.EAST)
+            add(roleRow, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
             add(body, BorderLayout.CENTER)
 
@@ -1725,6 +1799,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             }
             refreshVisibility(); relayout()
         }
+        /** Every text block in this turn, as the Markdown Claude actually sent. */
+        private fun markdownText(): String = body.components
+            .filterIsInstance<TextBlock>()
+            .joinToString("\n\n") { it.rawMarkdown }
+            .trim()
+
         fun applyDetails(show: Boolean) {
             detailKids.forEach { it.isVisible = show }
             refreshSummary()
@@ -1773,6 +1853,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * malformed or half-formed message is always readable — the response is never dropped.
      */
     private inner class TextBlock : Block() {
+        /** The original Markdown, which is what "Copy" should yield — not the rendered text. */
+        val rawMarkdown: String get() = sb.toString()
         private val stream = styledPane()
         private val blocks = JPanel()
         private val sb = StringBuilder()
@@ -1781,9 +1863,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             layout = BorderLayout()
             blocks.layout = BoxLayout(blocks, BoxLayout.Y_AXIS); blocks.isOpaque = false; blocks.alignmentX = Component.LEFT_ALIGNMENT
             add(stream, BorderLayout.CENTER)
-            // Copy the message as its original Markdown, not the rendered text — that is what is useful
-            // to paste back into an editor or an issue.
-            add(hoverActions(this, "Copy" to { copyToClipboard(sb.toString()) }), BorderLayout.SOUTH)
         }
         fun append(t: String) {
             sb.append(t)
@@ -1855,6 +1934,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
         private val bodyWrap = JPanel(BorderLayout())
         private val head = JPanel(BorderLayout(JBUI.scale(6), 0))
+        /** Host for hover actions inside the existing header row, so revealing them shifts nothing. */
+        private val headerActions = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
         private var open = false
 
         private var toolName: String = name
@@ -1877,7 +1958,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             left.add(iconLabel); left.add(actionLabel); left.add(targetLabel)
             head.add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)); right.isOpaque = false
-            right.add(stateLabel); right.add(chevron)
+            headerActions.isOpaque = false
+            right.add(headerActions); right.add(stateLabel); right.add(chevron)
             head.add(right, BorderLayout.EAST)
             head.addMouseListener(click { toggle() })
             add(head, BorderLayout.NORTH)
@@ -1915,7 +1997,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     acts.add("Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) })
                 }
                 acts.add("Show in map" to { revealInMap(this) })
-                bodyWrap.add(hoverActions(this, *acts.toTypedArray()), BorderLayout.SOUTH)
+                // Into the header row that already exists, not a new row below: the header's height is
+                // set by the labels either way, so revealing these can never move the transcript.
+                headerActions.add(hoverActions(this, *acts.toTypedArray()))
             }
             applyWeight()
             relayout()
@@ -2014,7 +2098,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val rows: List<Pair<String, String>> = hunks.flatten()
         private val stat = DiffPresentation.stat(rows)
         private val body = JPanel(BorderLayout())
-        private val toggle = JButton()
+        private val toggle = ActionLink("") {}
         private var expanded = false
         private var layoutMode = DiffLayout.UNIFIED
 
@@ -2038,7 +2122,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             actions.add(smallLink("Copy diff") { copyToClipboard(unifiedText()) })
             if (DiffPresentation.isCollapsible(rows.size)) {
                 toggle.text = DiffPresentation.expandText(rows.size)
-                styleSmallButton(toggle)
+                toggle.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
                 toggle.addActionListener { expanded = !expanded; rebuild(); relayout() }
                 actions.add(toggle)
             }
