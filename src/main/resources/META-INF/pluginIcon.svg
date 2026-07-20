@@ -1,3 +1,49 @@
 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M20 2 L24.6 15.4 L38 20 L24.6 24.6 L20 38 L15.4 24.6 L2 20 L15.4 15.4 Z" fill="#D97757"/>
+  <!--
+    Sightline — an aperture formed from graph nodes, with one highlighted line of sight.
+    Built as geometry rather than traced from the raster, so it stays sharp at every size.
+    Structure: 12-node outer lens, 8-node iris, pupil ring, teal sight line along the axis.
+  -->
+  <g stroke="#26374A" stroke-width="0.55" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 20 L7.2 15.9 L12.6 12 L20 9.4 L27.4 12 L32.8 15.9 L38 20
+             L32.8 24.1 L27.4 28 L20 30.6 L12.6 28 L7.2 24.1 Z" fill="none"/>
+    <path d="M11.5 20 L16 15.8 L20 14.3 L24 15.8 L28.5 20
+             L24 24.2 L20 25.7 L16 24.2 Z" fill="none"/>
+    <path d="M20 9.4 V14.3 M20 30.6 V25.7"/>
+    <path d="M12.6 12 L16 15.8 M27.4 12 L24 15.8"/>
+    <path d="M12.6 28 L16 24.2 M27.4 28 L24 24.2"/>
+    <path d="M7.2 15.9 L11.5 20 M7.2 24.1 L11.5 20"/>
+    <path d="M32.8 15.9 L28.5 20 M32.8 24.1 L28.5 20"/>
+  </g>
+
+  <!-- Line of sight, broken around the pupil so the icon needs no background fill. -->
+  <path d="M2 20 H18.5 M21.5 20 H38" stroke="#13BDB0" stroke-width="0.7" stroke-linecap="round"/>
+
+  <g fill="#26374A">
+    <circle cx="7.2" cy="15.9" r="0.95"/>
+    <circle cx="12.6" cy="12" r="0.95"/>
+    <circle cx="20" cy="9.4" r="0.95"/>
+    <circle cx="27.4" cy="12" r="0.95"/>
+    <circle cx="32.8" cy="15.9" r="0.95"/>
+    <circle cx="7.2" cy="24.1" r="0.95"/>
+    <circle cx="12.6" cy="28" r="0.95"/>
+    <circle cx="20" cy="30.6" r="0.95"/>
+    <circle cx="27.4" cy="28" r="0.95"/>
+    <circle cx="32.8" cy="24.1" r="0.95"/>
+    <circle cx="16" cy="15.8" r="0.9"/>
+    <circle cx="20" cy="14.3" r="0.9"/>
+    <circle cx="24" cy="15.8" r="0.9"/>
+    <circle cx="16" cy="24.2" r="0.9"/>
+    <circle cx="20" cy="25.7" r="0.9"/>
+    <circle cx="24" cy="24.2" r="0.9"/>
+  </g>
+
+  <g fill="#13BDB0">
+    <circle cx="2" cy="20" r="1.15"/>
+    <circle cx="11.5" cy="20" r="1.05"/>
+    <circle cx="28.5" cy="20" r="1.05"/>
+    <circle cx="38" cy="20" r="1.15"/>
+  </g>
+
+  <circle cx="20" cy="20" r="1.15" fill="none" stroke="#13BDB0" stroke-width="0.9"/>
 </svg>

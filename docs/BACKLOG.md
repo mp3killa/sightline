@@ -141,8 +141,13 @@ obligation, and the licence is written to work either way:
    already invite the reader to audit named source files — which is only honest while the source is
    actually readable. If it stays private, `PRIVACY.md`, `SECURITY.md` and `docs/DATA-FLOW.md` must
    revert to behavioural checks only (the wording for that is in the 2026-07-20 history if needed).
-4. **A Marketplace icon** — 40×40 SVG, distinct from JetBrains, Anthropic and Google marks. Concept:
-   an aperture or eye formed from graph nodes with one highlighted line of sight.
+4. ~~**A Marketplace icon**~~ — **done.** `META-INF/pluginIcon.svg` (+ `_dark`) is an aperture formed
+   from graph nodes with one highlighted line of sight, built as geometry rather than traced so it
+   holds up at 16px and at listing size. The tool-window stripe icon (`icons/sightline.svg`) is a
+   deliberately reduced version — twenty nodes smudge at 13px, so it keeps only what carries the
+   identity: the lens silhouette, the pupil, and the sight line. The accent token was retoned from the
+   old warm orange to the icon's teal; that orange was close enough to Anthropic's palette to read as
+   their branding on a plugin that is explicitly not theirs.
 5. ~~**Four screenshots**~~ — **generated.** `./gradlew test --tests "*MarketplaceScreenshotTest*"
    --rerun-tasks` writes `build/marketplace/0{1..4}-*.png` at 1280×800, driven through the production
    event path so they show what the plugin actually renders. Content is a **fictional** app

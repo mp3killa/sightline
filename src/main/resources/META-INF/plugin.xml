@@ -88,7 +88,7 @@
         <toolWindow id="Sightline"
                     anchor="right"
                     factoryClass="io.mp.sightline.ClaudeToolWindowFactory"
-                    icon="/icons/claudeToolWindow.svg"/>
+                    icon="/icons/sightline.svg"/>
         <applicationService serviceImplementation="io.mp.sightline.settings.ClaudeSettings"/>
         <!-- Decouple approval/diff decisions from Swing so both the UI and the sandbox test bridge
              resolve them through the same logic. Plain classes, so registered here (not annotated). -->

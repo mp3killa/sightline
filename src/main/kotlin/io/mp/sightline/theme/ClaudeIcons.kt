@@ -46,8 +46,11 @@ class VectorIcon(
 /** The panel's icon set. Prefer these over any glyph/emoji in interface chrome. */
 object ClaudeIcons {
 
-    /** The plugin/brand mark reuses the registered tool-window SVG. */
-    val brand: Icon = IconLoader.getIcon("/icons/claudeToolWindow.svg", ClaudeIcons::class.java)
+    /**
+     * The brand mark, reusing the registered tool-window SVG so the stripe icon and the header
+     * wordmark can never drift apart. `IconLoader` picks the `_dark` variant automatically.
+     */
+    val brand: Icon = IconLoader.getIcon("/icons/sightline.svg", ClaudeIcons::class.java)
 
     private fun stroke(s: Int, weight: Float = 0.095f): BasicStroke =
         BasicStroke((s * weight).coerceAtLeast(1.1f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)

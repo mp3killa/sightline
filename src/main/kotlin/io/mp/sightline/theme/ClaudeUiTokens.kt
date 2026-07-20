@@ -12,14 +12,21 @@ import java.awt.Color
  * correct in both light and dark themes and updates when the IDE theme changes. Spacing/radius
  * helpers run through [JBUI.scale] so they respect the IDE's presentation scale.
  *
- * Claude's warm accent is intentionally reserved for a few "active/brand" signals (see [accent]);
+ * Sightline's teal accent is intentionally reserved for a few "active/brand" signals (see [accent]);
  * everything else uses native surfaces/borders so the panel still reads as part of Android Studio.
  */
 object ClaudeUiTokens {
 
     // ---- brand ----
-    /** Warm Claude accent. Use sparingly: brand mark, focused composer, selected controls. */
-    fun accent(): JBColor = JBColor(Color(0xC2, 0x55, 0x2E), Color(0xE8, 0x8A, 0x6B))
+    /**
+     * Sightline's teal accent — the same colour as the sight line in the plugin icon. Use sparingly:
+     * brand mark, focused composer, selected controls.
+     *
+     * Previously a warm orange, which was close enough to Anthropic's own palette to read as their
+     * branding on a plugin that is explicitly not theirs. The teal matches the icon and belongs to
+     * this product.
+     */
+    fun accent(): JBColor = JBColor(Color(0x0E, 0xA5, 0x99), Color(0x2C, 0xD4, 0xC6))
 
     // ---- surfaces ----
     fun surface(): Color = EditorColorsManager.getInstance().globalScheme.defaultBackground

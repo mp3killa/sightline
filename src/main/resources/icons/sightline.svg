@@ -1,0 +1,23 @@
+<svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Tool-window stripe icon, 13x13.
+    Deliberately NOT the full plugin icon: twenty nodes at this size collapse into a smudge. The
+    identity survives reduction because it lives in three things — the lens silhouette, the pupil,
+    and the sight line running through it — so this keeps those and drops the graph interior.
+  -->
+  <g stroke="#26374A" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1 6.5 L4.3 3.3 L8.7 3.3 L12 6.5 L8.7 9.7 L4.3 9.7 Z" fill="none"/>
+  </g>
+  <g fill="#26374A">
+    <circle cx="4.3" cy="3.3" r="0.75"/>
+    <circle cx="8.7" cy="3.3" r="0.75"/>
+    <circle cx="4.3" cy="9.7" r="0.75"/>
+    <circle cx="8.7" cy="9.7" r="0.75"/>
+  </g>
+  <path d="M1 6.5 H5.1 M7.9 6.5 H12" stroke="#13BDB0" stroke-width="0.9" stroke-linecap="round"/>
+  <g fill="#13BDB0">
+    <circle cx="1" cy="6.5" r="0.9"/>
+    <circle cx="12" cy="6.5" r="0.9"/>
+  </g>
+  <circle cx="6.5" cy="6.5" r="0.95" fill="none" stroke="#13BDB0" stroke-width="0.85"/>
+</svg>
