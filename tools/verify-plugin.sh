@@ -31,8 +31,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${VERIFY_WORK_DIR:-${TMPDIR:-/tmp}/sightline-verify}"
 mkdir -p "$WORK"
 
-JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+# Exported, not just assigned: the verifier resolves a JDK from the JAVA_HOME *environment variable*,
+# not from the java binary it was launched with. Without the export it dies with "No suitable JDK was
+# found" — which reads like a missing dependency rather than a missing export.
+export JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
 JAVA="$JAVA_HOME/bin/java"
+
+if [[ ! -x "$JAVA" ]]; then
+  echo "No JDK at $JAVA — set JAVA_HOME to a JDK 21 (Android Studio's bundled JBR works)." >&2
+  exit 1
+fi
 
 VERIFIER_JAR="$WORK/verifier-cli-$VERIFIER_VERSION.jar"
 IDE_ZIP="$WORK/ideaIC-$IDE_VERSION.zip"
@@ -68,7 +76,7 @@ echo
 # `-team-city` is deliberately NOT passed: the plain report is the readable one, and this is run by a
 # human before a submission rather than by CI.
 set +e
-"$JAVA" -jar "$VERIFIER_JAR" check-plugin "$ARTIFACT" "$IDE_DIR" 2>&1 \
+( cd "$WORK" && "$JAVA" -jar "$VERIFIER_JAR" check-plugin "$ARTIFACT" "$IDE_DIR" ) 2>&1 \
   | grep -vE "^Layout component .* has some nonexistent" \
   | tee "$WORK/last-report.txt"
 STATUS=${PIPESTATUS[0]}
