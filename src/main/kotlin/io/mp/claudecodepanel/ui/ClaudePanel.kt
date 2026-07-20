@@ -921,6 +921,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     @TestOnly
     internal fun liveTurnCountForTest(): Int = turns.size
 
+    /**
+     * Test-only: puts the panel in the running state and parks [message] behind the in-flight turn,
+     * so the queued-composer state can be previewed and asserted without a live CLI session.
+     */
+    @TestOnly
+    internal fun queueMessageForPreview(message: String) {
+        // setRunning() defers to invokeLater, so apply the running state synchronously here — otherwise
+        // the queue would still see an idle model and send the message instead of parking it.
+        running = true
+        composer.setRunning(true)
+        composer.queueForTest(message)
+    }
+
     private fun handleEvent(line: String) {
         val o = try {
             JsonParser.parseString(line).asJsonObject
@@ -1418,7 +1431,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         SwingUtilities.invokeLater {
             composer.setRunning(v)
             refreshStatus()
+            // A turn just ended — send whatever the user queued while it was in flight.
+            if (!v) drainQueuedMessage()
         }
+    }
+
+    /**
+     * Sends one queued message per completed turn. One at a time deliberately: each queued message is
+     * a full turn, and firing them all at once would interleave their output unreadably.
+     */
+    private fun drainQueuedMessage() {
+        if (running) return
+        val next = composer.takeQueuedMessage() ?: return
+        doSend(next)
     }
 
     /** Push normalised activity events into both the map and the status model. */

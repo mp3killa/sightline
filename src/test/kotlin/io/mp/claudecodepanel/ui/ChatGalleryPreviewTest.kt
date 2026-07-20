@@ -280,6 +280,34 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         assertFalse("must not imply the turns are recoverable", notice!!.contains("load", ignoreCase = true))
     }
 
+    /**
+     * M7: with a turn in flight the composer must say Enter will *queue*, and show what is waiting.
+     * Renders `chat-gallery-queued.png` so that state can actually be looked at.
+     */
+    fun testRendersTheQueuedComposerState() {
+        if (!applyTheme(dark = false)) return
+        try {
+            val settings = ClaudeSettings.getInstance().state
+            settings.showDetails = true
+            settings.showActivityMap = false
+            settings.activityViewMode = "chat"
+            val p = ClaudePanel(project, testRootDisposable)
+            seed(p)
+            p.queueMessageForPreview("And then run the tests")
+            val w = 900; val h = 1750
+            p.component.preferredSize = Dimension(w, h)
+            layoutTree(p.component, w, h)
+
+            val labels = descendants(p.component).filterIsInstance<javax.swing.JLabel>().map { it.text.orEmpty() }
+            assertTrue("the queue must be disclosed, got: $labels", labels.any { it.contains("queued") })
+
+            val out = File("build").apply { mkdirs() }.resolve("chat-gallery-queued.png")
+            render(p.component, w, h, out)
+            println("[chat-gallery] wrote ${'$'}{out.absolutePath}")
+            assertTrue(out.length() > 5000)
+        } finally { JBColor.setDark(false) }
+    }
+
     /** Hover actions must exist but stay hidden until hover/focus, or the default view gets cluttered. */
     fun testHoverActionsExistButStartHidden() {
         val settings = ClaudeSettings.getInstance().state

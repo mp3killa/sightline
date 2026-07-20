@@ -25,14 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M7 — Composer: queue while running
-
-Today `doSend` hard-returns while running and `sendEnabled = !running && ...`, but the input is never
-disabled — so a user can type a full message, press Enter, and have **nothing happen, with no feedback**.
-Fix the silent failure first (cheap), then decide whether to queue the message or explicitly block it.
-stdin is writable mid-turn (it already carries `control_response`), so queueing is feasible; it needs a
-deliberate "send now" vs "queue next" distinction.
-
 ## M8 — File-reference context menu
 
 Hover actions landed for assistant messages (Copy), commands (Copy command / Copy output) and edits

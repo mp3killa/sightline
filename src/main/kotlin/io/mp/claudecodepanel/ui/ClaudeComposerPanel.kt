@@ -2,6 +2,7 @@ package io.mp.claudecodepanel.ui
 
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.theme.ClaudeIcons
@@ -50,6 +51,14 @@ class ClaudeComposerPanel(
 
     private val box = ComposerBox()
     private val chipsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
+
+    /** "N messages queued" — visible only while messages are parked behind a running turn. */
+    private val queueLabel = JBLabel("").apply {
+        foreground = ClaudeUiTokens.textSecondary()
+        font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        border = JBUI.Borders.empty(0, 2, 2, 2)
+        isVisible = false
+    }
     private val input = JBTextArea(2, 20)
     private val inputScroll = JBScrollPane(input, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER)
     private val modeChip = JButton()
@@ -66,7 +75,9 @@ class ClaudeComposerPanel(
 
         chipsRow.isOpaque = false
         chipsRow.isVisible = false
-        box.add(chipsRow, BorderLayout.NORTH)
+        val north = JPanel(BorderLayout()); north.isOpaque = false
+        north.add(chipsRow, BorderLayout.CENTER); north.add(queueLabel, BorderLayout.SOUTH)
+        box.add(north, BorderLayout.NORTH)
 
         input.isOpaque = false
         input.lineWrap = true
@@ -156,8 +167,19 @@ class ClaudeComposerPanel(
         sendButton.running = running
         sendButton.toolTipText = if (running) "Stop Claude" else "Send"
         sendButton.getAccessibleContext().accessibleName = if (running) "Stop Claude" else "Send message"
+        // The placeholder states what Enter will do right now: send, or queue behind the current turn.
+        input.emptyText.text = model.placeholder()
         updateSendEnabled()
+        refreshQueueLabel()
         sendButton.repaint()
+    }
+
+    /** Shows "N messages queued" while a turn is in flight; hidden when nothing is waiting. */
+    fun refreshQueueLabel() {
+        val text = model.queueLabel()
+        queueLabel.text = text
+        queueLabel.isVisible = text.isNotEmpty()
+        revalidate(); repaint()
     }
 
     fun setMode(shortName: String, dangerous: Boolean) {
@@ -185,10 +207,32 @@ class ClaudeComposerPanel(
 
     // ---- internals ----
 
+    /**
+     * Enter/Send: hands the text to the host when idle, or parks it behind the running turn. Either
+     * way the input is cleared and the user gets feedback — the one thing the old code never did.
+     */
     private fun trySend() {
         val text = input.text
-        if (model.sendEnabled(text)) onSend(text)
+        when (model.submit(text)) {
+            ComposerModel.Submit.IGNORED_BLANK -> return
+            ComposerModel.Submit.QUEUED -> {
+                input.text = ""
+                refreshQueueLabel()
+                onTextChanged()
+            }
+            ComposerModel.Submit.SENT -> onSend(text)
+        }
     }
+
+    /** Test-only: queue a message directly, as if the user had pressed Enter mid-turn. */
+    @org.jetbrains.annotations.TestOnly
+    internal fun queueForTest(message: String) {
+        model.submit(message)
+        refreshQueueLabel()
+    }
+
+    /** Drains one queued message, if any — called by the host when a turn finishes. */
+    fun takeQueuedMessage(): String? = model.takeQueued()?.also { refreshQueueLabel() }
 
     private fun onTextChanged() {
         updateSendEnabled()
