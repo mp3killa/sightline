@@ -27,6 +27,32 @@ class ActivityGraphTest {
         assertEquals("Starting", g.focus.verb)
     }
 
+    @Test fun sessionLevelNodesAreNotReportedAsUnclassified() {
+        // The inspector shows a node's category verbatim, so filing these under UNKNOWN told the user
+        // their own request was "Unknown / Unclassified". Nothing about a typed request is classifiable
+        // by a code-area heuristic — that is not the same as the heuristic having failed on it.
+        val g = freshGraph()
+        g.apply(FileSearched("loginUser", null, tick()))
+        g.apply(FileEdited("/app/ui/LoginScreen.kt", at = tick()))
+
+        assertEquals(ActivityCategory.SESSION, g.node(ActivityGraph.TASK_ID)!!.category)
+        assertEquals(ActivityCategory.SESSION, g.node(ActivityGraph.PATCH_ID)!!.category)
+        assertEquals(
+            "a search belongs to the session, not to a region of the codebase",
+            listOf(ActivityCategory.SESSION),
+            g.nodes.filter { it.type == ActivityNodeType.SEARCH }.map { it.category },
+        )
+    }
+
+    @Test fun theSessionCategoryAddsNoClusterHubToTheMap() {
+        // It names things; it is not a place. ensureCategory is never called for it, so no "Session"
+        // node appears alongside UI / Compose and the rest.
+        val g = freshGraph()
+        g.apply(FileEdited("/app/ui/LoginScreen.kt", at = tick()))
+        assertNull(g.node("cat:SESSION"))
+        assertNotNull("a real code area still gets its hub", g.node("cat:UI_COMPOSE"))
+    }
+
     @Test fun fileReadLightsUpNodeInCluster() {
         val g = freshGraph()
         g.apply(FileRead("/app/ui/LoginScreen.kt", tick()))

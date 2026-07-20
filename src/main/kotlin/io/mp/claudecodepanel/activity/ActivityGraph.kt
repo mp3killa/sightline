@@ -85,7 +85,7 @@ class ActivityGraph(
             is TaskStarted -> {
                 val label = event.text.ifBlank { "Task" }
                 touch(TASK_ID, ActivityNodeType.TASK, label = trim(label, 60), state = ActivityNodeState.ANALYSING,
-                    category = ActivityCategory.UNKNOWN, confidence = 1f, now = now, subtitle = "Current request")
+                    category = ActivityCategory.SESSION, confidence = 1f, now = now, subtitle = "Current request")
                 setFocus("Starting", trim(label, 48), null, TASK_ID, now); null // task node is not part of sequential trail
             }
             // General status/tool verbs describe the agent's overall state, not an action on the
@@ -140,7 +140,7 @@ class ActivityGraph(
         val q = e.query.ifBlank { "(pattern)" }
         val id = "search:${hash(q + (e.path ?: ""))}"
         touch(id, ActivityNodeType.SEARCH, label = "⌕ ${trim(q, 28)}", state = ActivityNodeState.SEARCHING,
-            category = ActivityCategory.UNKNOWN, confidence = e.confidence, now = now, subtitle = e.path)
+            category = ActivityCategory.SESSION, confidence = e.confidence, now = now, subtitle = e.path)
         edge(TASK_ID, id, ActivityEdgeType.SEARCHES, now, weight = 0.4f)
         setFocus("Searching", trim(q, 40), e.path, id, now)
         return id
@@ -391,13 +391,13 @@ class ActivityGraph(
 
     private fun linkEdit(fileId: String, now: Instant) {
         touch(PATCH_ID, ActivityNodeType.PATCH, label = "generated patch", state = ActivityNodeState.CREATED,
-            category = ActivityCategory.UNKNOWN, confidence = 1f, now = now, subtitle = "modified files")
+            category = ActivityCategory.SESSION, confidence = 1f, now = now, subtitle = "modified files")
         edge(PATCH_ID, fileId, ActivityEdgeType.GENERATED_FROM, now, weight = 0.5f)
     }
 
     private fun completeTask(e: TaskCompleted, now: Instant) {
         touch(TASK_ID, ActivityNodeType.TASK, label = null, state = ActivityNodeState.COMPLETED,
-            category = ActivityCategory.UNKNOWN, confidence = 1f, now = now)
+            category = ActivityCategory.SESSION, confidence = 1f, now = now)
         val transient = setOf(
             ActivityNodeState.READING, ActivityNodeState.ANALYSING, ActivityNodeState.SEARCHING,
             ActivityNodeState.DISCOVERED, ActivityNodeState.TESTING,

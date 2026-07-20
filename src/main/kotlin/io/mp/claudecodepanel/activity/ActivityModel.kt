@@ -43,6 +43,15 @@ enum class ActivityCategory(val label: String) {
     UTILITIES("Utilities"),
     SHELL("Shell / Commands"),
     DIAGNOSTICS("Errors / Warnings"),
+
+    /**
+     * Nodes belonging to the session rather than to any region of the codebase — the current request,
+     * the generated patch, a search. They are not *unclassified*; there is simply nothing about a user's
+     * own request that a code-area heuristic could classify, and filing them under
+     * [UNKNOWN] made the inspector report the request the user just typed as "Unknown / Unclassified".
+     * No cluster node is created for this category, so it names things without adding a hub to the map.
+     */
+    SESSION("Session"),
     UNKNOWN("Unknown / Unclassified"),
 }
 

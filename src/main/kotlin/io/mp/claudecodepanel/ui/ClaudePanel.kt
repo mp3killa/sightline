@@ -1969,9 +1969,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val area = plainArea("")
         private var open = false
         private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
+        private val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
         init {
             layout = BorderLayout()
-            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)); head.isOpaque = false; head.cursor = hand
+            head.isOpaque = false; head.cursor = hand
+            // The block is created at `content_block_start`, before a single token has arrived — and some
+            // thinking blocks never deliver visible text at all (a signature-only delta, say). Showing the
+            // disclosure regardless left a control that expanded to nothing, which is worse than no
+            // control: it reads as content that failed to load. The header appears with the first text.
+            head.isVisible = false
             header.foreground = mutedFg(); header.font = header.font.deriveFont(Font.ITALIC)
             head.add(chevron); head.add(header)
             head.addMouseListener(click { toggle() })
@@ -1985,6 +1991,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
          */
         fun append(t: String) {
             try { area.document.insertString(area.document.length, t, null) } catch (e: BadLocationException) { /* drop */ }
+            if (!head.isVisible && area.document.length > 0 && t.isNotBlank()) { head.isVisible = true; relayout() }
             scrollToBottomSoon()
         }
         private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }

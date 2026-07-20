@@ -1,15 +1,22 @@
 package io.mp.claudecodepanel.activity
 
 import io.mp.claudecodepanel.activity.LabelPlacement.Candidate
+import io.mp.claudecodepanel.activity.LabelPlacement.Slot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LabelPlacementTest {
 
+    /** A label with exactly one acceptable position — the collision algorithm with no escape routes. */
     private fun box(id: String, x: Int, y: Int, w: Int = 100, h: Int = 14, priority: Int = 0) =
-        Candidate(id, x, y, w, h, priority)
+        Candidate(id, w, h, priority, listOf(Slot(x, y)))
+
+    /** A label that will accept [x] or, failing that, [alt] — the old two-sided arrangement. */
+    private fun twoSided(id: String, x: Int, alt: Int, y: Int, w: Int = 100, h: Int = 14, priority: Int = 0) =
+        Candidate(id, w, h, priority, listOf(Slot(x, y), Slot(alt, y)))
 
     /** The ids whose text actually gets drawn — the placement map's keys. */
     private fun kept(candidates: List<Candidate>, padding: Int = LabelPlacement.PADDING): Set<String> =
@@ -101,7 +108,7 @@ class LabelPlacementTest {
     }
 
     @Test fun everyLabelCanBeDroppedExceptOneInAPileUp() {
-        // 20 labels stacked on the same spot: exactly one survives, and it is the highest priority.
+        // 20 labels stacked on the same spot with nowhere else to go: exactly one survives, the highest.
         val pile = (1..20).map { box("n$it", 0, 0, priority = it) }
         val kept = kept(pile)
         assertEquals(setOf("n20"), kept)
@@ -114,41 +121,41 @@ class LabelPlacementTest {
         assertEquals(2, kept(boxes, padding = 0).size)
     }
 
-    // ---- the other side of the node ----
+    // ---- falling back to another slot ----
 
-    @Test fun aClashingLabelFlipsToTheOtherSideRatherThanVanishing() {
-        // "loser" would overprint "winner" on its preferred side, but its left-hand slot is clear — so it
-        // keeps its text, just on the other side of its node.
+    @Test fun aClashingLabelMovesRatherThanVanishing() {
+        // "loser" would overprint "winner" in its first slot, but its second is clear — so it keeps its
+        // text, just somewhere else.
         val winner = box("winner", 0, 0, w = 100, priority = 200)
-        val loser = Candidate("loser", x = 50, y = 0, width = 100, height = 14, priority = 0, alternateX = -400)
+        val loser = twoSided("loser", x = 50, alt = -400, y = 0)
         val placed = LabelPlacement.place(listOf(winner, loser))
         assertEquals("both keep their text", setOf("winner", "loser"), placed.keys)
-        assertEquals("loser moved to its fallback slot", -400, placed["loser"])
-        assertEquals("winner kept its preferred slot", 0, placed["winner"])
+        assertEquals("loser moved to its fallback slot", Slot(-400, 0), placed["loser"])
+        assertEquals("winner kept its preferred slot", Slot(0, 0), placed["winner"])
     }
 
     @Test fun theFallbackIsOnlyUsedWhenThePreferredSlotIsTaken() {
-        val a = Candidate("a", x = 0, y = 0, width = 100, height = 14, priority = 0, alternateX = -400)
-        assertEquals("preferred slot is free, so keep it", mapOf("a" to 0), LabelPlacement.place(listOf(a)))
+        val a = twoSided("a", x = 0, alt = -400, y = 0)
+        assertEquals("preferred slot is free, so keep it", mapOf("a" to Slot(0, 0)), LabelPlacement.place(listOf(a)))
     }
 
-    @Test fun aLabelIsWithheldOnlyWhenBothSlotsAreTaken() {
+    @Test fun aLabelIsWithheldOnlyWhenEverySlotIsTaken() {
         val blockRight = box("blockRight", 0, 0, w = 100, priority = 300)
         val blockLeft = box("blockLeft", -400, 0, w = 100, priority = 300)
-        val squeezed = Candidate("squeezed", x = 50, y = 0, width = 100, height = 14, priority = 0, alternateX = -400)
+        val squeezed = twoSided("squeezed", x = 50, alt = -400, y = 0)
         val placed = LabelPlacement.place(listOf(blockRight, blockLeft, squeezed))
         assertFalse("nowhere left to put it", "squeezed" in placed.keys)
         assertEquals(setOf("blockRight", "blockLeft"), placed.keys)
     }
 
-    @Test fun aFlippedLabelStillBlocksLaterOnes() {
+    @Test fun aMovedLabelStillBlocksLaterOnes() {
         // Once a label takes its fallback slot, that space is genuinely occupied.
         val winner = box("aaa", 0, 0, w = 100, priority = 300)
-        val flipped = Candidate("bbb", x = 50, y = 0, width = 100, height = 14, priority = 200, alternateX = -400)
+        val moved = twoSided("bbb", x = 50, alt = -400, y = 0, priority = 200)
         val wantsSameSpot = box("ccc", -400, 0, w = 100, priority = 100)
-        val placed = LabelPlacement.place(listOf(winner, flipped, wantsSameSpot))
-        assertEquals(-400, placed["bbb"])
-        assertFalse("ccc cannot share the slot bbb flipped into", "ccc" in placed.keys)
+        val placed = LabelPlacement.place(listOf(winner, moved, wantsSameSpot))
+        assertEquals(Slot(-400, 0), placed["bbb"])
+        assertFalse("ccc cannot share the slot bbb moved into", "ccc" in placed.keys)
     }
 
     @Test fun nodesAreNeverRemovedOnlyTheirText() {
@@ -158,5 +165,89 @@ class LabelPlacementTest {
         val kept = kept(given)
         assertTrue(kept.all { id -> given.any { it.id == id } })
         assertFalse("a genuine collision was resolved", kept.size == given.size)
+    }
+
+    // ---- the slots a node offers ----
+
+    @Test fun slotsAreOfferedRightLeftAboveThenBelow() {
+        val slots = LabelPlacement.slotsAround(nodeX = 100, nodeY = 100, radius = 10, width = 60, height = 14, gap = 2)
+        assertEquals(4, slots.size)
+        assertEquals("right of the node, vertically centred on it", Slot(112, 93), slots[0])
+        assertEquals("then its left", Slot(28, 93), slots[1])
+        // 27px clear of the centre line, not the 12px the node's own radius would suggest: a vertical
+        // slot has to clear the band a *side* label occupies, since it sits directly over both of them.
+        assertEquals("then above", Slot(70, 59), slots[2])
+        assertEquals("then below", Slot(70, 127), slots[3])
+    }
+
+    @Test fun aVerticalSlotClearsTheSideSlotsItIsEscaping() {
+        // The bug this test caught: clearing only the node circle left 3px between the vertical box and
+        // the side boxes, where PADDING wants 6 — so the escape slot was never actually free.
+        val h = 14
+        val slots = LabelPlacement.slotsAround(nodeX = 200, nodeY = 200, radius = 8, width = 90, height = h)
+        val sideTop = slots[0].y
+        val sideBottom = slots[0].y + h
+        assertTrue(
+            "the above slot ends clear of the side band: ${slots[2].y + h} vs $sideTop",
+            slots[2].y + h + LabelPlacement.PADDING <= sideTop - LabelPlacement.PADDING,
+        )
+        assertTrue(
+            "the below slot starts clear of it: ${slots[3].y} vs $sideBottom",
+            slots[3].y - LabelPlacement.PADDING >= sideBottom + LabelPlacement.PADDING,
+        )
+    }
+
+    @Test fun horizontalSlotsComeBeforeVerticalOnes() {
+        // A label reads as belonging to the node it sits level with, so a side is always preferred; the
+        // vertical slots are an escape hatch, not an equal option.
+        val slots = LabelPlacement.slotsAround(nodeX = 0, nodeY = 0, radius = 8, width = 50, height = 12)
+        assertEquals("first two are level with the node", listOf(slots[0].y, slots[1].y), listOf(slots[0].y, slots[0].y))
+        assertTrue("the third sits above it", slots[2].y < slots[0].y)
+        assertTrue("the fourth sits below it", slots[3].y > slots[0].y)
+    }
+
+    @Test fun aNodeCrowdedOnBothFlanksKeepsItsLabelAboveOrBelow() {
+        // The screenshot defect: at 13 nodes, with the tier at ALL and most of the canvas empty, three
+        // labels were withheld because both flanks were taken. Nothing was above or below them.
+        val crowded = LabelPlacement.slotsAround(nodeX = 200, nodeY = 200, radius = 8, width = 90, height = 14)
+        val blockers = listOf(
+            box("right", crowded[0].x, crowded[0].y, w = 90, priority = 500),
+            box("left", crowded[1].x, crowded[1].y, w = 90, priority = 500),
+        )
+        val squeezed = Candidate("squeezed", width = 90, height = 14, priority = 0, slots = crowded)
+
+        val placed = LabelPlacement.place(blockers + squeezed)
+        assertEquals("all three keep their text", 3, placed.size)
+        assertNotNull(placed["squeezed"])
+        assertTrue(
+            "it went above or below rather than being withheld",
+            placed["squeezed"] in setOf(crowded[2], crowded[3]),
+        )
+    }
+
+    @Test fun theOldTwoSlotRuleWouldHaveWithheldThatLabel() {
+        // Guards the fix itself: with only the two horizontal slots, the same arrangement loses a label.
+        val crowded = LabelPlacement.slotsAround(nodeX = 200, nodeY = 200, radius = 8, width = 90, height = 14)
+        val blockers = listOf(
+            box("right", crowded[0].x, crowded[0].y, w = 90, priority = 500),
+            box("left", crowded[1].x, crowded[1].y, w = 90, priority = 500),
+        )
+        val twoSlotOnly = Candidate("squeezed", width = 90, height = 14, priority = 0, slots = crowded.take(2))
+        assertFalse("squeezed" in LabelPlacement.place(blockers + twoSlotOnly).keys)
+    }
+
+    @Test fun aVerticalSlotOccupiesSpaceLikeAnyOther() {
+        // A label pushed above its node must still block a third label that wants that space.
+        val crowded = LabelPlacement.slotsAround(nodeX = 200, nodeY = 200, radius = 8, width = 90, height = 14)
+        val blockers = listOf(
+            box("right", crowded[0].x, crowded[0].y, w = 90, priority = 500),
+            box("left", crowded[1].x, crowded[1].y, w = 90, priority = 500),
+        )
+        val pushedUp = Candidate("pushedUp", width = 90, height = 14, priority = 400, slots = crowded)
+        val wantsAbove = box("wantsAbove", crowded[2].x, crowded[2].y, w = 90, priority = 100)
+
+        val placed = LabelPlacement.place(blockers + pushedUp + wantsAbove)
+        assertEquals(crowded[2], placed["pushedUp"])
+        assertFalse("the slot pushedUp took is genuinely occupied", "wantsAbove" in placed.keys)
     }
 }

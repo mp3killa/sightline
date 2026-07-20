@@ -131,19 +131,18 @@ object ActivityMapRenderer {
             val labelFont = Font(Font.SANS_SERIF, if (n.type == ActivityNodeType.CATEGORY) Font.BOLD else Font.PLAIN, if (n.type == ActivityNodeType.TASK) 15 else 12)
             val fm = g.getFontMetrics(labelFont)
             val boxW = fm.stringWidth(n.label) + 6
-            val ly = y + fm.ascent / 2 - 1
             pending.add(
                 PendingLabel(
                     box = LabelPlacement.Candidate(
                         id = n.id,
-                        x = x + r + 2,                  // preferred: to the right of the node
-                        alternateX = x - r - 2 - boxW,  // fallback: to its left
-                        y = ly - fm.ascent,
                         width = boxW,
                         height = fm.height,
                         priority = MapDensity.labelPriority(attention = false, type = n.type),
+                        slots = LabelPlacement.slotsAround(
+                            nodeX = x, nodeY = y, radius = r, width = boxW, height = fm.height,
+                        ),
                     ),
-                    text = n.label, font = labelFont, baseline = ly, foreground = fg,
+                    text = n.label, font = labelFont, ascent = fm.ascent, foreground = fg,
                 ),
             )
         }
@@ -152,12 +151,12 @@ object ActivityMapRenderer {
         val placed = LabelPlacement.place(pending.map { it.box })
         val labelBg = if (dark) Color(0x1E, 0x1F, 0x22) else Color(0xF7, 0xF8, 0xFA)
         for (l in pending) {
-            val boxX = placed[l.box.id] ?: continue
+            val slot = placed[l.box.id] ?: continue
             g.font = l.font
             g.color = alpha(labelBg, 185)
-            g.fillRoundRect(boxX, l.box.y, l.box.width, l.box.height, 7, 7)
+            g.fillRoundRect(slot.x, slot.y, l.box.width, l.box.height, 7, 7)
             g.color = l.foreground
-            g.drawString(l.text, boxX + 3, l.baseline)
+            g.drawString(l.text, slot.x + 3, slot.y + l.ascent)
         }
 
         // Title / focus banner.
@@ -252,7 +251,7 @@ object ActivityMapRenderer {
         val box: LabelPlacement.Candidate,
         val text: String,
         val font: Font,
-        val baseline: Int,
+        val ascent: Int,
         val foreground: Color,
     )
 }

@@ -936,19 +936,19 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     val fm = g2.getFontMetrics(font)
                     val label = truncateLabel(cleanLabel(n), 26)
                     val boxW = fm.stringWidth(label) + 6
-                    val ty = s.y + fm.ascent / 2 - 1
                     pendingLabels.add(
                         PendingLabel(
                             box = LabelPlacement.Candidate(
                                 id = id,
-                                x = s.x + r.toInt() + 1,                  // preferred: right of the node
-                                alternateX = s.x - r.toInt() - 1 - boxW,  // fallback: to its left
-                                y = ty - fm.ascent,
                                 width = boxW,
                                 height = fm.height,
                                 priority = MapDensity.labelPriority(attention, n.type),
+                                slots = LabelPlacement.slotsAround(
+                                    nodeX = s.x, nodeY = s.y, radius = r.toInt(),
+                                    width = boxW, height = fm.height,
+                                ),
                             ),
-                            text = label, font = font, baseline = ty, fresh = fresh,
+                            text = label, font = font, ascent = fm.ascent, fresh = fresh,
                         ),
                     )
                 }
@@ -965,7 +965,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             val box: LabelPlacement.Candidate,
             val text: String,
             val font: Font,
-            val baseline: Int,
+            val ascent: Int,
             val fresh: Double,
         )
 
@@ -977,12 +977,12 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             if (labels.isEmpty()) return
             val placed = LabelPlacement.place(labels.map { it.box })
             for (l in labels) {
-                val boxX = placed[l.box.id] ?: continue
+                val slot = placed[l.box.id] ?: continue
                 g2.font = l.font
                 g2.color = withAlpha(canvasBg(), 0.72f)
-                g2.fillRoundRect(boxX, l.box.y, l.box.width, l.box.height, 7, 7)
+                g2.fillRoundRect(slot.x, slot.y, l.box.width, l.box.height, 7, 7)
                 g2.color = withAlpha(ClaudeUiTokens.textPrimary(), (0.6 + l.fresh * 0.4).toFloat())
-                g2.drawString(l.text, boxX + 3, l.baseline)
+                g2.drawString(l.text, slot.x + 3, slot.y + l.ascent)
             }
         }
 
