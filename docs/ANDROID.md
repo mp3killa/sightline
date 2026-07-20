@@ -207,7 +207,7 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.9.0** = M4–M5.
+Each is independently shippable with a stated gate. Release mapping: **0.9.0** = M5.
 
 Shipped milestones are **deleted from this file**, not annotated — the same rule
 [BACKLOG.md](BACKLOG.md) follows, so what's left stays honest and short. Decisions that outlive a
@@ -218,26 +218,22 @@ optional-dependency boundary, the action gate, the persistence guardrails and th
 are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt injection, `android.getContext`
 and the tier-2/3 parsers — and **M2** — variant-aware task resolution, the build-failure classifier,
 stack-trace-to-source and targeted test selection — and **M3** — the logcat redactor, device actions,
-revertible state recipes and evidence-graded crash investigation — shipped 2026-07-20 too.)
+revertible state recipes and evidence-graded crash investigation — shipped 2026-07-20 too. **M4** shipped
+its verifiable half the same day — screen inspection, Compose source analysis, and the `limits` contract
+on both; what it deliberately did **not** ship is listed below.)
 
-### M4 — Screen awareness & Compose verification *(§3, §4)*
-
-- **Current screen** — `dumpsys activity activities` for Activity and back stack, `dumpsys window` for
-  configuration, plus best-effort Compose route. Honest limits: the Compose semantics tree is reachable
-  via `uiautomator dump` **only** when `testTagsAsResourceId` is enabled; when it is not, say so rather
-  than reporting an empty tree as a clean one.
-- **Screenshot capture** with the per-capture consent card (§1.4).
-- **Compose preview integration** (tier-1, AS only) — detect previews for the current composable, run
-  and refresh, generate missing previews, render light/dark/font-scale/device variants.
-- **Visual verification loop** — modify, render, capture, compare, report, revert or refine. Baselines
-  land in the M0 persistence store.
-- **Compose migrations** (§4) — XML→Compose, Fragment→Compose, RecyclerView→`LazyColumn`,
-  LiveData→StateFlow, M2→M3. Delivered as *plans* the user approves, never a blind screen rewrite.
-
-**Gate:** preview integration degrades cleanly to "unavailable — Android Studio not detected" in plain
-IDEA. Semantics-tree unavailability is reported as unavailable, never as empty.
-
----
+> **M4's deferred half — live Compose preview rendering and the visual before/after loop.**
+> Rendering a preview requires driving Android Studio's own preview surface
+> (`com.android.tools.idea.compose.preview.*`), the most volatile internal-API surface in the whole
+> plugin, and there is **no way to verify it from this dev environment** — the headless PNG harness
+> renders Sightline's own Swing, not Android Studio's preview tool window. Writing that integration
+> blind would produce code that compiles, cannot be tested, and breaks silently on the next AS release.
+> It needs a human with `runIde` and a real Compose project. Until then `analyzeCompose` gives the
+> static half (which previews exist and what they cover) and says plainly that it is static.
+>
+> The screenshot **consent card** (§1.4: show the image, then attach/discard) is UI work that belongs
+> with that same live pass — `AndroidScreenTools.screenshotAction` exposes the capture for it, and the
+> MCP surface deliberately does not capture on its own.
 
 ### M5 — Static audits, routes & graph modes *(§10, §11, §15, §9)*
 

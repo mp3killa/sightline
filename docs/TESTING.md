@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**805 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**835 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -58,7 +58,13 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
   `DeviceRecipesTest` — the round trip: apply then revert returns every touched setting to the value it
   started on, and an unreadable prior value makes the plan `revertible: false`;
   `CrashInvestigatorTest` — that a recent change stays a *contributing factor* and is never promoted to
-  a cause, and that absent evidence is named rather than left as a silent gap.
+  a cause, and that absent evidence is named rather than left as a silent gap;
+  `DumpsysParserTest` — the back stack reads front-first (the first version had it inverted, which looks
+  entirely plausible and nothing else would have caught), and unrecognised output yields nulls;
+  `ComposeSourceAnalyzerTest` — stacked `@Preview` annotations merge their coverage, a multi-line
+  `Image(` call isn't accused of omitting a `contentDescription` it supplies further down, and a test
+  asserting **no finding kind claims anything about recomposition or stability** — the boundary is
+  enforced by the suite, not just by intent.
 - `activity/ActivityInterpreterAndroidTest` — crash attribution (a logcat crash attaches to the file
   that threw; no app prefixes or an unresolvable name attaches to *nothing* rather than to a framework
   frame) and typed build labels (a diagnosed cause replaces `> Task :app:foo FAILED`; an unrecognised
@@ -197,7 +203,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 805 unit tests
+./gradlew test                 # the 835 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

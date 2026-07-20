@@ -34,6 +34,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.JBUI
 import io.mp.claudecodepanel.ide.android.AndroidDeviceTools
 import io.mp.claudecodepanel.ide.android.AndroidMcpTools
+import io.mp.claudecodepanel.ide.android.AndroidScreenTools
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -85,6 +86,9 @@ class IdeServer(private val project: Project) : Disposable {
 
     /** `android.*` device/logcat tools. Observation only — destructive actions go through the UI. */
     private val androidDeviceTools: AndroidDeviceTools by lazy { AndroidDeviceTools(project) }
+
+    /** `android.*` screen inspection + Compose source analysis. */
+    private val androidScreenTools: AndroidScreenTools by lazy { AndroidScreenTools(project) }
 
     private companion object {
         const val DIFF_TIMEOUT_MINUTES = 10L
@@ -190,6 +194,8 @@ class IdeServer(private val project: Project) : Disposable {
                 if (testBridge.handles(name)) {
                     val r = testBridge.call(name, args)
                     reply(conn, id, toolResult(r.text, r.imagePng))
+                } else if (androidScreenTools.handles(name)) {
+                    reply(conn, id, toolResult(androidScreenTools.call(name, args)))
                 } else if (androidDeviceTools.handles(name)) {
                     reply(conn, id, toolResult(androidDeviceTools.call(name, args)))
                 } else if (androidTools.handles(name)) {
@@ -265,6 +271,7 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("saveDocument", "Save a document"))
         androidTools.addToolDefs(tools) // no-op unless the Android features are on
         androidDeviceTools.addToolDefs(tools)
+        androidScreenTools.addToolDefs(tools)
         testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
     }
