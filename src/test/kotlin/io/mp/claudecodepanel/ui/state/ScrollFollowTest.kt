@@ -23,4 +23,17 @@ class ScrollFollowTest {
         // Content fits the viewport (maximum == visible): always "at the bottom".
         assertTrue(ScrollFollow.isNearBottom(value = 0, visibleAmount = 500, maximum = 500, threshold = 48))
     }
+
+    @Test fun offersJumpWhenPausedWithContentBelow() {
+        assertTrue(ScrollFollow.shouldOfferJumpToLatest(following = false, visibleAmount = 100, maximum = 1000))
+    }
+
+    @Test fun noJumpWhileFollowing() {
+        assertFalse(ScrollFollow.shouldOfferJumpToLatest(following = true, visibleAmount = 100, maximum = 1000))
+    }
+
+    @Test fun noJumpWhenNothingToScroll() {
+        // A transcript that fits the viewport must never show the affordance, even if `following` went false.
+        assertFalse(ScrollFollow.shouldOfferJumpToLatest(following = false, visibleAmount = 500, maximum = 500))
+    }
 }

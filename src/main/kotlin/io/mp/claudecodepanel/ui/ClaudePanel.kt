@@ -85,6 +85,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Insets
 import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.event.ComponentAdapter
@@ -101,6 +102,7 @@ import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
+import javax.swing.JLayeredPane
 import javax.swing.JPanel
 import javax.swing.JRadioButton
 import javax.swing.JTextArea
@@ -189,10 +191,41 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
     // Auto-follow stays on only while the user is at/near the bottom; scrolling up to read pauses it.
     private var following = true
+
+    /** Shown only while follow is paused, so the reader can get back to the live end in one click. */
+    private val jumpToLatestButton = JButton("Jump to latest ↓").apply {
+        font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        margin = Insets(2, 10, 2, 10)
+        isVisible = false
+        isFocusable = true
+        toolTipText = "Resume following new output"
+        accessibleContext.accessibleName = A11yNames.TRANSCRIPT_JUMP_TO_LATEST
+        addActionListener { jumpToLatest() }
+    }
+
     private val scroll = JBScrollPane(transcript).apply {
         verticalScrollBar.addAdjustmentListener {
             following = ScrollFollow.isNearBottom(verticalScrollBar.value, verticalScrollBar.visibleAmount, verticalScrollBar.maximum, JBUI.scale(48))
+            updateJumpToLatest()
         }
+    }
+
+    /**
+     * Overlays [jumpToLatestButton] on the transcript without stealing layout space, so the affordance can
+     * appear and disappear during a scroll without shifting the text the user is reading.
+     */
+    private val transcriptLayer = object : JLayeredPane() {
+        override fun doLayout() {
+            scroll.setBounds(0, 0, width, height)
+            val d = jumpToLatestButton.preferredSize
+            jumpToLatestButton.setBounds((width - d.width) / 2, height - d.height - JBUI.scale(12), d.width, d.height)
+        }
+        override fun getPreferredSize(): Dimension = scroll.preferredSize
+    }.apply {
+        setLayer(scroll, JLayeredPane.DEFAULT_LAYER)
+        setLayer(jumpToLatestButton, JLayeredPane.PALETTE_LAYER)
+        add(scroll)
+        add(jumpToLatestButton)
     }
 
     private val hand = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
@@ -239,7 +272,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
-    private val markdownRenderer = BlockRenderer { openMarkdownLink(it) }
+    private val markdownRenderer = BlockRenderer(project) { openMarkdownLink(it) }
     private val turns = ArrayList<AssistantTurn>()
 
     private val modes = PermissionModes.all
@@ -276,7 +309,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         scroll.border = BorderFactory.createEmptyBorder()
         scroll.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         scroll.viewport.background = ClaudeUiTokens.surface()
-        chatHost.add(scroll, BorderLayout.CENTER)
+        chatHost.add(transcriptLayer, BorderLayout.CENTER)
         mapSplitter.setHonorComponentsMinimumSize(false)
         installCenter()
         root.add(centerHost, BorderLayout.CENTER)
@@ -636,7 +669,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun showEmptyState(show: Boolean) {
         chatHost.removeAll()
-        chatHost.add(if (show) emptyState else scroll, BorderLayout.CENTER)
+        chatHost.add(if (show) emptyState else transcriptLayer, BorderLayout.CENTER)
         chatHost.revalidate(); chatHost.repaint()
     }
 
@@ -1171,6 +1204,23 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             pendingScroll = false
             transcript.revalidate(); transcript.repaint()
             val bar = scroll.verticalScrollBar; bar.value = bar.maximum
+        }
+    }
+
+    /** Back to the live end, which re-arms auto-follow via the adjustment listener. */
+    private fun jumpToLatest() {
+        val bar = scroll.verticalScrollBar
+        bar.value = bar.maximum
+        following = true
+        updateJumpToLatest()
+    }
+
+    private fun updateJumpToLatest() {
+        val bar = scroll.verticalScrollBar
+        val show = ScrollFollow.shouldOfferJumpToLatest(following, bar.visibleAmount, bar.maximum)
+        if (jumpToLatestButton.isVisible != show) {
+            jumpToLatestButton.isVisible = show
+            transcriptLayer.repaint()
         }
     }
     private fun relayout() { SwingUtilities.invokeLater { transcript.revalidate(); transcript.repaint() } }

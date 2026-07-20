@@ -24,4 +24,5 @@ object A11yNames {
     const val WORKSPACE_ACTIVITY = "sightline.workspace.activity"
     const val TOOL_WINDOW_ROOT = "sightline.toolWindow.root"
     const val ACTIVITY_GRAPH = "sightline.activity.graph"
+    const val TRANSCRIPT_JUMP_TO_LATEST = "sightline.transcript.jumpToLatest"
 }

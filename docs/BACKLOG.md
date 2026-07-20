@@ -36,6 +36,11 @@ own tool window. Verify:
   file links all render in light + dark; the turn footer shows cost/duration/turns and the status strip
   never echoes the response; malformed/half-streamed Markdown stays readable; auto-scroll follows only at
   the bottom (scrolling up pauses it, sending re-follows).
+- **Chat polish (needs eyes):** fenced code is **syntax-highlighted** in the IDE's own colours and stays
+  legible in both themes (an unknown/unlexable fence must fall back to plain monospace, not garble);
+  a >24-line block renders capped with a working **Expand/Collapse** and Copy still yields the whole text;
+  a wide table **scrolls horizontally** rather than squeezing its columns; the **"Jump to latest ↓"** overlay
+  appears only when follow is paused, doesn't cover the last line of text, and re-arms follow when clicked.
 - **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
   `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
   clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
@@ -67,18 +72,16 @@ remains:
 
 ---
 
-# Chat transcript rendering — remaining polish
+# Chat transcript rendering — complete
 
 The Markdown renderer overhaul shipped (phases A–3, see [../CLAUDE.md](../CLAUDE.md)): the status-echo fix
 + turn footer, the platform-free `ui/markdown/` parser → model → component pipeline
 (headings/lists/tables/code/quotes/callouts + inline styles), project-file links, and the scroll-follow
-guard. What's left is optional polish:
-
-- **Syntax highlighting** in fenced code — only if it can reuse IntelliJ editor/highlighter APIs safely;
-  don't block on it.
-- **Code block** height cap + Expand/Collapse for very long blocks (today: full height, horizontal scroll).
-- **Table** horizontal scroll for very wide tables (today: cells wrap to the available width).
-- **"Jump to latest"** affordance when auto-follow is paused (the scroll guard ships; the button doesn't).
+guard. The remaining polish is now done too — **syntax highlighting** (IDE lexer + colour scheme, via
+`CodeHighlighting`/`CodeLanguages`), the **code-block height cap** with Expand/Collapse (`CodeBlockLayout`),
+**wide-table horizontal scroll** (`TableLayout`), and the **"Jump to latest"** overlay
+(`ScrollFollow.shouldOfferJumpToLatest`). All four are unit-tested; the visual pass is folded into the live
+Android Studio gate above.
 
 ---
 

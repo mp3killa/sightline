@@ -10,4 +10,12 @@ object ScrollFollow {
 
     fun isNearBottom(value: Int, visibleAmount: Int, maximum: Int, threshold: Int): Boolean =
         maximum - (value + visibleAmount) <= threshold
+
+    /**
+     * Whether to show the "Jump to latest" affordance. Only once following is paused *and* there is
+     * something below the viewport to jump to — an un-scrollable transcript must never offer it, or the
+     * button would sit there permanently on a short conversation.
+     */
+    fun shouldOfferJumpToLatest(following: Boolean, visibleAmount: Int, maximum: Int): Boolean =
+        !following && maximum > visibleAmount
 }

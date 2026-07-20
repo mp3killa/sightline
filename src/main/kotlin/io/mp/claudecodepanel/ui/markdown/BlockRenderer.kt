@@ -3,6 +3,8 @@ package io.mp.claudecodepanel.ui.markdown
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorFontType
+import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -17,6 +19,7 @@ import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import java.awt.Rectangle
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -26,8 +29,9 @@ import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JTextArea
 import javax.swing.JTextPane
+import javax.swing.JViewport
+import javax.swing.Scrollable
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
@@ -40,9 +44,14 @@ import javax.swing.text.StyledDocument
  * scheme, so it follows the light/dark theme.
  *
  * [onLink] is invoked when a hyperlink is clicked (default: open in the browser); Phase 2 routes project
- * file references through it. Rendering is defensive — a single bad block never throws past its component.
+ * file references through it. [project] is optional and only sharpens fenced-code highlighting — without
+ * it, blocks still render, just with the language-neutral lexer where one exists.
+ * Rendering is defensive — a single bad block never throws past its component.
  */
-class BlockRenderer(private val onLink: (String) -> Unit = { runCatching { BrowserUtil.browse(it) } }) {
+class BlockRenderer(
+    private val project: Project? = null,
+    private val onLink: (String) -> Unit = { runCatching { BrowserUtil.browse(it) } },
+) {
 
     fun render(blocks: List<MdBlock>): List<JComponent> = blocks.map { block(it) }
 
@@ -184,23 +193,91 @@ class BlockRenderer(private val onLink: (String) -> Unit = { runCatching { Brows
             copy.text = "Copied"
             javax.swing.Timer(1200) { copy.text = "Copy" }.apply { isRepeats = false }.start()
         }
-        header.add(copy, BorderLayout.EAST)
 
-        val area = JTextArea(c.code)
-        area.isEditable = false
-        area.lineWrap = false
-        area.isOpaque = false
-        area.font = monoFont()
-        area.foreground = ClaudeUiTokens.textPrimary()
-        area.border = JBUI.Borders.emptyTop(4)
-        val scroll = JBScrollPane(area, JBScrollPane.VERTICAL_SCROLLBAR_NEVER, JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED)
+        val area = codePane(c)
+        // JTextPane wraps whenever a viewport is its direct parent; an intermediate panel suppresses that,
+        // so long lines scroll horizontally (as code should) instead of re-flowing.
+        val noWrap = JPanel(BorderLayout())
+        noWrap.isOpaque = false
+        noWrap.add(area, BorderLayout.CENTER)
+
+        // A long block is clipped to its first lines so it can't push the rest of the turn off-screen;
+        // the toggle restores the full height. Short blocks render whole with no toggle at all.
+        val collapsible = CodeBlockLayout.isCollapsible(c.code)
+        var expanded = !collapsible
+        val scroll = object : JBScrollPane(noWrap, VERTICAL_SCROLLBAR_NEVER, HORIZONTAL_SCROLLBAR_AS_NEEDED) {
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                if (expanded) return natural
+                val lineHeight = area.getFontMetrics(area.font).height
+                val cap = JBUI.scale(CodeBlockLayout.collapsedHeight(lineHeight, verticalPadding = 4))
+                return Dimension(natural.width, minOf(natural.height, cap))
+            }
+        }
         scroll.isOpaque = false
         scroll.viewport.isOpaque = false
         scroll.border = JBUI.Borders.empty()
 
+        val actions = JPanel()
+        actions.layout = BoxLayout(actions, BoxLayout.X_AXIS)
+        actions.isOpaque = false
+        if (collapsible) {
+            val toggle = JButton(CodeBlockLayout.toggleLabel(expanded, c.code))
+            toggle.font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+            toggle.isFocusable = true
+            toggle.margin = Insets(0, 6, 0, 6)
+            toggle.addActionListener {
+                expanded = !expanded
+                toggle.text = CodeBlockLayout.toggleLabel(expanded, c.code)
+                // The height cap lives in getPreferredSize, so the whole column must re-measure.
+                scroll.revalidate()
+                wrap.revalidate()
+                wrap.repaint()
+            }
+            actions.add(toggle)
+            actions.add(Box.createHorizontalStrut(JBUI.scale(4)))
+        }
+        actions.add(copy)
+        header.add(actions, BorderLayout.EAST)
+
         wrap.add(header, BorderLayout.NORTH)
         wrap.add(scroll, BorderLayout.CENTER)
         return boxed(wrap, top = 4, bottom = 6)
+    }
+
+    /** The code text itself: monospace, read-only, and lexer-coloured when the language is one we know. */
+    private fun codePane(c: MdCodeBlock): JTextPane {
+        val pane = JTextPane()
+        pane.isEditable = false
+        pane.isOpaque = false
+        pane.font = monoFont()
+        pane.foreground = ClaudeUiTokens.textPrimary()
+        pane.border = JBUI.Borders.emptyTop(4)
+        pane.text = c.code
+
+        val spans = CodeHighlighting.spans(project, c.language, c.code)
+        if (spans.isNotEmpty()) {
+            val doc = pane.styledDocument
+            val mono = pane.font
+            for (span in spans) {
+                val length = minOf(span.end, doc.length) - span.start
+                if (span.start < 0 || length <= 0) continue // a lexer that over-runs must never throw
+                doc.setCharacterAttributes(span.start, length, tokenStyle(span.attributes, mono), false)
+            }
+        }
+        return pane
+    }
+
+    /**
+     * Editor [TextAttributes] → a Swing style. Foreground and bold/italic only: token *backgrounds* would
+     * fight the block's own surface and read as stray highlighting in the transcript.
+     */
+    private fun tokenStyle(attributes: TextAttributes, mono: Font): SimpleAttributeSet = SimpleAttributeSet().apply {
+        StyleConstants.setFontFamily(this, mono.family)
+        StyleConstants.setFontSize(this, mono.size)
+        attributes.foregroundColor?.let { StyleConstants.setForeground(this, it) }
+        if (attributes.fontType and Font.BOLD != 0) StyleConstants.setBold(this, true)
+        if (attributes.fontType and Font.ITALIC != 0) StyleConstants.setItalic(this, true)
     }
 
     // ---- table ----
@@ -222,6 +299,9 @@ class BlockRenderer(private val onLink: (String) -> Unit = { runCatching { Brows
                 JBUI.Borders.empty(4, 8),
             )
             cell.add(pane, BorderLayout.CENTER)
+            // A width floor per column: without it, wrapping cells let a wide table squeeze itself down to
+            // a few unreadable characters per column instead of overflowing into the scroller below.
+            cell.minimumSize = Dimension(JBUI.scale(TableLayout.minColumnWidth(cols)), 0)
             val gbc = GridBagConstraints().apply {
                 gridx = col; gridy = row; weightx = 1.0; fill = GridBagConstraints.BOTH
                 anchor = GridBagConstraints.NORTHWEST
@@ -234,8 +314,38 @@ class BlockRenderer(private val onLink: (String) -> Unit = { runCatching { Brows
 
         val framed = MdColumn()
         framed.border = BorderFactory.createLineBorder(gridColor, 1, true)
-        framed.add(grid, BorderLayout.CENTER)
+        framed.add(tableScroller(grid, cols), BorderLayout.CENTER)
         return boxed(framed, top = 4, bottom = 6)
+    }
+
+    /**
+     * Hosts [grid] so a wide table scrolls horizontally instead of squeezing. While the table fits, the host
+     * tracks the viewport width and cells wrap as before; once [TableLayout] says it can't fit, the host
+     * takes its own (wider) preferred width, which is what makes the scrollbar appear.
+     */
+    private fun tableScroller(grid: JComponent, columnCount: Int): JComponent {
+        val minWidth = JBUI.scale(TableLayout.minTableWidth(columnCount))
+        val host = object : JPanel(BorderLayout()), Scrollable {
+            init { isOpaque = false; add(grid, BorderLayout.CENTER) }
+
+            private fun overflowing(): Boolean =
+                TableLayout.needsHorizontalScroll(columnCount, (parent as? JViewport)?.width ?: 0)
+
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                return if (overflowing()) Dimension(maxOf(minWidth, natural.width), natural.height) else natural
+            }
+            override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+            override fun getScrollableUnitIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(24)
+            override fun getScrollableBlockIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(120)
+            override fun getScrollableTracksViewportWidth() = !overflowing()
+            override fun getScrollableTracksViewportHeight() = false
+        }
+        val scroll = JBScrollPane(host, JBScrollPane.VERTICAL_SCROLLBAR_NEVER, JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED)
+        scroll.isOpaque = false
+        scroll.viewport.isOpaque = false
+        scroll.border = JBUI.Borders.empty()
+        return scroll
     }
 
     // ---- inline ----
