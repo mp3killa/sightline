@@ -32,6 +32,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.JBUI
+import io.mp.claudecodepanel.ide.android.AndroidDeviceTools
 import io.mp.claudecodepanel.ide.android.AndroidMcpTools
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
@@ -81,6 +82,9 @@ class IdeServer(private val project: Project) : Disposable {
 
     /** `android.*` tools; contributes nothing outside an Android project or with the feature off. */
     private val androidTools: AndroidMcpTools by lazy { AndroidMcpTools(project) }
+
+    /** `android.*` device/logcat tools. Observation only — destructive actions go through the UI. */
+    private val androidDeviceTools: AndroidDeviceTools by lazy { AndroidDeviceTools(project) }
 
     private companion object {
         const val DIFF_TIMEOUT_MINUTES = 10L
@@ -186,6 +190,8 @@ class IdeServer(private val project: Project) : Disposable {
                 if (testBridge.handles(name)) {
                     val r = testBridge.call(name, args)
                     reply(conn, id, toolResult(r.text, r.imagePng))
+                } else if (androidDeviceTools.handles(name)) {
+                    reply(conn, id, toolResult(androidDeviceTools.call(name, args)))
                 } else if (androidTools.handles(name)) {
                     // Already off the EDT (this is the WebSocket thread), which is what the resolver's
                     // file walks and adb round-trips require.
@@ -258,6 +264,7 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("checkDocumentDirty", "Check whether a document has unsaved changes"))
         tools.add(tool("saveDocument", "Save a document"))
         androidTools.addToolDefs(tools) // no-op unless the Android features are on
+        androidDeviceTools.addToolDefs(tools)
         testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
     }

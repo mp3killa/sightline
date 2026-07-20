@@ -105,7 +105,9 @@ object AndroidActionPolicy {
                 "the device's verified-boot state; on a physical device this can require a factory reset",
             )
 
-            "shell" -> classifyShell(rest)
+            // `exec-out` runs a command exactly like `shell` but streams raw binary — it is how a
+            // screenshot is captured without a pty mangling the PNG. Same command, so same classification.
+            "shell", "exec-out" -> classifyShell(rest)
 
             else -> unknown("`adb $verb` isn't a command this gate recognises")
         }

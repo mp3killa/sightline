@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**723 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**805 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -45,7 +45,20 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
   `StackTraceResolverTest` — logcat line prefixes, `Caused by` chains, `... N more`, and that an
   all-framework trace yields *no* blame frame rather than a wrong one;
   `TestSelectionTest` — variant-specific source sets (`src/testDemoStaging/`), and that changed code
-  with no test is reported as `uncovered` rather than silently skipped.
+  with no test is reported as `uncovered` rather than silently skipped;
+  **`LogcatRedactorTest`** — the privacy gate, and the most security-sensitive suite here alongside
+  `HealthSanitizerTest`. Built from log lines a real app emits: tokens, JWTs, JSON-quoted secrets,
+  emails, coordinates, device ids. Asserts both directions — nothing sensitive survives, *and* stack
+  frames, class names, version numbers and ordinary logs are untouched, because over-redaction that
+  destroys the log is its own failure. Plus idempotence and fail-closed line dropping;
+  `LogcatParserTest` — that a stack frame (a continuation line with no level of its own) survives a
+  level filter, which is the subtle way a crash capture gets truncated to its first line;
+  `DeviceActionsTest` — that every action is risk-classified *by construction*, and that a deep link's
+  `&` stays inside one argv element rather than becoming a second command;
+  `DeviceRecipesTest` — the round trip: apply then revert returns every touched setting to the value it
+  started on, and an unreadable prior value makes the plan `revertible: false`;
+  `CrashInvestigatorTest` — that a recent change stays a *contributing factor* and is never promoted to
+  a cause, and that absent evidence is named rather than left as a silent gap.
 - `activity/ActivityInterpreterAndroidTest` — crash attribution (a logcat crash attaches to the file
   that threw; no app prefixes or an unresolvable name attaches to *nothing* rather than to a framework
   frame) and typed build labels (a diagnosed cause replaces `> Task :app:foo FAILED`; an unrecognised
@@ -184,7 +197,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 723 unit tests
+./gradlew test                 # the 805 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

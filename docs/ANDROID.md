@@ -207,8 +207,7 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.8.0** = M3,
-**0.9.0** = M4–M5.
+Each is independently shippable with a stated gate. Release mapping: **0.9.0** = M4–M5.
 
 Shipped milestones are **deleted from this file**, not annotated — the same rule
 [BACKLOG.md](BACKLOG.md) follows, so what's left stays honest and short. Decisions that outlive a
@@ -218,34 +217,8 @@ optional-dependency boundary, the action gate, the persistence guardrails and th
 2026-07-20 and has been removed accordingly. Its four standing-decision amendments, formerly Appendix B,
 are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt injection, `android.getContext`
 and the tier-2/3 parsers — and **M2** — variant-aware task resolution, the build-failure classifier,
-stack-trace-to-source and targeted test selection — shipped 2026-07-20 too.)
-
-### M3 — Device control & Logcat intelligence *(§2, §7, §8)*
-
-Closing the run/observe loop — the part Claude cannot do at all today.
-
-- **Device catalog** — `adb devices -l` ∪ `emulator -list-avds`, with an offline/booting/online state
-  model. Device picker in the strip. Action card when nothing is available:
-  `[Start Pixel 8 API 35] [Select another device] [Build only]`.
-- **Device actions** as MCP tools + cards: start/stop emulator, install, launch, force-stop, clear data,
-  uninstall, open activity, fire deep link, grant/revoke permission, dark mode, locale, font scale,
-  rotate, simulate process death, screenshot. Destructive ones gated per M0.
-- **Device-state recipes** with a **revert list** — the proposal's accessibility recipe is only safe if
-  Sightline can put the device back. `DeviceRecipes` returns apply-commands *and* restore-commands, and
-  the card offers `[Restore device state]`.
-- **Logcat intelligence** — app-filtered capture, `LogcatRedactor` (§1.4), repeat grouping, framework
-  noise suppression, stack-trace linking via M2's resolver, process death/restart detection, crash /
-  ANR / StrictMode / OOM extraction. Attach as a chip: last 30s / 2m / session.
-- **Crash & ANR investigation** (§8) — correlate trace, source, recent git diff, API level, variant,
-  manifest, lifecycle. Reports under four explicit headings: **confirmed cause / likely cause /
-  contributing factors / missing evidence.** That distinction is the whole point; without it this is a
-  guessing machine with a nice layout.
-
-**Gate:** redactor corpus test passes and fails closed. A recipe applied then reverted leaves the device
-byte-identical on the properties it touched. Crash investigation on a real crash names its evidence
-tier correctly and lists what it could not determine.
-
----
+stack-trace-to-source and targeted test selection — and **M3** — the logcat redactor, device actions,
+revertible state recipes and evidence-graded crash investigation — shipped 2026-07-20 too.)
 
 ### M4 — Screen awareness & Compose verification *(§3, §4)*
 
