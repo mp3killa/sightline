@@ -25,22 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M3 — File edits as first-class blocks
-
-Edits deserve more weight than reads, and today have less structure than either:
-
-- No edit header, no added/removed line counts (nothing consumes `lineDiff`'s output beyond the loop).
-- `MultiEdit` concatenates every edit into one document with **no separator or per-edit header**.
-- **Diffs are never truncated** — `truncate()` applies only to results, so `Write` renders an entire new
-  file inline as all-adds. Fix this first; it is a real perf/usability defect, not polish.
-- No collapse, no "Open file", no "Copy diff".
-- Unified only, with no width-responsive selection (side-by-side where wide, unified when narrow).
-- Diff colours are fixed `JBColor` pairs (`ClaudePanel.kt` ~line 402) rather than the editor's own
-  `DiffColors`/`EditorColors` scheme keys, so they don't track a custom theme. The scheme is already
-  consulted for fonts and syntax highlighting — extend that.
-
-Responsive diff selection is pure logic → `ui/state`, unit-tested.
-
 ## M4 — Processing summary + hover actions
 
 - Collapse "Processing details" into a compact expandable summary once meaningful content begins —

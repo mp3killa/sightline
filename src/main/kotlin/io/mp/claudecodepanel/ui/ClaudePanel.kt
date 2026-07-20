@@ -34,6 +34,11 @@ import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.intellij.openapi.diff.DiffColors
+import com.intellij.openapi.ide.CopyPasteManager
+import io.mp.claudecodepanel.ui.state.DiffLayout
+import io.mp.claudecodepanel.ui.state.DiffPresentation
+import java.awt.GridLayout
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -191,6 +196,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private var preferredMode = ViewMode.SPLIT
     private var viewMode = ViewMode.SPLIT
     private var lastProfile: LayoutProfile? = null
+    private var lastDiffWidth = -1
 
     private val transcript = object : JPanel(), Scrollable {
         init {
@@ -413,6 +419,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // chat pane).
         val composerPad = if (viewMode == ViewMode.SPLIT) JBUI.scale(0) else (hpad - JBUI.scale(14)).coerceAtLeast(0)
         southHost.border = JBUI.Borders.empty(0, composerPad)
+        // Diffs pick unified vs side-by-side from the width the *transcript column* actually gets.
+        val diffWidth = (textWidth - hpad * 2).coerceAtLeast(0)
+        if (diffWidth != lastDiffWidth) {
+            lastDiffWidth = diffWidth
+            turns.forEach { it.applyDiffWidth(diffWidth) }
+        }
         if (profileChanged) { transcript.revalidate(); transcript.repaint() }
         southHost.revalidate()
     }
@@ -427,8 +439,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         clone(sBold, sNormal); StyleConstants.setBold(sBold, true)
         clone(sError, sNormal); StyleConstants.setForeground(sError, ClaudeUiTokens.error())
         StyleConstants.setFontFamily(sCode, mono.family); StyleConstants.setFontSize(sCode, base.size); StyleConstants.setForeground(sCode, fg)
-        clone(sDiffAdd, sCode); StyleConstants.setBackground(sDiffAdd, JBColor(Color(0xDD, 0xF4, 0xE4), Color(0x1E, 0x3A, 0x28)))
-        clone(sDiffDel, sCode); StyleConstants.setBackground(sDiffDel, JBColor(Color(0xFB, 0xE4, 0xE1), Color(0x3A, 0x22, 0x22)))
+        // Prefer the IDE's own diff colours so a custom theme is tracked; the fixed pairs are only a
+        // fallback for schemes that don't define them (the scheme is already the source for fonts and
+        // fence highlighting, so this keeps one source of truth).
+        val scheme = EditorColorsManager.getInstance().globalScheme
+        val addBg = scheme.getAttributes(DiffColors.DIFF_INSERTED)?.backgroundColor
+            ?: JBColor(Color(0xDD, 0xF4, 0xE4), Color(0x1E, 0x3A, 0x28))
+        val delBg = scheme.getAttributes(DiffColors.DIFF_DELETED)?.backgroundColor
+            ?: JBColor(Color(0xFB, 0xE4, 0xE1), Color(0x3A, 0x22, 0x22))
+        clone(sDiffAdd, sCode); StyleConstants.setBackground(sDiffAdd, addBg)
+        clone(sDiffDel, sCode); StyleConstants.setBackground(sDiffDel, delBg)
     }
 
     private fun clone(dst: SimpleAttributeSet, src: SimpleAttributeSet) { dst.addAttributes(src) }
@@ -481,6 +501,36 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         p.border = JBUI.Borders.empty()
         p.font = UIUtil.getLabelFont()
         return p
+    }
+
+    /** A monospaced, non-wrapping pane for diff text; the caller supplies the styles. */
+    private fun diffPane(): JTextPane {
+        val p = object : JTextPane() {
+            // No wrapping: a wrapped diff line stops lining up with its counterpart.
+            override fun getScrollableTracksViewportWidth(): Boolean = false
+        }
+        p.isEditable = false; p.isOpaque = false
+        p.border = JBUI.Borders.empty()
+        return p
+    }
+
+    /** Restyles a JButton as a quiet inline action rather than a chunky form control. */
+    private fun styleSmallButton(b: JButton) {
+        b.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        b.margin = Insets(1, 6, 1, 6)
+        b.isFocusable = true
+        b.putClientProperty("JButton.buttonType", "square")
+    }
+
+    private fun smallLink(text: String, run: () -> Unit): JButton {
+        val b = JButton(text)
+        styleSmallButton(b)
+        b.addActionListener { run() }
+        return b
+    }
+
+    private fun copyToClipboard(text: String) {
+        runCatching { CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(text)) }
     }
 
     private fun <T : JComponent> fullWidth(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; c.isOpaque = false; return c }
@@ -931,12 +981,34 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun renderToolBody(name: String, id: String?, input: JsonObject?, card: ToolCard) {
         target = card.bodyDoc
-        card.setDetails(name, input ?: JsonObject(), renderToolContent(name, input ?: JsonObject()))
+        card.setDetails(name, input ?: JsonObject(), renderToolContent(name, input ?: JsonObject(), card))
         target = null
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
         if (id != null) { renderedTools.add(id); toolCardsById[id] = card }
         feed(interpreter.toolUse(id, name, input))
         noteBuildCommand(id, name, input)
+    }
+
+    /**
+     * Attaches a [FileEditBlock] when there is a card to host it, and otherwise writes the diff into
+     * the current [target] document as unified text.
+     *
+     * The text path is what the **approval preview** uses: an Allow/Deny prompt for an edit renders
+     * the same tool content but has no ToolCard, and showing nothing there would ask the user to
+     * approve a change they cannot see.
+     */
+    private fun addEditOrText(
+        card: ToolCard?, path: String?, hunks: List<List<Pair<String, String>>>, note: String?,
+    ) {
+        if (card != null) { card.addEdit(path, hunks, note); return }
+        val rows = hunks.flatten()
+        val shown = rows.take(DiffPresentation.visibleRows(rows.size, expanded = false))
+        for ((kind, text) in shown) {
+            val style = when (kind) { "add" -> sDiffAdd; "del" -> sDiffDel; else -> sCode }
+            insert(when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " } + text + "\n", style)
+        }
+        DiffPresentation.overflowText(DiffPresentation.overflow(rows.size, expanded = false))
+            ?.let { insert("$it\n", sMuted) }
     }
 
     /** Remembers a build/test/analysis Bash command so its report files can be read when it finishes. */
@@ -949,7 +1021,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     /** Renders a tool's command/diff/inputs into the current [target] doc; returns a header summary. */
-    private fun renderToolContent(name: String, inp: JsonObject): String {
+    private fun renderToolContent(name: String, inp: JsonObject, card: ToolCard?): String {
         var summary = ""
         when (name) {
             "Bash" -> {
@@ -957,13 +1029,28 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val cmd = inp.str("command") ?: ""
                 insert("$ " + cmd + "\n", sCode); summary = oneLine(cmd, 72)
             }
-            "Edit" -> { summary = shortPath(inp.str("file_path")); renderDiff(inp.str("old_string") ?: "", inp.str("new_string") ?: "") }
-            "MultiEdit" -> {
-                summary = shortPath(inp.str("file_path"))
-                val edits = if (inp.has("edits") && inp.get("edits").isJsonArray) inp.getAsJsonArray("edits") else null
-                edits?.forEach { e -> val eo = e.asJsonObject; renderDiff(eo.str("old_string") ?: "", eo.str("new_string") ?: "") }
+            "Edit" -> {
+                val path = inp.str("file_path")
+                summary = shortPath(path)
+                addEditOrText(card, path, listOf(lineDiff(inp.str("old_string") ?: "", inp.str("new_string") ?: "")), null)
             }
-            "Write" -> { summary = shortPath(inp.str("file_path")); renderDiff("", inp.str("content") ?: "") }
+            "MultiEdit" -> {
+                val path = inp.str("file_path")
+                summary = shortPath(path)
+                val edits = if (inp.has("edits") && inp.get("edits").isJsonArray) inp.getAsJsonArray("edits") else null
+                // Each edit keeps its own hunk so they can be numbered — concatenating them into one
+                // document made several edits to one file read as a single incoherent change.
+                val hunks = edits?.map { e ->
+                    val eo = e.asJsonObject
+                    lineDiff(eo.str("old_string") ?: "", eo.str("new_string") ?: "")
+                }.orEmpty()
+                addEditOrText(card, path, hunks, null)
+            }
+            "Write" -> {
+                val path = inp.str("file_path")
+                summary = shortPath(path)
+                addEditOrText(card, path, listOf(lineDiff("", inp.str("content") ?: "")), "New file")
+            }
             "Read" -> { summary = shortPath(inp.str("file_path")); insert(shortPath(inp.str("file_path")) + "\n", sMuted) }
             "Grep" -> { summary = inp.str("pattern") ?: ""; insert("pattern: " + (inp.str("pattern") ?: "") + "\n", sMuted); inp.str("path")?.let { insert("path: $it\n", sMuted) } }
             "Glob" -> { summary = inp.str("pattern") ?: ""; insert("pattern: " + (inp.str("pattern") ?: "") + "\n", sMuted) }
@@ -1414,6 +1501,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         fun applyDetails(show: Boolean) { detailKids.forEach { it.isVisible = show }; refreshVisibility() }
 
+        /** Propagates the transcript column's width so hosted diffs can pick unified vs side-by-side. */
+        fun applyDiffWidth(widthPx: Int) {
+            for (c in body.components) if (c is ToolCard) c.applyDiffWidth(widthPx)
+        }
+
         /** A subtle run-metadata footer ("Completed · 51.6s · 13 turns · $0.404") — secondary, never the answer. */
         fun addFooter(text: String) {
             val footer = JBLabel(text)
@@ -1518,6 +1610,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private var toolName: String = name
         private var outcome: ToolOutcome = ToolOutcome.RUNNING
         private var weight: ToolWeight = ToolEventPresentation.weight(name, ToolOutcome.RUNNING)
+        private val editBlocks = ArrayList<FileEditBlock>()
 
         init {
             layout = BorderLayout()
@@ -1571,6 +1664,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
         fun expand() { if (!open) toggle() }
+
+        /**
+         * Attaches a real [FileEditBlock] for an Edit/MultiEdit/Write, instead of dumping diff lines
+         * into the shared body document. An edit is the point of a turn, so it gets a header with
+         * line counts, Open file / Copy diff actions, per-hunk numbering, and a bounded view.
+         */
+        fun addEdit(path: String?, hunks: List<List<Pair<String, String>>>, note: String?) {
+            val block = FileEditBlock(path, hunks, note)
+            editBlocks.add(block)
+            bodyWrap.add(block, BorderLayout.NORTH)
+            expand() // an edit is worth seeing without a click
+            applyWeight()
+            relayout()
+        }
+
+        /** Re-lays the hosted edit diffs when the available width changes (unified vs side-by-side). */
+        fun applyDiffWidth(widthPx: Int) = editBlocks.forEach { it.applyWidth(widthPx) }
+
         /** Marks this tool as denied/cancelled: blocked icon + a muted "not run" note; never looks done. */
         fun markBlocked(reason: String) {
             stateLabel.icon = ClaudeIcons.blocked.withSize(13)
@@ -1600,6 +1711,137 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
     }
 
+    /**
+     * A file edit, rendered as a first-class block: a header stating what changed
+     * ("Added 33 lines · Removed 8 lines") with **Open file** and **Copy diff** actions, then the diff
+     * itself — side-by-side when there is room, unified when there isn't (see [DiffPresentation]),
+     * collapsed past [DiffPresentation.COLLAPSE_ABOVE] rows and hard-capped so a whole-file `Write`
+     * can't bury the conversation. Any capped remainder is stated, never silently dropped.
+     */
+    private inner class FileEditBlock(
+        private val path: String?,
+        private val hunks: List<List<Pair<String, String>>>,
+        note: String?,
+    ) : JPanel(BorderLayout()) {
+
+        private val rows: List<Pair<String, String>> = hunks.flatten()
+        private val stat = DiffPresentation.stat(rows)
+        private val body = JPanel(BorderLayout())
+        private val toggle = JButton()
+        private var expanded = false
+        private var layoutMode = DiffLayout.UNIFIED
+
+        init {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 0, 4, 0)
+
+            val head = JPanel(BorderLayout(JBUI.scale(8), 0)); head.isOpaque = false
+            head.border = JBUI.Borders.empty(0, 0, 4, 0)
+            val statLabel = JBLabel(buildString {
+                append(DiffPresentation.headerText(stat))
+                if (note != null) append(" · ").append(note)
+                if (hunks.size > 1) append(" · ").append(hunks.size).append(" hunks")
+            })
+            statLabel.foreground = mutedFg()
+            statLabel.font = statLabel.font.deriveFont(JBUI.scaleFontSize(11f).toFloat())
+            head.add(statLabel, BorderLayout.WEST)
+
+            val actions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)); actions.isOpaque = false
+            if (path != null) actions.add(smallLink("Open file") { openFileRef(path) })
+            actions.add(smallLink("Copy diff") { copyToClipboard(unifiedText()) })
+            if (DiffPresentation.isCollapsible(rows.size)) {
+                toggle.text = DiffPresentation.expandText(rows.size)
+                styleSmallButton(toggle)
+                toggle.addActionListener { expanded = !expanded; rebuild(); relayout() }
+                actions.add(toggle)
+            }
+            head.add(actions, BorderLayout.EAST)
+
+            add(head, BorderLayout.NORTH)
+            body.isOpaque = false
+            add(body, BorderLayout.CENTER)
+            rebuild()
+        }
+
+        fun applyWidth(widthPx: Int) {
+            val mode = DiffPresentation.layout(widthPx, JBUI.scale(1000) / 1000f)
+            if (mode != layoutMode) { layoutMode = mode; rebuild(); relayout() }
+        }
+
+        private fun visible(): List<Pair<String, String>> =
+            rows.take(DiffPresentation.visibleRows(rows.size, expanded))
+
+        private fun rebuild() {
+            body.removeAll()
+            body.add(
+                if (layoutMode == DiffLayout.SIDE_BY_SIDE) sideBySide(visible()) else unified(visible()),
+                BorderLayout.CENTER,
+            )
+            DiffPresentation.overflowText(DiffPresentation.overflow(rows.size, expanded))?.let { msg ->
+                val more = JBLabel(msg)
+                more.foreground = mutedFg()
+                more.font = more.font.deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+                more.border = JBUI.Borders.empty(3, 2, 0, 0)
+                body.add(more, BorderLayout.SOUTH)
+            }
+            if (DiffPresentation.isCollapsible(rows.size)) {
+                toggle.text = if (expanded) "Collapse" else DiffPresentation.expandText(rows.size)
+            }
+            body.revalidate(); body.repaint()
+        }
+
+        private fun unified(rs: List<Pair<String, String>>): JComponent {
+            val pane = diffPane()
+            val doc = pane.styledDocument
+            for ((kind, text) in rs) {
+                val style = when (kind) { "add" -> sDiffAdd; "del" -> sDiffDel; else -> sCode }
+                val sign = when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " }
+                try { doc.insertString(doc.length, sign + text + "\n", style) } catch (e: BadLocationException) { /* drop */ }
+            }
+            return pane
+        }
+
+        /**
+         * Two columns: removals on the left, additions on the right, context on both. Rows are paired
+         * so a change lines up horizontally rather than the columns drifting apart.
+         */
+        private fun sideBySide(rs: List<Pair<String, String>>): JComponent {
+            val left = diffPane(); val right = diffPane()
+            fun put(pane: JTextPane, text: String, style: javax.swing.text.AttributeSet) {
+                val d = pane.styledDocument
+                try { d.insertString(d.length, text + "\n", style) } catch (e: BadLocationException) { /* drop */ }
+            }
+            var i = 0
+            while (i < rs.size) {
+                val (kind, text) = rs[i]
+                when (kind) {
+                    "del" -> {
+                        // Pair this removal with the addition that follows it, when there is one.
+                        val next = rs.getOrNull(i + 1)
+                        if (next?.first == "add") {
+                            put(left, text, sDiffDel); put(right, next.second, sDiffAdd); i += 2
+                        } else {
+                            put(left, text, sDiffDel); put(right, "", sCode); i++
+                        }
+                    }
+                    "add" -> { put(left, "", sCode); put(right, text, sDiffAdd); i++ }
+                    else -> { put(left, text, sCode); put(right, text, sCode); i++ }
+                }
+            }
+            val grid = JPanel(GridLayout(1, 2, JBUI.scale(6), 0))
+            grid.isOpaque = false
+            grid.add(left); grid.add(right)
+            return grid
+        }
+
+        private fun unifiedText(): String = buildString {
+            path?.let { append("--- ").append(it).append('\n') }
+            for ((kind, text) in rows) {
+                append(when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " }).append(text).append('\n')
+            }
+        }
+    }
+
     /** Always-visible approval prompt for a can_use_tool control request. */
     private inner class ApprovalBlock(
         title: String, toolName: String, input: JsonObject,
@@ -1618,7 +1860,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             add(head, BorderLayout.NORTH)
 
             val pane = styledPane()
-            target = pane.styledDocument; renderToolContent(toolName, input); target = null
+            target = pane.styledDocument; renderToolContent(toolName, input, null); target = null
             val mid = JPanel(BorderLayout()); mid.isOpaque = false; mid.border = JBUI.Borders.emptyBottom(6); mid.add(pane, BorderLayout.CENTER)
             add(mid, BorderLayout.CENTER)
 
