@@ -34,10 +34,25 @@ split toggle); the composer (attach, slash, `Auto` mode chip, stop button). For 
 answered**, Cancel present, and the streamed tool card reading **`Asked · Demo location`** rather than raw
 JSON.
 
+**Activity map, also confirmed live 2026-07-20** (Activity tab, same session, 18 nodes / 21 events): the
+force-directed graph renders with category cluster nodes (Documentation, Errors / Warnings, Shell / Command,
+Gradle / Build, Android Framework, Unknown / Unclassified) and file/command nodes; the **focus card**
+("COMPLETED · Added three self-contained de…"); the **filter combo** ("All activity"), **Fit** and overflow
+controls; the node counter ("18 nodes"); the **collapsed timeline dock** with its summary ("Activity log ·
+21 events · Latest: …"); and the **inspector drawer** showing Category / Interactions / Last active plus
+pin and hide actions. Two behaviours worth calling out as confirmed end-to-end:
+
+- **Exit-status correlation** — a non-zero exit with no parseable failure line still produced a real
+  `Exit code 1` error node (`Error · failed`), drawn with the error ring.
+- **Evidence provenance with `COMMAND_OUTPUT`** — the inspector's *Related* list reads
+  "cd /Users/devuser/AndroidStudioProjects… **produced an error · command output**", i.e. the `PRODUCED`
+  edge carrying its evidence source and human explanation, exactly as designed.
+
 > [!NOTE]
-> That session predates (or may predate) the 2026-07-20 chat-polish and map-density commits, and showed no
-> code fence, table or activity map — so it says nothing either way about that work. Everything below still
-> needs the pass.
+> Neither session tells us anything about the 2026-07-20 chat-polish or map-density commits. The chat
+> screenshot showed no code fence or table; the map screenshot has **18 nodes**, which is below
+> `MapDensity.IMPORTANT_ABOVE` (40), so the tier is `ALL` — which renders *identically* to the old
+> behaviour. Both are still unverified.
 
 Verify:
 
@@ -62,9 +77,11 @@ Verify:
 - **Keyboard a11y (needs eyes):** Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split
   `JButton`), the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc
   clears from anywhere in the drawer). Confirm nothing traps focus. Logic is in place; only the live pass remains.
-- **Activity map (needs eyes):** a touched resource links to its referencing sources; the inspector
-  "Find usages" action adds usage edges; "Collapse finished history" folds clusters and the "N commands"
-  chips expand/collapse in place. Logic is unit-tested; only the visual behaviour needs eyes.
+- **Activity map — chrome confirmed** (see above); the *features* still need eyes: a touched **resource**
+  linking to its referencing sources; the inspector **"Find usages"** action adding usage edges (the
+  confirmed shot had an error node selected, where that action correctly does not appear — select a
+  **source** node); and **"Collapse finished history"** folding clusters with the "N commands" chips
+  expanding/collapsing in place.
 - **Map density (needs eyes):** on a genuinely busy session, labels thin out as the graph grows without
   the map flickering between tiers as nodes arrive; errors, anchors and the hovered/selected node keep
   their labels at every density; zooming in restores detail; the **"N of M · Show more"** counter is
@@ -81,6 +98,35 @@ Verify:
 
 Naming (Sightline), plugin icon, `<vendor>`, `<description>`, `<change-notes>`, and the "requires the
 Claude CLI" wording are all in place — the remaining step is actually submitting the listing.
+
+---
+
+# Found in live verification
+
+## Activity-map labels collide at low node counts
+
+Seen in the confirmed 2026-07-20 map screenshot at only **18 nodes**: several labels overprint each other
+and become unreadable — `HelloListDemo.kt` / `Shell / Command` / `Unknown / Unclassified` run together on
+one line, as do `provide 2 sugg…` / `generate…` / `mkdir -p /Users/devuser/A…`, and `find app/src -type f`
+/ `files`.
+
+This is **not** what `MapDensity` addresses. Its tiers don't engage until 40 nodes, and at 18 the tier is
+`ALL` by design — so thinning labels would not fix this and lowering the thresholds would be the wrong
+lever (it would strip labels from graphs that are otherwise perfectly readable). The actual cause is node
+**proximity**: the force layout lets nodes settle close enough that their right-hand labels overlap,
+independent of how many nodes exist.
+
+Candidate fixes, cheapest first:
+
+- Increase the layout's minimum node separation, or make the repulsion term account for label width rather
+  than node radius alone (labels are drawn to the right, so the effective footprint is wide, not circular).
+- Collision-aware label placement: keep a per-frame list of placed label rects and skip or flip-side any
+  label that would overlap one already drawn — deterministic, and a natural platform-free unit-tested
+  helper alongside `MapDensity`.
+- Optionally drop the label (not the node) for the lower-priority node of a colliding pair, reusing the
+  same priority order `MapDensity` already encodes (attention > anchors/errors > patches > ordinary).
+
+Worth doing before the Marketplace listing: it is the first thing a user sees on the Activity tab.
 
 ---
 
