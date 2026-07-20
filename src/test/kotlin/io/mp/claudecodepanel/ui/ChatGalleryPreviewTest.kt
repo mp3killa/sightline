@@ -214,6 +214,30 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         try { renderGallery("compact", details = false) } finally { JBColor.setDark(false) }
     }
 
+    /**
+     * M5: selecting a node in the activity map must reveal the transcript row that produced it.
+     * Drives the real callback rather than a stub, so a broken wiring fails here.
+     */
+    fun testMapSelectionRevealsTheOriginatingTranscriptRow() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = false // deliberately off: revealing must turn details on itself
+        settings.showActivityMap = true
+        settings.activityViewMode = "split"
+        val p = ClaudePanel(project, testRootDisposable)
+        seed(p)
+        layoutTree(p.component, 1400, 900)
+
+        val edited = "src/main/kotlin/io/mp/claudecodepanel/ui/state/WorkspaceModes.kt"
+        assertTrue(
+            "the edited file should have a node to select",
+            p.selectActivityNodeByPathForTest(edited),
+        )
+        assertTrue(
+            "selecting a node must reveal the hidden transcript row, not silently do nothing",
+            ClaudeSettings.getInstance().state.showDetails,
+        )
+    }
+
     /** Hover actions must exist but stay hidden until hover/focus, or the default view gets cluttered. */
     fun testHoverActionsExistButStartHidden() {
         val settings = ClaudeSettings.getInstance().state

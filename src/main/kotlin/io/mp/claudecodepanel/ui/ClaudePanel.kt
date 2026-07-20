@@ -40,6 +40,8 @@ import io.mp.claudecodepanel.ui.state.DiffLayout
 import io.mp.claudecodepanel.ui.state.DiffPresentation
 import java.awt.GridLayout
 import io.mp.claudecodepanel.ui.state.ProcessingSummary
+import io.mp.claudecodepanel.activity.ActivityNode
+import javax.swing.Timer
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -297,7 +299,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val toolCardsById = HashMap<String, ToolCard>()
 
     /** What a tool call was, so its later result (which carries only an id) can be attributed. */
-    private inner class ToolMeta(val name: String, val path: String?, val turn: AssistantTurn?)
+    private inner class ToolMeta(val name: String, val path: String?, val turn: AssistantTurn?, val card: ToolCard)
     private val toolMetaById = HashMap<String, ToolMeta>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
@@ -318,6 +320,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         uiState.rootComponent = component
         uiState.toolWindowVisible = true
         uiState.askQuestionSimulator = { input -> simulateAskUserQuestion(input) } // reachable only via the gated test bridge
+        activityMap.onNodeSelected = { node -> revealTranscriptFor(node) }
         applyConfigToUi()
         installEmptyState()
         installResponsive()
@@ -860,6 +863,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         addUserBubble(text, emptyList())
     }
 
+    /**
+     * Test-only: selects an activity-map node by path, exercising the **real** map→chat callback
+     * (`onNodeSelected` → [revealTranscriptFor]). Returns false when no such node exists.
+     */
+    @TestOnly
+    internal fun selectActivityNodeByPathForTest(path: String): Boolean = activityMap.selectByPath(path)
+
     private fun handleEvent(line: String) {
         val o = try {
             JsonParser.parseString(line).asJsonObject
@@ -1038,7 +1048,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             renderedTools.add(id); toolCardsById[id] = card
             // Remembered so the turn can tally the outcome when the result arrives — the result event
             // carries only the tool_use_id, not what the tool was or which file it touched.
-            toolMetaById[id] = ToolMeta(name, input?.str("file_path"), curTurn)
+            toolMetaById[id] = ToolMeta(name, input?.str("file_path"), curTurn, card)
         }
         feed(interpreter.toolUse(id, name, input))
         noteBuildCommand(id, name, input)
@@ -1064,6 +1074,42 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         DiffPresentation.overflowText(DiffPresentation.overflow(rows.size, expanded = false))
             ?.let { insert("$it\n", sMuted) }
+    }
+
+    /**
+     * Map → chat. Finds the transcript row that produced [node] and reveals it.
+     *
+     * Matching is by **file path** first (exact, and what a file node carries) and falls back to the
+     * node's label for command/test nodes. The *most recent* match wins: when a file was touched
+     * several times, the latest step is the one the map's state reflects.
+     */
+    private fun revealTranscriptFor(node: ActivityNode) {
+        val meta = toolMetaById.values.lastOrNull { m ->
+            (node.path != null && m.path != null && m.path == node.path) ||
+                (node.path == null && m.card.linkLabel != null && m.card.linkLabel == node.label)
+        } ?: return
+        val card = meta.card
+        // A hidden card can't be revealed — turn details on rather than silently doing nothing.
+        if (!showDetails) setShowDetails(true)
+        runOnEdt {
+            card.expand()
+            card.flashHighlight()
+            following = false // the user asked to look here; don't yank them back to the bottom
+            updateJumpToLatest()
+            card.scrollRectToVisible(Rectangle(0, 0, card.width, card.height))
+        }
+    }
+
+    /** Chat → map. Selects the node this row produced, switching to a view that shows the map. */
+    private fun revealInMap(card: ToolCard) {
+        val found = card.linkPath?.let { activityMap.selectByPath(it) }
+            ?: card.linkLabel?.let { activityMap.selectByLabel(it) }
+            ?: false
+        // Don't switch away from the conversation to show a map with nothing selected.
+        if (!found) return
+        if (viewMode == ViewMode.CHAT) {
+            setWorkspace(if (ResponsiveLayout.allowSplitDefault(lastProfile ?: LayoutProfile.WIDE)) ViewMode.SPLIT else ViewMode.MAP)
+        }
     }
 
     /** Remembers a build/test/analysis Bash command so its report files can be read when it finishes. */
@@ -1724,6 +1770,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private var weight: ToolWeight = ToolEventPresentation.weight(name, ToolOutcome.RUNNING)
         private val editBlocks = ArrayList<FileEditBlock>()
         private var installedActions = false
+        private var highlight = false
+        var linkPath: String? = null
+        var linkLabel: String? = null
 
         init {
             layout = BorderLayout()
@@ -1763,17 +1812,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             targetLabel.text = summary
             // A command is the thing people most often want to re-run or paste into a report, so it
             // gets Copy command / Copy output on hover.
-            if (name == "Bash" && !installedActions) {
+            linkPath = input.str("file_path")
+            linkLabel = if (name == "Bash") oneLine(input.str("command") ?: "", 72) else summary.ifBlank { null }
+            if (!installedActions) {
                 installedActions = true
                 val cmd = input.str("command") ?: ""
-                bodyWrap.add(
-                    hoverActions(
-                        this,
-                        "Copy command" to { copyToClipboard(cmd) },
-                        "Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) },
-                    ),
-                    BorderLayout.SOUTH,
-                )
+                val acts = ArrayList<Pair<String, () -> Unit>>(3)
+                if (name == "Bash") {
+                    acts.add("Copy command" to { copyToClipboard(cmd) })
+                    acts.add("Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) })
+                }
+                acts.add("Show in map" to { revealInMap(this) })
+                bodyWrap.add(hoverActions(this, *acts.toTypedArray()), BorderLayout.SOUTH)
             }
             applyWeight()
             relayout()
@@ -1822,7 +1872,25 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
         private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
+
+        /**
+         * Briefly outlines this row so the eye can find it after being sent here from the activity map.
+         * A permanent marker would accumulate; a flash says "here" and then gets out of the way.
+         */
+        fun flashHighlight() {
+            highlight = true; repaint()
+            Timer(1400) { highlight = false; repaint() }.apply { isRepeats = false; start() }
+        }
+
         override fun paintComponent(g: Graphics) {
+            if (highlight) {
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = ClaudeUiTokens.radiusMd()
+                g2.color = ClaudeUiTokens.accent()
+                g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                g2.dispose()
+            }
             // A compact row draws no chrome at all — that is the whole point of the tier.
             if (weight == ToolWeight.CARD) {
                 val g2 = g.create() as Graphics2D

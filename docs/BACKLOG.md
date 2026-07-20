@@ -25,15 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M5 — Activity map ↔ chat linking
-
-`ActivityMapPanel` has no outbound callback at all — selecting a node opens the file in the editor and
-never touches the transcript, and there is no chat→node path. Add a bidirectional link (select a node →
-reveal the originating transcript event, and optionally the reverse). This is what earns the graph its
-place as an *inspection surface* rather than a second, competing view. Note that with details on, tool
-activity is currently rendered twice (transcript cards **and** the timeline dock) — resolve that overlap
-here.
-
 ## M6 — Long-session cost
 
 - **Unbounded turn retention**: `turns` is appended to and never pruned (contrast the graph, which has

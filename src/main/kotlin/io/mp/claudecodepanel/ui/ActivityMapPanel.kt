@@ -435,12 +435,37 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     // ---------- selection / inspector placement ----------
 
+    /**
+     * Fired when the user selects a node, so the host can reveal the transcript event that produced it.
+     * The map is an *inspection surface* for the conversation, not a second competing view — without a
+     * way back, selecting a node told you a file was touched but not why or by which step.
+     */
+    var onNodeSelected: ((ActivityNode) -> Unit)? = null
+
     private fun selectNode(id: String?, center: Boolean = false) {
         selectedId = id
         inspector.refresh()
         updateLayout()
         if (center && id != null) canvas.positions[id]?.let { canvas.centerOn(it) }
         canvas.repaint()
+        id?.let { sel -> graph.nodes.firstOrNull { it.id == sel } }?.let { onNodeSelected?.invoke(it) }
+    }
+
+    /**
+     * Selects the node for [path] (chat → map). Returns false when that file has no node yet, so the
+     * caller can decline to switch views rather than switching to a map with nothing selected.
+     */
+    fun selectByPath(path: String): Boolean {
+        val node = graph.nodes.lastOrNull { it.path == path && !it.hidden } ?: return false
+        selectNode(node.id, center = true)
+        return true
+    }
+
+    /** Selects the most recent node whose label matches [label] (used for command/test nodes). */
+    fun selectByLabel(label: String): Boolean {
+        val node = graph.nodes.lastOrNull { !it.hidden && it.label == label } ?: return false
+        selectNode(node.id, center = true)
+        return true
     }
 
     /** Keyboard selection: step through visible, selectable nodes in a stable order and centre on them. */
