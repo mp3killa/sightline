@@ -82,6 +82,7 @@ object ActivityMapRenderer {
         g.stroke = BasicStroke(1f)
 
         // Nodes.
+        val pending = ArrayList<PendingLabel>(graph.nodes.size)
         for (n in graph.nodes.sortedBy { it.type == ActivityNodeType.CATEGORY }) {
             val p = pos[n.id] ?: continue
             val x = sx(p); val y = sy(p)
@@ -118,15 +119,38 @@ object ActivityMapRenderer {
                 g.drawLine(x - (r * 0.7).toInt(), y - (r * 0.7).toInt(), x + (r * 0.7).toInt(), y + (r * 0.7).toInt())
                 g.stroke = BasicStroke(1f)
             }
-            // Label with a semi-transparent pill so overlapping labels stay legible.
-            g.font = Font(Font.SANS_SERIF, if (n.type == ActivityNodeType.CATEGORY) Font.BOLD else Font.PLAIN, if (n.type == ActivityNodeType.TASK) 15 else 12)
-            val fm = g.fontMetrics
-            val lx = x + r + 5; val ly = y + fm.ascent / 2 - 1
-            val bg = if (dark) Color(0x1E, 0x1F, 0x22) else Color(0xF7, 0xF8, 0xFA)
-            g.color = alpha(bg, 185)
-            g.fillRoundRect(lx - 3, ly - fm.ascent, fm.stringWidth(n.label) + 6, fm.height, 7, 7)
-            g.color = fg
-            g.drawString(n.label, lx, ly)
+            // Measured now, drawn once every node body is down — a pill alone does not make two
+            // overprinted labels legible, so LabelPlacement drops the lower-priority one instead.
+            val labelFont = Font(Font.SANS_SERIF, if (n.type == ActivityNodeType.CATEGORY) Font.BOLD else Font.PLAIN, if (n.type == ActivityNodeType.TASK) 15 else 12)
+            val fm = g.getFontMetrics(labelFont)
+            val boxW = fm.stringWidth(n.label) + 6
+            val ly = y + fm.ascent / 2 - 1
+            pending.add(
+                PendingLabel(
+                    box = LabelPlacement.Candidate(
+                        id = n.id,
+                        x = x + r + 2,                  // preferred: to the right of the node
+                        alternateX = x - r - 2 - boxW,  // fallback: to its left
+                        y = ly - fm.ascent,
+                        width = boxW,
+                        height = fm.height,
+                        priority = MapDensity.labelPriority(attention = false, type = n.type),
+                    ),
+                    text = n.label, font = labelFont, baseline = ly, foreground = fg,
+                ),
+            )
+        }
+
+        // Labels last, so none is overdrawn by a node painted after it.
+        val placed = LabelPlacement.place(pending.map { it.box })
+        val labelBg = if (dark) Color(0x1E, 0x1F, 0x22) else Color(0xF7, 0xF8, 0xFA)
+        for (l in pending) {
+            val boxX = placed[l.box.id] ?: continue
+            g.font = l.font
+            g.color = alpha(labelBg, 185)
+            g.fillRoundRect(boxX, l.box.y, l.box.width, l.box.height, 7, 7)
+            g.color = l.foreground
+            g.drawString(l.text, boxX + 3, l.baseline)
         }
 
         // Title / focus banner.
@@ -215,4 +239,13 @@ object ActivityMapRenderer {
         }
         return pos
     }
+
+    /** A measured but not-yet-drawn label, held until every node body is painted. */
+    private class PendingLabel(
+        val box: LabelPlacement.Candidate,
+        val text: String,
+        val font: Font,
+        val baseline: Int,
+        val foreground: Color,
+    )
 }

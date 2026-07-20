@@ -69,6 +69,24 @@ object MapDensity {
         }
     }
 
+    /**
+     * Who keeps their label when two would overprint (higher wins) — see [LabelPlacement]. Mirrors the tier
+     * order exactly, so the label dropped by a collision is the same one a denser graph would have dropped.
+     */
+    fun labelPriority(attention: Boolean, type: ActivityNodeType): Int = when {
+        attention -> 300
+        type in ALWAYS_LABELLED -> 200
+        type in IMPORTANT_LABELLED -> 100
+        else -> 0
+    }
+
+    /**
+     * Horizontal bias applied to node repulsion. Labels extend to the right, so a node's true footprint is
+     * far wider than tall; spreading harder in x buys the room they need. Layout-only — it changes where
+     * nodes settle, never which nodes exist.
+     */
+    const val LABEL_X_BIAS = 1.9
+
     // ---- visible-node cap / "Show more" ----
 
     /** Matches the `activityMaxNodes` setting's own ceiling. */

@@ -82,6 +82,10 @@ Verify:
   confirmed shot had an error node selected, where that action correctly does not appear — select a
   **source** node); and **"Collapse finished history"** folding clusters with the "N commands" chips
   expanding/collapsing in place.
+- **Label collision (needs eyes):** the fix is verified in the headless preview (regenerate with
+  `./gradlew test`, then open `build/activity-map-preview-{dark,light}.png` — no label overprints another).
+  Live, confirm the same on a busy graph, that a label withheld in a crowded neighbourhood **comes back on
+  hover**, and that labels don't visibly flip sides or flicker while the layout is still settling.
 - **Map density (needs eyes):** on a genuinely busy session, labels thin out as the graph grows without
   the map flickering between tiers as nodes arrive; errors, anchors and the hovered/selected node keep
   their labels at every density; zooming in restores detail; the **"N of M · Show more"** counter is
@@ -98,35 +102,6 @@ Verify:
 
 Naming (Sightline), plugin icon, `<vendor>`, `<description>`, `<change-notes>`, and the "requires the
 Claude CLI" wording are all in place — the remaining step is actually submitting the listing.
-
----
-
-# Found in live verification
-
-## Activity-map labels collide at low node counts
-
-Seen in the confirmed 2026-07-20 map screenshot at only **18 nodes**: several labels overprint each other
-and become unreadable — `HelloListDemo.kt` / `Shell / Command` / `Unknown / Unclassified` run together on
-one line, as do `provide 2 sugg…` / `generate…` / `mkdir -p /Users/devuser/A…`, and `find app/src -type f`
-/ `files`.
-
-This is **not** what `MapDensity` addresses. Its tiers don't engage until 40 nodes, and at 18 the tier is
-`ALL` by design — so thinning labels would not fix this and lowering the thresholds would be the wrong
-lever (it would strip labels from graphs that are otherwise perfectly readable). The actual cause is node
-**proximity**: the force layout lets nodes settle close enough that their right-hand labels overlap,
-independent of how many nodes exist.
-
-Candidate fixes, cheapest first:
-
-- Increase the layout's minimum node separation, or make the repulsion term account for label width rather
-  than node radius alone (labels are drawn to the right, so the effective footprint is wide, not circular).
-- Collision-aware label placement: keep a per-frame list of placed label rects and skip or flip-side any
-  label that would overlap one already drawn — deterministic, and a natural platform-free unit-tested
-  helper alongside `MapDensity`.
-- Optionally drop the label (not the node) for the lower-priority node of a colliding pair, reusing the
-  same priority order `MapDensity` already encodes (attention > anchors/errors > patches > ordinary).
-
-Worth doing before the Marketplace listing: it is the first thing a user sees on the Activity tab.
 
 ---
 

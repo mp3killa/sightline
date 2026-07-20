@@ -19,6 +19,7 @@ import io.mp.claudecodepanel.activity.ActivityColorRole
 import io.mp.claudecodepanel.activity.ActivityColorRoles
 import io.mp.claudecodepanel.activity.ActivityGraph
 import io.mp.claudecodepanel.activity.ClusterCollapser
+import io.mp.claudecodepanel.activity.LabelPlacement
 import io.mp.claudecodepanel.activity.MapDensity
 import io.mp.claudecodepanel.ide.ProjectStructureEnricher
 import io.mp.claudecodepanel.activity.ActivityNode
@@ -565,7 +566,9 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 if (d2 < 0.01) { dx = Random.nextDouble(-1.0, 1.0); dy = Random.nextDouble(-1.0, 1.0); d2 = 1.0 }
                 val d = Math.sqrt(d2)
                 val rep = REPULSION / d2
-                val fx = dx / d * rep; val fy = dy / d * rep
+                // Spread harder in x than y: labels hang off each node's right side, so the footprint that
+                // actually has to clear its neighbours is wide, not circular (MapDensity.LABEL_X_BIAS).
+                val fx = dx / d * rep * MapDensity.LABEL_X_BIAS; val fy = dy / d * rep
                 force[ids[i]]!!.x += fx; force[ids[i]]!!.y += fy
                 force[ids[j]]!!.x -= fx; force[ids[j]]!!.y -= fy
             }
@@ -822,6 +825,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
             // One tier for the whole frame: labelling must not flicker per-node as the graph grows.
             val labelTier = MapDensity.labelTier(ids.size, scale)
+            val pendingLabels = ArrayList<PendingLabel>(ids.size)
 
             for (id in ids) {
                 val n = graph.node(id) ?: continue
@@ -888,29 +892,70 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 }
                 // Labels thin out as the graph grows (MapDensity): anchors and errors always keep theirs,
                 // whatever the user is pointing at keeps its own, and ordinary nodes drop out first.
+                val attention = id == focusId || id == selectedId || id == hoveredId
                 val showLabel = MapDensity.showsLabel(
                     tier = labelTier,
                     type = n.type,
-                    attention = id == focusId || id == selectedId || id == hoveredId,
+                    attention = attention,
                     radius = r,
                     scale = scale,
                 )
                 if (showLabel) {
-                    g2.font = UIUtil.getLabelFont().deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUIScale.scale(11f) else JBUIScale.scale(10.5f))
+                    // Measured now, drawn after every node body — so a label can neither be overdrawn by a
+                    // later node nor overprint a neighbouring label (LabelPlacement resolves collisions).
+                    val font = UIUtil.getLabelFont()
+                        .deriveFont(if (n.type == ActivityNodeType.CATEGORY) JBUIScale.scale(11f) else JBUIScale.scale(10.5f))
+                    val fm = g2.getFontMetrics(font)
                     val label = truncateLabel(cleanLabel(n), 26)
-                    val tx = s.x + r.toInt() + 4
-                    val fm = g2.fontMetrics
+                    val boxW = fm.stringWidth(label) + 6
                     val ty = s.y + fm.ascent / 2 - 1
-                    g2.color = withAlpha(canvasBg(), 0.72f)
-                    g2.fillRoundRect(tx - 3, ty - fm.ascent, fm.stringWidth(label) + 6, fm.height, 7, 7)
-                    g2.color = withAlpha(ClaudeUiTokens.textPrimary(), (0.6 + fresh * 0.4).toFloat())
-                    g2.drawString(label, tx, ty)
+                    pendingLabels.add(
+                        PendingLabel(
+                            box = LabelPlacement.Candidate(
+                                id = id,
+                                x = s.x + r.toInt() + 1,                  // preferred: right of the node
+                                alternateX = s.x - r.toInt() - 1 - boxW,  // fallback: to its left
+                                y = ty - fm.ascent,
+                                width = boxW,
+                                height = fm.height,
+                                priority = MapDensity.labelPriority(attention, n.type),
+                            ),
+                            text = label, font = font, baseline = ty, fresh = fresh,
+                        ),
+                    )
                 }
             }
 
+            drawLabels(g2, pendingLabels)
             drawAggregateChips(g2, ids)
             drawFocusOverlay(g2)
             g2.dispose()
+        }
+
+        /** A measured but not-yet-drawn node label, held until every node body is painted. */
+        private inner class PendingLabel(
+            val box: LabelPlacement.Candidate,
+            val text: String,
+            val font: Font,
+            val baseline: Int,
+            val fresh: Double,
+        )
+
+        /**
+         * Draws the labels that survive collision resolution. Losing a collision withholds only the text —
+         * the node itself is already painted, and hovering it restores the label (attention wins outright).
+         */
+        private fun drawLabels(g2: Graphics2D, labels: List<PendingLabel>) {
+            if (labels.isEmpty()) return
+            val placed = LabelPlacement.place(labels.map { it.box })
+            for (l in labels) {
+                val boxX = placed[l.box.id] ?: continue
+                g2.font = l.font
+                g2.color = withAlpha(canvasBg(), 0.72f)
+                g2.fillRoundRect(boxX, l.box.y, l.box.width, l.box.height, 7, 7)
+                g2.color = withAlpha(ClaudeUiTokens.textPrimary(), (0.6 + l.fresh * 0.4).toFloat())
+                g2.drawString(l.text, boxX + 3, l.baseline)
+            }
         }
 
         /** A "N commands" chip under each foldable cluster; click toggles expand-in-place ([toggleAggregate]). */
