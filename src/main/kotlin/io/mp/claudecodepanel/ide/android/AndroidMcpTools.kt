@@ -4,9 +4,14 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.intellij.openapi.project.Project
 import io.mp.claudecodepanel.android.AndroidContext
+import io.mp.claudecodepanel.android.BuildFailureClassifier
+import io.mp.claudecodepanel.android.BuildIntent
 import io.mp.claudecodepanel.android.ContextChipKind
 import io.mp.claudecodepanel.android.Fact
+import io.mp.claudecodepanel.android.GradleTasks
 import io.mp.claudecodepanel.android.ModuleContext
+import io.mp.claudecodepanel.android.TaskResolution
+import io.mp.claudecodepanel.android.TestSelection
 import io.mp.claudecodepanel.settings.ClaudeSettings
 
 /**
@@ -22,7 +27,7 @@ import io.mp.claudecodepanel.settings.ClaudeSettings
  */
 class AndroidMcpTools(private val project: Project) {
 
-    private val names = setOf("android.getContext")
+    private val names = setOf("android.getContext", "android.resolveTask", "android.selectTests", "android.diagnoseBuild")
 
     fun handles(name: String): Boolean = name in names
 
@@ -46,13 +51,200 @@ class AndroidMcpTools(private val project: Project) {
                 },
             ),
         )
+        tools.add(
+            tool(
+                "android.resolveTask",
+                "Get the exact Gradle task for an intent, resolved against the selected build variant — " +
+                    "`assemble`, `bundle`, `install`, `compile`, `unit_test`, `instrumentation_test`, " +
+                    "`lint`, `clean`. **Use this instead of composing a task name yourself.** AGP names " +
+                    "tasks per variant (`assembleDemoStagingDebug`), and the aggregate `assemble` builds " +
+                    "*every* variant — twenty of them on a two-dimension project. If the variant isn't " +
+                    "known this refuses and says why rather than returning the aggregate.",
+                JsonObject().apply {
+                    add("intent", JsonObject().apply { addProperty("type", "string") })
+                    add("module", JsonObject().apply {
+                        addProperty("type", "string")
+                        addProperty("description", "Module name or Gradle path. Defaults to the active module.")
+                    })
+                    add("variant", JsonObject().apply {
+                        addProperty("type", "string")
+                        addProperty("description", "Override the selected variant.")
+                    })
+                },
+            ),
+        )
+        tools.add(
+            tool(
+                "android.selectTests",
+                "Given changed files (or the open file), return the tests worth running and the Gradle " +
+                    "commands to run them, grouped per module. Also returns `uncovered`: changed " +
+                    "production files with no matching test, which those commands will NOT exercise.",
+                JsonObject().apply {
+                    add("files", JsonObject().apply {
+                        addProperty("type", "array")
+                        add("items", JsonObject().apply { addProperty("type", "string") })
+                        addProperty("description", "Project-relative paths. Defaults to the open file.")
+                    })
+                },
+            ),
+        )
+        tools.add(
+            tool(
+                "android.diagnoseBuild",
+                "Classify raw Gradle output into a typed Android build failure — KSP/KAPT, manifest " +
+                    "merge, duplicate class, unresolved dependency, R8, Compose/Kotlin mismatch, JVM " +
+                    "target mismatch, version catalogue, configuration cache, SDK, OOM. Returns " +
+                    "`recognised: false` with the raw excerpt and **no suggestion** when the cause " +
+                    "isn't one it knows — treat that as 'read the output', not as a diagnosis.",
+                JsonObject().apply {
+                    add("output", JsonObject().apply { addProperty("type", "string") })
+                },
+            ),
+        )
     }
 
     /** Called off the EDT by `IdeServer`'s WebSocket thread — [AndroidContextResolver] requires that. */
     fun call(name: String, args: JsonObject): String = when (name) {
         "android.getContext" -> getContext(args)
+        "android.resolveTask" -> resolveTask(args)
+        "android.selectTests" -> selectTests(args)
+        "android.diagnoseBuild" -> diagnoseBuild(args)
         else -> """{"success":false,"error":"Unknown tool: $name"}"""
     }
+
+    /**
+     * Gradle task name for an intent, resolved against the selected variant.
+     *
+     * Exists because the *failure* it prevents is expensive and silent: `assemble` builds every variant,
+     * which on two flavour dimensions is twenty builds. Guessing a task name is the single easiest way
+     * to burn an hour here, so the answer either names the exact task or refuses and says why.
+     */
+    private fun resolveTask(args: JsonObject): String {
+        val intentName = args.str("intent")?.uppercase() ?: return err("`intent` is required")
+        val intent = BuildIntent.entries.firstOrNull { it.name == intentName }
+            ?: return err("Unknown intent '$intentName'. One of: ${BuildIntent.entries.joinToString(", ") { it.name.lowercase() }}")
+
+        val context = resolver().resolve()
+        if (context.notAndroid) return notAndroid()
+        val module = args.str("module")?.let { m -> context.modules.firstOrNull { it.name == m || it.gradlePath == m } }
+            ?: context.activeModule
+            ?: return err("No Android module found.")
+        val variant = args.str("variant") ?: module.variant.value
+
+        return when (val r = GradleTasks.resolve(intent, module.gradlePath, variant)) {
+            is TaskResolution.Refused -> json {
+                addProperty("resolved", false)
+                addProperty("reason", r.refusal.reason)
+                addProperty("hint", r.refusal.hint)
+                add("candidateVariants", JsonArray().apply { module.builtVariants.forEach { add(it) } })
+            }
+            is TaskResolution.Resolved -> json {
+                addProperty("resolved", true)
+                addProperty("task", r.task.task)
+                addProperty("command", GradleTasks.command(r.task).joinToString(" "))
+                addProperty("module", module.gradlePath)
+                addProperty("variant", variant ?: "")
+                addProperty("variantSource", module.variant.tier.label)
+                r.task.note?.let { addProperty("note", it) }
+            }
+        }
+    }
+
+    /**
+     * Which tests to run for a set of changed files.
+     *
+     * Reports `uncovered` as well as targets, because a green run that quietly skipped the relevant test
+     * is worse than no run at all — the caller needs to know what was changed but not exercised.
+     */
+    private fun selectTests(args: JsonObject): String {
+        val context = resolver().resolve()
+        if (context.notAndroid) return notAndroid()
+
+        val changed = args.stringList("files").ifEmpty {
+            listOfNotNull(context.editor?.relativePath)
+        }
+        if (changed.isEmpty()) return err("No files given and no file is open.")
+
+        val modules = context.modules.map { it.gradlePath }
+        val plan = TestSelection.planFor(changed, resolver().projectSourceFiles(), modules)
+        val variantByModule = context.modules.associate { it.gradlePath to it.variant.value }
+
+        return json {
+            addProperty("needsDevice", plan.needsDevice)
+            add("tests", JsonArray().apply {
+                plan.targets.forEach { t ->
+                    add(JsonObject().apply {
+                        addProperty("fqcn", t.fqcn)
+                        addProperty("file", t.relativePath)
+                        addProperty("kind", t.kind.label)
+                        addProperty("module", t.gradlePath)
+                    })
+                }
+            })
+            add("commands", JsonArray().apply {
+                TestSelection.commands(plan) { variantByModule[it] }.forEach { r ->
+                    when (r) {
+                        is TaskResolution.Resolved -> add(GradleTasks.command(r.task).joinToString(" "))
+                        is TaskResolution.Refused -> add("(unresolved: ${r.refusal.reason})")
+                    }
+                }
+            })
+            add("uncovered", JsonArray().apply { plan.uncovered.forEach { add(it) } })
+            addProperty(
+                "note",
+                "`uncovered` lists changed production files with no matching test — running the commands " +
+                    "above will not exercise them.",
+            )
+        }
+    }
+
+    /** Classify raw Gradle output. Unrecognised output is reported as such, never given a cause. */
+    private fun diagnoseBuild(args: JsonObject): String {
+        val output = args.str("output") ?: return err("`output` is required")
+        val failure = BuildFailureClassifier.classify(output)
+            ?: return json {
+                addProperty("failed", false)
+                addProperty("note", "This output does not report a build failure.")
+            }
+        return json {
+            addProperty("failed", true)
+            addProperty("kind", failure.kind.name.lowercase())
+            addProperty("kindLabel", failure.kind.label)
+            addProperty("recognised", failure.isRecognised)
+            addProperty("headline", failure.headline)
+            failure.failedTask?.let { addProperty("failedTask", it) }
+            failure.detail?.let { addProperty("detail", it) }
+            failure.suggestion?.let { addProperty("suggestion", it) }
+            add("affectedFiles", JsonArray().apply { failure.affectedFiles.forEach { add(it) } })
+            addProperty("rawExcerpt", failure.rawExcerpt)
+            if (!failure.isRecognised) {
+                addProperty(
+                    "note",
+                    "The cause was not recognised, so no suggestion is offered — read `rawExcerpt` " +
+                        "rather than treating `headline` as a diagnosis.",
+                )
+            }
+        }
+    }
+
+    private fun resolver() = AndroidContextResolver.getInstance(project)
+
+    private fun err(message: String) = json { addProperty("error", message) }
+
+    private fun notAndroid() = json {
+        addProperty("available", false)
+        addProperty("reason", "This project doesn't look like an Android project.")
+    }
+
+    private fun JsonObject.str(key: String): String? =
+        runCatching { get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() } }.getOrNull()
+
+    private fun JsonObject.stringList(key: String): List<String> = runCatching {
+        get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.mapNotNull { it.takeIf { e -> e.isJsonPrimitive }?.asString }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+    }.getOrDefault(emptyList())
 
     private fun getContext(args: JsonObject): String {
         if (!enabled()) return json { addProperty("available", false); addProperty("reason", "Android features are turned off in Sightline's settings.") }

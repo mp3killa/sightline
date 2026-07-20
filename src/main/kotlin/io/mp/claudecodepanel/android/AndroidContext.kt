@@ -10,6 +10,13 @@ data class ModuleContext(
     val flavors: Fact<List<String>> = Fact.unknown(),
     val buildType: Fact<String> = Fact.unknown(),
     val applicationId: Fact<String> = Fact.unknown(),
+    /**
+     * The module's `namespace` — the package root the *code* lives in. Distinct from [applicationId],
+     * and often different: a flavour's `applicationIdSuffix` makes the installed id
+     * `com.example.driver.staging` while classes stay in `com.example.compose`. Both are needed to decide
+     * whether a stack frame belongs to this app.
+     */
+    val namespace: Fact<String> = Fact.unknown(),
     val minSdk: Fact<Int> = Fact.unknown(),
     val targetSdk: Fact<Int> = Fact.unknown(),
     val compileSdk: Fact<String> = Fact.unknown(),

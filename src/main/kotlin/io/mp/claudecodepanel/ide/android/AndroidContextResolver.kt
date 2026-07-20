@@ -185,6 +185,7 @@ class AndroidContextResolver(private val project: Project) {
                         } ?: Fact.unknown()
                     },
                 ),
+                namespace = declared.namespace?.let { Fact.known(it, FactTier.STATIC_PARSE) } ?: Fact.unknown(),
                 minSdk = intLadder(studio?.minSdk, declared.minSdk),
                 targetSdk = intLadder(studio?.targetSdk, declared.targetSdk),
                 compileSdk = declared.compileSdk?.let { Fact.known(it, FactTier.STATIC_PARSE) } ?: Fact.unknown(),
@@ -305,6 +306,35 @@ class AndroidContextResolver(private val project: Project) {
         null
     }
 
+    /**
+     * Project-relative paths of the Kotlin/Java sources, for [io.mp.claudecodepanel.android.TestSelection].
+     *
+     * A bounded filesystem walk rather than an index query, deliberately: this has to work during
+     * indexing — which is exactly when someone who just changed a file asks what to run — and it needs
+     * only names and paths, not PSI. `build/` and hidden directories are skipped because a walk that
+     * descends into `build/generated` finds thousands of files and no tests.
+     */
+    fun projectSourceFiles(): List<String> {
+        val base = project.basePath?.let { File(it) } ?: return emptyList()
+        val out = mutableListOf<String>()
+        fun walk(dir: File, depth: Int) {
+            if (depth > MAX_WALK_DEPTH || out.size >= MAX_SOURCE_FILES) return
+            val children = dir.listFiles() ?: return
+            for (f in children) {
+                if (out.size >= MAX_SOURCE_FILES) return
+                val name = f.name
+                if (name.startsWith(".") || name == "build" || name == "node_modules") continue
+                if (f.isDirectory) {
+                    walk(f, depth + 1)
+                } else if (name.endsWith(".kt") || name.endsWith(".java")) {
+                    relativize(f.path, base.path)?.let { out += it }
+                }
+            }
+        }
+        runCatching { walk(base, 0) }
+        return out
+    }
+
     private fun relativize(path: String, root: String): String? {
         val p = path.replace('\\', '/')
         val r = root.replace('\\', '/').trimEnd('/')
@@ -312,6 +342,12 @@ class AndroidContextResolver(private val project: Project) {
     }
 
     companion object {
+        /** Deep enough for `feature/route/src/test/java/com/a/b/c/FooTest.kt`, bounded so it terminates. */
+        private const val MAX_WALK_DEPTH = 12
+
+        /** A cap, not a target. Stated rather than silently truncating — see the caller's `uncovered`. */
+        private const val MAX_SOURCE_FILES = 20_000
+
         fun getInstance(project: Project): AndroidContextResolver =
             project.getService(AndroidContextResolver::class.java)
     }

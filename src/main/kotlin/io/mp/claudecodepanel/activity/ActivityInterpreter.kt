@@ -3,6 +3,8 @@ package io.mp.claudecodepanel.activity
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.time.Instant
+import io.mp.claudecodepanel.android.BuildFailureClassifier
+import io.mp.claudecodepanel.android.StackTraceResolver
 
 /**
  * Turns Claude's raw, observable stream/tool events into normalised [AgentActivityEvent]s.
@@ -15,6 +17,26 @@ import java.time.Instant
  * Stateful (it remembers pending tool calls by id) but deterministic; inject [clock] in tests.
  */
 class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
+
+    /**
+     * Package prefixes that count as "this app", used to pick the blame frame out of a crash.
+     *
+     * Supplied by the host from the resolved Android context (applicationId + namespace) — see
+     * `StackTraceResolver.appPrefixes`. Empty until then, and an empty list simply means a crash keeps
+     * its old file-less behaviour rather than blaming a framework frame.
+     */
+    var appPackagePrefixes: List<String> = emptyList()
+
+    /**
+     * Resolves a source file name to a project path. Injected by the host, which has `FilenameIndex`;
+     * null-returning by default so this class stays platform-free and unit-testable.
+     */
+    var resolveSourceFile: (String) -> String? = { null }
+
+    private companion object {
+        /** Cap on files a single failure attaches to; a 40-error compile shouldn't flood the graph. */
+        const val MAX_FAILURE_FILES = 8
+    }
 
     private enum class Kind { READ, EDIT, WRITE, SEARCH, BASH, GRADLE, TEST, ANALYSIS, SYMBOL, DIAGNOSTICS, WEB, OTHER }
     private data class Pending(val kind: Kind, val name: String, val path: String?, val command: String?)
@@ -120,11 +142,23 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
             }
             val outcome = OutputParsers.parseBuildOutcome(text)
             when {
-                outcome != null -> out.add(BuildReported(outcome, firstLine(text), now))
+                outcome == true -> out.add(BuildReported(true, firstLine(text), now))
+                outcome == false -> out.add(BuildReported(false, buildFailureLabel(text), now))
                 // Exit-status correlation: a non-zero exit on a build/test command with no parseable
                 // BUILD result is still a failure (some Gradle/AGP failures print no "BUILD FAILED" line).
                 isError && (p.kind == Kind.GRADLE || p.kind == Kind.TEST) && testSummary == null ->
-                    out.add(BuildReported(false, firstLine(text).ifBlank { "Build failed" }, now))
+                    out.add(BuildReported(false, buildFailureLabel(text), now))
+            }
+            // Attach a typed failure's named files to their file nodes. A KSP error naming DeliveryDao.kt
+            // should draw an edge to that file, not sit unattached in the diagnostics cluster.
+            if (outcome == false || isError) {
+                BuildFailureClassifier.classify(text)
+                    ?.takeIf { it.isRecognised && it.affectedFiles.isNotEmpty() }
+                    ?.let { failure ->
+                        for (path in failure.affectedFiles.take(MAX_FAILURE_FILES)) {
+                            out.add(ErrorObserved(path, failure.headline, now))
+                        }
+                    }
             }
         }
 
@@ -138,7 +172,9 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
                 }
             }
             OutputParsers.deviceLaunchError(text)?.let { out.add(ErrorObserved(null, it, now)) }
-            for (crash in OutputParsers.parseLogcatCrashes(text)) out.add(ErrorObserved(null, crash.summary(), now))
+            for (crash in OutputParsers.parseLogcatCrashes(text)) {
+                out.add(ErrorObserved(crashPath(text), crash.summary(), now))
+            }
         }
 
         // Static-analysis output (lint/detekt/ktlint): attach findings to the files they name.
@@ -249,6 +285,38 @@ class ActivityInterpreter(private val clock: () -> Instant = Instant::now) {
         val todos = inp.arrOrNull("todos") ?: return "updating plan"
         val done = todos.count { it.isJsonObject && it.asJsonObject.str("status") == "completed" }
         return "$done/${todos.size()} done"
+    }
+
+    /**
+     * A build failure's label for the graph and status strip.
+     *
+     * `firstLine` on a Gradle failure is usually `> Task :app:foo FAILED` — true, and useless. The
+     * classifier's headline says what actually broke ("A KSP annotation processor rejected the code it
+     * was given"), and falls back to the first line when it recognises nothing, so this never invents.
+     */
+    private fun buildFailureLabel(text: String): String {
+        val classified = BuildFailureClassifier.classify(text)
+        if (classified != null && classified.isRecognised) return classified.headline
+        return firstLine(text).ifBlank { "Build failed" }
+    }
+
+    /**
+     * The project file a crash should attach to, or null.
+     *
+     * Before this, every Android crash was emitted with `path = null`, so a `FATAL EXCEPTION` produced a
+     * diagnostics node connected to nothing — unclickable in the map, and with no `AFFECTED_BY` edge to
+     * the file that actually threw. The blame frame is the deepest frame in the app's *own* packages,
+     * because a crash's top frame is nearly always framework code.
+     *
+     * Returns null rather than guessing when the prefixes aren't known yet or the file isn't in the
+     * project — an unattached crash is still correct, just less useful.
+     */
+    private fun crashPath(text: String): String? {
+        if (appPackagePrefixes.isEmpty()) return null
+        val trace = StackTraceResolver.parse(text) ?: return null
+        val frame = trace.blameFrame(appPackagePrefixes) ?: return null
+        val fileName = frame.sourceFileName ?: return null
+        return resolveSourceFile(fileName)
     }
 
     private fun firstLine(text: String): String {

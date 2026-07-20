@@ -207,8 +207,8 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.7.0** = M2,
-**0.8.0** = M3, **0.9.0** = M4–M5.
+Each is independently shippable with a stated gate. Release mapping: **0.8.0** = M3,
+**0.9.0** = M4–M5.
 
 Shipped milestones are **deleted from this file**, not annotated — the same rule
 [BACKLOG.md](BACKLOG.md) follows, so what's left stays honest and short. Decisions that outlive a
@@ -217,33 +217,8 @@ introduced is described in that file's architecture table. (M0 — foundations, 
 optional-dependency boundary, the action gate, the persistence guardrails and the Health rows — shipped
 2026-07-20 and has been removed accordingly. Its four standing-decision amendments, formerly Appendix B,
 are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt injection, `android.getContext`
-and the tier-2/3 parsers — shipped 2026-07-20 too.)
-
-### M2 — Build & test cockpit *(§5, §6, plus stack-trace-to-source from §8)*
-
-Gradle failure is the most common and most expensive Android moment. This is where interpretation pays.
-
-- **Structured build actions**, variant-aware via `GradleTasks`: sync, build module, assemble variant,
-  bundle, lint, unit test, instrumentation test, arbitrary task, cancel, re-run last failed.
-- **`BuildFailureClassifier`** — raw output to a typed cause. The initial classes, each with a test
-  fixture of real output: dependency conflict, Kotlin/AGP incompatibility, KSP/KAPT failure, manifest
-  merge failure, duplicate resource, R8/ProGuard, Java/Kotlin target mismatch, missing repository,
-  version-catalogue error, configuration cache, variant resolution, Compose compiler.
-  Unrecognised output classifies as **UNKNOWN with the raw text**, never as a confident wrong guess.
-- Android-specific diagnosis card replacing the generic command card, with `[Open affected code]`
-  `[Show raw output]`.
-- **`StackTraceResolver`** — resolve frames to `file:line`. Today `parseLogcatCrashes` emits
-  `ErrorObserved` with `path = null` (`activity/ActivityInterpreter.kt:134-142`), so Android crashes
-  attach to nothing in the graph. Fixing this also makes every crash node clickable and every crash
-  edge evidenced. Cheap, and it pays into M3 immediately.
-- **Targeted test selection** — tests for the current file, tests for changed code (git diff ∩
-  `ProjectStructureEnricher`'s existing `TESTS` relation, which already resolves `FooTest` → `Foo`).
-- Test failure intelligence: expected/actual, likely cause, jump to the failing assertion.
-
-**Gate:** each classifier case has a real-output fixture; an unrecognised failure degrades to raw text
-with no fabricated cause. Changed-code test selection picks the right tests in a three-module project.
-
----
+and the tier-2/3 parsers — and **M2** — variant-aware task resolution, the build-failure classifier,
+stack-trace-to-source and targeted test selection — shipped 2026-07-20 too.)
 
 ### M3 — Device control & Logcat intelligence *(§2, §7, §8)*
 

@@ -73,6 +73,7 @@ import io.mp.claudecodepanel.interaction.UserQuestionOption
 import io.mp.claudecodepanel.interaction.UserQuestionRequest
 import io.mp.claudecodepanel.process.ClaudeSession
 import io.mp.claudecodepanel.android.AndroidContextFormatter
+import io.mp.claudecodepanel.android.StackTraceResolver
 import io.mp.claudecodepanel.ide.android.AndroidContextResolver
 import io.mp.claudecodepanel.settings.ClaudeSettings
 import io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable
@@ -441,6 +442,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * `ComposerModel.buildMessage` is re-entered on queue drain, so this happens for free.
      */
     private fun installAndroidContext() {
+        // Lets a logcat crash attach to the file that threw. Reuses resolveProjectFile, which resolves
+        // only a *unique* project match — so an ambiguous name yields null rather than a wrong file.
+        interpreter.resolveSourceFile = { fileName -> resolveProjectFile(fileName)?.path }
+
         composerModel.androidContextBlock = { enabled ->
             if (!ClaudeSettings.getInstance().state.androidFeatures) {
                 ""
@@ -486,7 +491,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             ApplicationManager.getApplication().invokeLater({
                 // Re-check the pin here, not only on entry: a refresh scheduled before the pin was set
                 // is still in flight, and delivering its result would clobber the pinned context.
-                if (!project.isDisposed && !androidContextPinned) composer.setAndroidContext(context)
+                if (project.isDisposed || androidContextPinned) return@invokeLater
+                composer.setAndroidContext(context)
+                // A crash's blame frame needs to know which packages are "ours". Both halves matter: a
+                // flavour's applicationIdSuffix makes the installed id differ from the namespace the
+                // code actually lives in, and matching on only one finds no frames at all.
+                val module = context.activeModule
+                interpreter.appPackagePrefixes = StackTraceResolver.appPrefixes(
+                    module?.applicationId?.value,
+                    module?.namespace?.value,
+                )
             }, ModalityState.any())
         }
     }
