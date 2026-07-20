@@ -137,10 +137,12 @@ obligation, and the licence is written to work either way:
    one; JetBrains is explicitly not a party to it (clause 18). Do **not** select an open-source licence
    option on the listing — source-available is not open source, and mislabelling it is both inaccurate
    and a plausible review rejection.
-4. **Decide whether to make the repository public.** The licence supports it, and several documents
-   already invite the reader to audit named source files — which is only honest while the source is
-   actually readable. If it stays private, `PRIVACY.md`, `SECURITY.md` and `docs/DATA-FLOW.md` must
-   revert to behavioural checks only (the wording for that is in the 2026-07-20 history if needed).
+4. ~~**Decide whether to make the repository public.**~~ **Done 2026-07-20 — it is public**, at
+   https://github.com/mp3killa/sightline. That makes the audit claims in `SECURITY.md` and
+   `docs/DATA-FLOW.md` true rather than aspirational. GitHub reports the licence as *Other /
+   NOASSERTION*, which is correct and wanted: source-available is not OSI-approved and must never be
+   badged as though it were. **If the repo ever goes private again**, those two documents have to
+   revert to behavioural-verification wording — that version is in the 2026-07-20 history.
 4. ~~**A Marketplace icon**~~ — **done.** `META-INF/pluginIcon.svg` (+ `_dark`) is an aperture formed
    from graph nodes with one highlighted line of sight, built as geometry rather than traced so it
    holds up at 16px and at listing size. The tool-window stripe icon (`icons/sightline.svg`) is a
