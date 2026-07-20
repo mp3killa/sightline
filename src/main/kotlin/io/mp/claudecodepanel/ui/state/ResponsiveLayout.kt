@@ -40,4 +40,28 @@ object ResponsiveLayout {
         LayoutProfile.MEDIUM -> Int.MAX_VALUE
         LayoutProfile.WIDE -> 760
     }
+
+    /** Breathing room at the edge of the transcript when no reading cap applies. */
+    const val BASE_PADDING = 14
+
+    /**
+     * Never squeeze the conversation below this, whatever the cap arithmetic says. A safety floor:
+     * text wrapping every three or four words is far worse than a column that runs slightly wide.
+     */
+    const val MIN_CONTENT_WIDTH = 360
+
+    /**
+     * Symmetric padding that centres a readable column inside [available] logical px.
+     *
+     * [available] must be the width of the **column the text actually occupies** — in a split layout
+     * that is the chat pane, not the whole panel. Measuring the panel here produced padding sized for a
+     * width the text never had, collapsing the conversation into a sliver.
+     */
+    fun readablePadding(available: Int): Int {
+        if (available <= 0) return BASE_PADDING
+        val cap = maxReadableWidth(profile(available))
+        if (cap == Int.MAX_VALUE) return BASE_PADDING
+        val ceiling = ((available - MIN_CONTENT_WIDTH) / 2).coerceAtLeast(BASE_PADDING)
+        return ((available - cap) / 2).coerceIn(BASE_PADDING, ceiling)
+    }
 }

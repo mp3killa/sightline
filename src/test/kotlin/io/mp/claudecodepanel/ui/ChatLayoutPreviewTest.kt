@@ -205,4 +205,33 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
         walk(root)
         return out
     }
+
+    /**
+     * Regression: on first open — no resizing — the conversation used only a fraction of its column.
+     *
+     * Padding was computed from `component.width` whenever the viewport hadn't been laid out yet, which
+     * on first open is always. In SPLIT the panel is far wider than the chat column, so the transcript
+     * got padding sized for a column roughly twice its real width, and because the panel width then
+     * never changed nothing recomputed it. The text stayed crushed until the window was resized.
+     */
+    fun testFirstOpenUsesTheFullChatColumnWithoutResizing() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showActivityMap = true
+        settings.activityViewMode = "split"
+
+        val p = panel()
+        // A fresh panel shows the empty state, so the transcript isn't in the tree yet — seed a turn
+        // first, exactly as the first message does, then lay out once. No resize, no second chance.
+        seedTranscript(p)
+        layoutTree(p.component, 1400, 900)
+
+        val column = p.transcriptColumnWidthForTest()
+        val pad = p.transcriptPaddingForTest()
+        assertTrue("the chat column should have a real width, got $column", column > 200)
+        val content = column - pad * 2
+        assertTrue(
+            "the conversation should fill its column: column=$column pad=$pad content=$content",
+            content > column * 0.8,
+        )
+    }
 }

@@ -443,6 +443,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         component.addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent) = applyProfile()
         })
+        // The chat column can change width without the panel doing so — the splitter divider moving,
+        // or simply the viewport being laid out for the first time after the panel already has its
+        // size. Without this, first open computed padding against a not-yet-sized viewport and never
+        // revisited it, so the conversation stayed squeezed until the window was resized.
+        scroll.viewport.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) = applyProfile()
+        })
         SwingUtilities.invokeLater { applyProfile() }
     }
 
@@ -459,13 +466,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // preference is untouched, so widening restores the split.
         if (profileChanged) applyEffectiveMode()
         // Reading width is a property of the *chat column*, not the whole panel: in SPLIT the
-        // transcript only gets its share of the width, so measuring the panel here would leave the
-        // cap permanently disengaged.
-        val textWidth = scroll.viewport.width.takeIf { it > 0 } ?: component.width
-        val maxW = ResponsiveLayout.maxReadableWidth(ResponsiveLayout.profile(textWidth, scale))
-        val hpad = if (maxW != Int.MAX_VALUE) {
-            ((textWidth - JBUI.scale(maxW)) / 2).coerceIn(JBUI.scale(14), JBUI.scale(400))
-        } else JBUI.scale(14)
+        // transcript only gets its share of the width.
+        //
+        // Never substitute the panel width when the viewport hasn't been laid out yet. On first open
+        // the viewport is still 0 while the panel is already full width, so that fallback produced
+        // padding sized for a column twice as wide as the real one — and since the panel width then
+        // never changes, nothing recomputed it and the text stayed crushed into a sliver until the
+        // window was resized. The viewport listener below re-runs this once the real width exists.
+        val textWidth = scroll.viewport.width
+        val hpad = if (textWidth > 0) {
+            JBUI.scale(ResponsiveLayout.readablePadding((textWidth / scale).toInt()))
+        } else {
+            JBUI.scale(ResponsiveLayout.BASE_PADDING)
+        }
         transcript.border = JBUI.Borders.empty(12, hpad)
         // Keep the composer on the same column as the conversation it belongs to (CHAT/MAP only —
         // in SPLIT it spans both panes, which Tier 2 addresses when the composer moves into the
@@ -966,6 +979,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Test-only: how many turns are still held as live components (see [TranscriptRetention]). */
     @TestOnly
     internal fun liveTurnCountForTest(): Int = turns.size
+
+    /** Test-only: the horizontal padding currently applied to the transcript column. */
+    @TestOnly
+    internal fun transcriptPaddingForTest(): Int = transcript.border?.getBorderInsets(transcript)?.left ?: 0
+
+    /** Test-only: the width the transcript column actually has. */
+    @TestOnly
+    internal fun transcriptColumnWidthForTest(): Int = scroll.viewport.width
 
     /** Test-only: whether auto-scroll is still following the live end. */
     @TestOnly
