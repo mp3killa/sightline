@@ -75,6 +75,9 @@ import io.mp.claudecodepanel.ui.state.ScrollFollow
 import io.mp.claudecodepanel.ui.state.StatusKind
 import io.mp.claudecodepanel.ui.state.StatusModel
 import io.mp.claudecodepanel.ui.state.StatusView
+import io.mp.claudecodepanel.ui.state.ToolEventPresentation
+import io.mp.claudecodepanel.ui.state.ToolOutcome
+import io.mp.claudecodepanel.ui.state.ToolWeight
 import io.mp.claudecodepanel.ui.state.TranscriptPresenter
 import io.mp.claudecodepanel.ui.state.WorkspaceMode
 import io.mp.claudecodepanel.ui.state.WorkspaceModes
@@ -1495,7 +1498,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
     }
 
-    /** A compact activity row: semantic icon + human action + target, with a result-state icon. */
+    /**
+     * One tool call. Renders either as a quiet **compact row** (routine, successful work) or as a
+     * bordered **card** (failures, denials, and edits) — see [ToolEventPresentation], which decides
+     * from structured metadata only.
+     */
     private inner class ToolCard(name: String) : Block() {
         private val bodyPane = styledPane()
         val bodyDoc: StyledDocument get() = bodyPane.styledDocument
@@ -1505,11 +1512,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val stateLabel = JBLabel("")
         private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
         private val bodyWrap = JPanel(BorderLayout())
+        private val head = JPanel(BorderLayout(JBUI.scale(6), 0))
         private var open = false
+
+        private var toolName: String = name
+        private var outcome: ToolOutcome = ToolOutcome.RUNNING
+        private var weight: ToolWeight = ToolEventPresentation.weight(name, ToolOutcome.RUNNING)
+
         init {
             layout = BorderLayout()
             border = JBUI.Borders.empty(1, 0)
-            val head = JPanel(BorderLayout(JBUI.scale(6), 0)); head.isOpaque = false; head.border = JBUI.Borders.empty(6, 8); head.cursor = hand
+            head.isOpaque = false; head.cursor = hand
             val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
             actionLabel.font = actionLabel.font.deriveFont(Font.BOLD)
             actionLabel.foreground = ClaudeUiTokens.textPrimary()
@@ -1524,10 +1537,25 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             bodyWrap.isOpaque = false; bodyWrap.border = JBUI.Borders.empty(0, 12, 6, 8); bodyWrap.add(bodyPane, BorderLayout.CENTER)
             bodyWrap.isVisible = false
             add(bodyWrap, BorderLayout.CENTER)
+            chevron.isVisible = false // nothing to disclose until a result arrives
+            applyWeight()
         }
+
+        /** Re-derives presentation from the current tool + outcome and restyles in place. */
+        private fun applyWeight() {
+            weight = ToolEventPresentation.weight(toolName, outcome)
+            // A compact row is a line of text, not a container: tighter insets, no chrome.
+            head.border = if (weight == ToolWeight.COMPACT) JBUI.Borders.empty(2, 4) else JBUI.Borders.empty(6, 8)
+            bodyWrap.border = if (weight == ToolWeight.COMPACT) JBUI.Borders.empty(0, 10, 4, 4) else JBUI.Borders.empty(0, 12, 6, 8)
+            chevron.isVisible = ToolEventPresentation.hasDisclosure(bodyDoc.length)
+            revalidate(); repaint()
+        }
+
         fun setDetails(name: String, input: JsonObject, summary: String) {
+            toolName = name
             actionLabel.text = toolAction(name)
             targetLabel.text = summary
+            applyWeight()
             relayout()
         }
         fun addResult(text: String, isErr: Boolean) {
@@ -1537,6 +1565,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             insert(truncate(text).ifBlank { if (isErr) "(error)" else "(no output)" } + "\n", sMuted)
             target = null
             stateLabel.icon = if (isErr) ClaudeIcons.errorCircle.withSize(13) else ClaudeIcons.check.withSize(13)
+            outcome = if (isErr) ToolOutcome.ERROR else ToolOutcome.OK
+            applyWeight()
             if (isErr) expand()
             relayout()
         }
@@ -1549,18 +1579,23 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             if (bodyDoc.length > 0) insert("\n", sMuted)
             insert("⦸ $reason\n", sMuted)
             target = null
+            outcome = ToolOutcome.BLOCKED
+            applyWeight()
             relayout()
         }
         private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
         override fun paintComponent(g: Graphics) {
-            val g2 = g.create() as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = ClaudeUiTokens.radiusMd()
-            g2.color = cardBg()
-            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = ClaudeUiTokens.subtleBorder()
-            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.dispose()
+            // A compact row draws no chrome at all — that is the whole point of the tier.
+            if (weight == ToolWeight.CARD) {
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = ClaudeUiTokens.radiusMd()
+                g2.color = cardBg()
+                g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                g2.color = ClaudeUiTokens.subtleBorder()
+                g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                g2.dispose()
+            }
             super.paintComponent(g)
         }
     }

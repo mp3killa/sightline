@@ -25,21 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M2 — Compact tool-activity rows
-
-The root cause of "equally weighted panels" is that `showDetails` is binary: either **no** tool cards
-or **every** tool call at full card weight, where `ToolCard.paintComponent` draws a filled rounded rect
-plus border unconditionally — the same recipe as the user message bubble. A successful `Read` is as
-loud as your own prompt; success vs failure differ only by a 13px icon.
-
-Add the missing middle tier. Routine successful operations (Read/Grep/Glob, and commands that exited 0)
-render as a single compact row — icon, verb, target, state, optional duration, disclosure chevron — with
-no border or fill. Failures and warnings keep stronger treatment. Expanded output stays behind disclosure.
-
-Land the decision as a platform-free `ui/state` class (e.g. `ToolEventPresentation`) taking **structured**
-metadata (tool name, error flag, exit status) — never a display string — and returning a presentation
-tier. Unit-test the tiering; keep the Swing half thin.
-
 ## M3 — File edits as first-class blocks
 
 Edits deserve more weight than reads, and today have less structure than either:

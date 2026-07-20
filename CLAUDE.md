@@ -33,7 +33,7 @@ and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutr
 | `ui/SightlineUiState.kt` | `<projectService>` holding cross-component UI state (tool-window visibility, workspace mode, session state) — also what the test bridge's `get_ui_state` reads. |
 | `ui/A11yNames.kt` | Stable `sightline.*` accessible-name constants for UI automation, kept separate from visible text. See [docs/TESTING.md](docs/TESTING.md). |
 | `ui/components/*.kt` | Small reusable Swing widgets: `SegmentedControl` (the Chat/Activity switch, arrow-key navigable), `IconActionButton`, `ContextChip`, `EmptyStatePanel`. |
-| `ui/state/*.kt` | Platform-free, unit-tested **presentation logic** — no Swing: `StatusModel` (session state → status text), `ComposerModel` (input/send enablement), `PermissionModes` (the five modes + display names; `auto` is the default), `WorkspaceModes` (chat/split/map, plus `effectiveMode` — SPLIT is demoted to **CHAT** below the WIDE breakpoint without rewriting the user's preference, so a cramped panel never leaves you with a graph and no transcript), `ResponsiveLayout` (width → layout decisions), `ScrollFollow` (follow-the-bottom + jump-to-latest arming), `TranscriptPresenter`, `TimelineDockState`, `CompletionSummary` (the per-turn `Completed · 51.6s · 13 turns · $0.404` footer). |
+| `ui/state/*.kt` | Platform-free, unit-tested **presentation logic** — no Swing: `StatusModel` (session state → status text), `ComposerModel` (input/send enablement), `PermissionModes` (the five modes + display names; `auto` is the default), `WorkspaceModes` (chat/split/map, plus `effectiveMode` — SPLIT is demoted to **CHAT** below the WIDE breakpoint without rewriting the user's preference, so a cramped panel never leaves you with a graph and no transcript), `ToolEventPresentation` (**compact row vs card** for a tool event, decided from structured metadata — tool name + outcome — never a display string: routine successful reads/commands recede to a borderless row, while failures, denials and edits keep card weight), `ResponsiveLayout` (width → layout decisions), `ScrollFollow` (follow-the-bottom + jump-to-latest arming), `TranscriptPresenter`, `TimelineDockState`, `CompletionSummary` (the per-turn `Completed · 51.6s · 13 turns · $0.404` footer). |
 | `theme/ClaudeUiTokens.kt`, `theme/ClaudeIcons.kt` | Theme-aware colour/spacing tokens and icons, resolved from the IDE's own scheme so both themes work. |
 | `settings/ClaudeSettings*.kt` | Persisted settings + Settings UI (Settings → Tools → **Sightline for Claude Code**) |
 
@@ -68,7 +68,8 @@ animated, so the preview is representative, not pixel-identical.)
 
 The transcript is a `Scrollable` `JPanel` (BoxLayout Y) of block components. Each assistant turn is
 an `AssistantTurn` holding `TextBlock`, `ThinkingBlock` (collapsible),
-`ToolCard` (collapsible, icon + summary + diff/result), `ApprovalBlock`, `AskUserQuestionBlock`, and a
+`ToolCard` (collapsible, icon + summary + diff/result; renders as a borderless **compact row** or a
+bordered **card** per `ToolEventPresentation`), `ApprovalBlock`, `AskUserQuestionBlock`, and a
 subtle run-metadata **footer** (`Completed · 51.6s · 13 turns · $0.404` via `CompletionSummary`; this is
 where cost/duration/turns live — never the status strip, which shows only concise session state).
 `TextBlock` streams plain text token-by-token and, at `content_block_stop`, swaps to the
