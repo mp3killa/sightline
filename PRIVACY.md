@@ -74,7 +74,7 @@ under your own account.
 
 | What | Where | Cleared by |
 |---|---|---|
-| Settings (CLI path, permission mode, feature toggles) | IDE config, `claudeCodePanel.xml` | Settings → Tools → Sightline, or uninstalling |
+| Settings (CLI path, permission mode, feature toggles) | IDE config, `sightline.xml` | Settings → Tools → Sightline, or uninstalling |
 | Conversation transcript | **Memory only** — never written to disk | Closing the project, or **New** |
 | Activity Map nodes and edges | **Memory only** | Same |
 | Android context | **Memory only**, cached ~15 seconds | Same |
@@ -123,6 +123,6 @@ Sightline is a developer tool, not directed at children, and collects nothing fr
 
 ## Contact
 
-Privacy questions and corrections: open an issue on the public tracker, or email the address on the
-Marketplace listing. If you believe Sightline leaks something it shouldn't, please treat it as a
-security report — see [SECURITY.md](SECURITY.md).
+Privacy questions and corrections: open an issue on the public tracker, or email support@cxk.co.za.
+If you believe Sightline leaks something it shouldn't, please treat it as a security report — see
+[SECURITY.md](SECURITY.md).

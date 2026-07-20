@@ -1126,6 +1126,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         composer.setAndroidContext(context)
     }
 
+    /** Test-only: settle the activity graph's force layout and frame it, for a headless render. */
+    @TestOnly
+    internal fun settleActivityMapForPreview() = activityMap.settleAndFitForPreview()
+
     /** Test-only: the message that would actually be sent, context block and all. */
     @TestOnly
     internal fun buildMessageForPreview(text: String): String = composerModel.buildMessage(text)

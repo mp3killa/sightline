@@ -2,7 +2,7 @@
     <id>io.mp.sightline</id>
     <name>Sightline</name>
     <version>0.1.0-beta</version>
-    <vendor email="mp3killa@gmail.com">Michael Carroll</vendor>
+    <vendor email="support@cxk.co.za" url="https://cxk.co.za">Michael Carroll</vendor>
 
     <description><![CDATA[
         <p><b>Claude Code inside Android Studio, with visible project activity and controlled tool

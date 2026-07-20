@@ -70,6 +70,13 @@ Verify:
   the hovered/selected node keeping its label; the **"N of M · Show more"** counter actually revealing more
   nodes when clicked; **Fit** framing the bulk of the graph rather than shrinking it to a speck around a
   stray node.
+  **Found 2026-07-20 while generating the listing screenshots:** on a settled 9-node graph, **Fit
+  leaves the rightmost node's label clipped** at the canvas edge. `MapDensity.fitPadding` pads for
+  labels by density, but `LabelPlacement` offers the *right* slot first, so the outermost node on the
+  right routinely overflows. Evidence: `build/marketplace/03-activity-map.png`. Low severity — the
+  label returns on hover and the node is intact — but it is the first thing an eye lands on in a
+  screenshot. Fix by padding asymmetrically for the widest right-placed label, or by biasing the
+  outermost nodes' labels inward.
   Open design question: failed **command/test** nodes (`build`, `test suite`) lose their labels at the
   IMPORTANT tier while `ERROR`-type nodes keep theirs. That follows the tier rules as written, but a
   *failed* node arguably deserves anchor status. Decide during the live pass, with a busy graph in
@@ -111,12 +118,12 @@ listing description, change-notes and independence disclaimer are in `plugin.xml
 
 **Still to do, and all of it needs a human:**
 
-1. **Settle the Anthropic position.** This is the one blocker worth resolving before a *public* listing.
-   Sightline launches a user-installed, user-authenticated CLI — it has no login screen, receives no
-   OAuth tokens, proxies no API traffic and runs no backend — but Anthropic's third-party guidance is
-   written around API-key integrations, so the case is adjacent rather than identical. Ask them directly
-   and get it in writing. A draft is in `docs/ANTHROPIC-CLARIFICATION.md`. Until it is answered, describe
-   Sightline as *requiring a user-managed Claude Code installation*, never as *providing Claude access*.
+1. ~~**Settle the Anthropic position.**~~ **Parked 2026-07-20 (user decision).** Their docs were
+   reviewed and say nothing that restricts a wrapper of this shape; if anything they encourage
+   integrations. The draft in `docs/ANTHROPIC-CLARIFICATION.md` is kept unsent in case the position
+   changes or the listing draws a query. The wording rule stands regardless, because it is accurate:
+   describe Sightline as *requiring a user-managed Claude Code installation*, never as *providing
+   Claude access*.
 2. **Vendor profile + trader status.** The Vendor ID cannot be changed later. Do not tick non-trader
    reflexively — JetBrains does not decide it on whether money changes hands, and this plugin is close
    to professional work. Trader contact details are shown publicly, so use a dedicated support address,
@@ -125,8 +132,11 @@ listing description, change-notes and independence disclaimer are in `plugin.xml
    source. Replace the `OWNER/sightline` placeholders in `CHANGELOG.md` and `README.md` once it exists.
 4. **A Marketplace icon** — 40×40 SVG, distinct from JetBrains, Anthropic and Google marks. Concept:
    an aperture or eye formed from graph nodes with one highlighted line of sight.
-5. **Four screenshots**, ≥1200×760: chat with Markdown, an AskUserQuestion card, the Activity Map with
-   real relationships, and a diff/approval. Scrub secrets, private repo names, emails and machine paths
-   before uploading — the screenshots are the one place where a leak is permanent and public.
+5. ~~**Four screenshots**~~ — **generated.** `./gradlew test --tests "*MarketplaceScreenshotTest*"
+   --rerun-tasks` writes `build/marketplace/0{1..4}-*.png` at 1280×800, driven through the production
+   event path so they show what the plugin actually renders. Content is a **fictional** app
+   (`com.example.routes`) — a guard test asserts no real project, client, path or address appears,
+   because a listing image is public permanently and cannot be quietly corrected later. Regenerate
+   after any UI change; **look at them** before uploading.
 6. **The compatibility claim.** The listing should say *tested on Android Studio*; it is verified
    compatible with IntelliJ IDEA 2025.3 but has not been exercised there (see the plain-IDEA item above).

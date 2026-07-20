@@ -11,7 +11,7 @@ Open an issue with the plugin version, your IDE version, and what you expected v
 runs through a sanitiser that removes tokens, your home path, username, email and IP addresses, so it
 is safe to paste publicly. It usually identifies the problem on its own.
 
-**Security problems go to the address in [SECURITY.md](SECURITY.md), not to a public issue.**
+**Security problems go to support@cxk.co.za, not to a public issue** — see [SECURITY.md](SECURITY.md).
 
 ## Building
 
@@ -59,8 +59,8 @@ admit a limit more clearly is usually right.
 Every behavioural change needs a test. Write them so the name states the claim
 (`` `an unrecognised failure keeps the raw output and offers no cause` ``) rather than the mechanism.
 
-For UI, there is a headless PNG harness — `./gradlew test --rerun-tasks` writes previews to `build/`.
-**Look at the images.** That channel has caught defects every assertion missed. See
+For UI, there is a headless PNG harness — `./gradlew test --rerun-tasks` writes previews to `build/`,
+including the Marketplace listing screenshots in `build/marketplace/`. **Look at the images.** That channel has caught defects every assertion missed. See
 [docs/TESTING.md](docs/TESTING.md), including the two gotchas that will otherwise waste your afternoon.
 
 ## Style

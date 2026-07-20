@@ -101,7 +101,7 @@ Two places, both before data can leave:
 |---|---|---|
 | Transcript, Activity Map | Memory | Until the project closes or **New** |
 | Android context | Memory, ~15s cache | Same |
-| Settings | `claudeCodePanel.xml` | Until uninstall |
+| Settings | `sightline.xml` | Until uninstall |
 | Android cache *(opt-in)* | `.sightline/` | Until deleted; capped and versioned |
 | Bridge lock | `~/.claude/ide/<port>.lock` | Until the IDE closes |
 | Diagnostics | `idea.log` | IDE log rotation |
@@ -122,10 +122,10 @@ ps aux | grep '[c]laude -p'
 lsof -nP -iTCP -sTCP:LISTEN | grep -i java
 
 # The source of the prompt block, and its tests:
-src/main/kotlin/io/mp/claudecodepanel/android/AndroidContextFormatter.kt
-src/test/kotlin/io/mp/claudecodepanel/android/AndroidContextFormatterTest.kt
+src/main/kotlin/io/mp/sightline/android/AndroidContextFormatter.kt
+src/test/kotlin/io/mp/sightline/android/AndroidContextFormatterTest.kt
 
 # The redactor, and its corpus test:
-src/main/kotlin/io/mp/claudecodepanel/android/LogcatRedactor.kt
-src/test/kotlin/io/mp/claudecodepanel/android/LogcatRedactorTest.kt
+src/main/kotlin/io/mp/sightline/android/LogcatRedactor.kt
+src/test/kotlin/io/mp/sightline/android/LogcatRedactorTest.kt
 ```

@@ -573,6 +573,21 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         canvas.repaint()
     }
 
+    /**
+     * Test-only: run the force simulation to rest and frame the result, the way a live panel reaches
+     * after a second of animation.
+     *
+     * A headless render otherwise catches the graph on its first frame — every node still stacked near
+     * the origin — which looks like a layout defect rather than an unsettled simulation. The preview
+     * harnesses need the settled state to show anything meaningful.
+     */
+    @org.jetbrains.annotations.TestOnly
+    internal fun settleAndFitForPreview(iterations: Int = 400) {
+        settleSync(iterations)
+        fit()
+        canvas.repaint()
+    }
+
     private fun hasFreshGlow(): Boolean {
         val now = Instant.now()
         return graph.nodes.any { Duration.between(it.lastSeenAt, now).seconds < GLOW_SECONDS }

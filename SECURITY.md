@@ -9,9 +9,11 @@ to keep that under your control, and where the limits are.
 
 **Please do not open a public issue for a security problem.**
 
-Email the security address on the Marketplace listing with a description, the affected version, and
-steps to reproduce. I will acknowledge within 7 days and aim to have a fix or a plan within 30. I will
-credit you unless you'd rather I didn't.
+Email **support@cxk.co.za** with a description, the affected version, and steps to reproduce. Put
+"Sightline security" in the subject so it isn't triaged as an ordinary support request.
+
+I will acknowledge within 7 days and aim to have a fix or a plan within 30. I will credit you unless
+you'd rather I didn't.
 
 This is a personal open-source project with no bug bounty. It is also a beta — if you find something
 serious, telling me privately first genuinely helps the people using it.

@@ -99,6 +99,7 @@ only automated visual channel available, and one that has already caught real de
 | `activity/ActivityMapPreviewTest` | `activity-map-preview-{dark,light}.png` | The force-directed graph, label placement/collision |
 | ″ | `activity-map-dense-{dark,light}.png` | A **61-node** graph — past `MapDensity.IMPORTANT_ABOVE` (40), so label **thinning** is actually exercised |
 | `ui/ChatLayoutPreviewTest` | `chat-layout-{narrow,medium,wide}.png` | Panel layout at each `ResponsiveLayout` width class |
+| `ui/MarketplaceScreenshotTest` | `marketplace/0{1..4}-*.png` | The **listing screenshots**, 1280×800, driven through the production event path. Fictional content (`com.example.routes`) with a guard test asserting no real project, client, path or address appears — a listing image is public permanently. Calls `settleActivityMapForPreview()` so the graph is settled and framed rather than caught on frame one |
 | `ui/ChatGalleryPreviewTest` | `chat-gallery-{light,dark,compact,queued}.png` | Every block type — Markdown (headings/lists/task lists/tables/fences/quotes/callouts), routine vs failed tool cards, an edit diff, the **ApprovalBlock**, and **AskUserQuestion** single- and multi-select — in **both themes**, plus `compact` (details off, showing the per-turn processing summary) and `queued` (a message parked behind a running turn) |
 
 `ChatLayoutPreviewTest` builds a real `ClaudePanel` and seeds it through the **production event path**
