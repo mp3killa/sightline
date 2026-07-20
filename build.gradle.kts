@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.6.0"
+version = "0.1.0-beta"
 
 repositories {
     mavenCentral()
@@ -103,16 +103,22 @@ intellijPlatform {
         }
     }
 
-    // Marketplace gate: `./gradlew verifyPlugin` runs the IntelliJ Plugin Verifier (internal/experimental
-    // API usage — a common rejection cause — and binary compatibility). It verifies against the released
-    // 253 floor (IntelliJ IDEA Community 2025.3). The plugin uses only platform APIs + com.intellij.java
-    // (no Android-plugin APIs), so IC is a valid, portable target.
+    // Marketplace gate: the IntelliJ Plugin Verifier (internal/experimental API usage — a common
+    // rejection cause — and binary compatibility), against the released 253 floor.
     //
-    // NOTE (2026-07): the verifier could not be *run* in the dev environment here — IPGP 2.6.0 mis-resolves
-    // the IC distribution coordinate (`idea:ideaIC:<v>`, group "idea") while the ZIP actually lives at
-    // `com.jetbrains.intellij.idea:ideaIC:<v>` (the ZIP exists + downloads), and `local(AndroidStudio)`
-    // can't be used because that install is already the compile-time platform dependency. Run this on CI /
-    // an environment where the IC distribution resolves (or a newer IPGP). The config below is correct.
+    // >>> RUN `tools/verify-plugin.sh`, NOT `./gradlew verifyPlugin`. <<<
+    //
+    // IPGP 2.6.0 resolves the IDE under `idea:ideaIC:<v>` (group "idea"), which does not exist; the ZIP
+    // lives at `com.jetbrains.intellij.idea:ideaIC:<v>`. Both `select { }` and the explicit `ide(...)`
+    // form hit the same wrong group, so the task fails before the verifier starts. The script downloads
+    // from the correct coordinate and runs the same verifier CLI directly.
+    //
+    // Last run 2026-07-20 against IC-253.28294.334: **Compatible** — 0 compatibility problems.
+    // The 10 remaining findings are all `ToolWindowFactory` interface members that Kotlin materialises
+    // for any implementor (isApplicable, isDoNotActivateOnStart, getIcon, getAnchor, manage); they are
+    // informational and not avoidable without abandoning the interface.
+    //
+    // The config below is kept correct so it starts working the moment the Gradle plugin is fixed.
     pluginVerification {
         ides {
             select {

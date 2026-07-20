@@ -1,32 +1,63 @@
 <idea-plugin>
-    <id>io.mp.claudecodepanel</id>
-    <name>Sightline for Claude Code</name>
-    <version>0.6.0</version>
-    <vendor email="mp3killa@gmail.com">mp</vendor>
+    <id>io.mp.sightline</id>
+    <name>Sightline</name>
+    <version>0.1.0-beta</version>
+    <vendor email="mp3killa@gmail.com">Michael Carroll</vendor>
 
     <description><![CDATA[
-        <b>Sightline</b> is a graphical chat panel for <b>Claude Code</b> in Android Studio and
-        IntelliJ-based IDEs, inspired by the VS Code Claude Code experience. It drives your locally installed
-        <code>claude</code> CLI over its streaming-JSON protocol and renders the conversation —
-        streaming replies, extended thinking, tool calls, edits, and results — in a native
-        Swing tool window with message bubbles and a Claude Code-style composer.
-        <br/><br/>
-        <b>Requires the Claude Code CLI</b> to be installed (the <code>claude</code> command).
-        Sightline is an independent, unofficial wrapper and is not affiliated with or endorsed by
-        Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic; used here only to describe
+        <p><b>Claude Code inside Android Studio, with visible project activity and controlled tool
+        execution.</b></p>
+
+        <p>
+        Sightline provides a native Android Studio interface for a locally installed Claude Code CLI.
+        </p>
+
+        <p>Use it to:</p>
+        <ul>
+            <li>Chat with Claude without leaving Android Studio.</li>
+            <li>Attach files and IDE context, and remove any of it before you send.</li>
+            <li>Review tool requests and proposed changes as diffs before they apply.</li>
+            <li>See files, commands, tests and relationships in the Activity Map.</li>
+            <li>Inspect structured build, test and diagnostic results.</li>
+        </ul>
+
+        <p><b>Android-aware.</b> Sightline knows your build variant, connected device, module and
+        running process, so you don't have to explain them. It reads Gradle failures into typed
+        diagnoses, resolves crashes back to the line that threw, picks the tests worth running for
+        what you changed, and audits your merged manifest. Logcat is redacted before it can reach a
+        prompt.</p>
+
+        <p><b>Requires the Claude Code CLI</b> (the <code>claude</code> command), installed and
+        authenticated separately. Sightline does not provide Claude access, does not handle your
+        credentials, and has no login screen or backend of its own.</p>
+
+        <p><b>No telemetry.</b> No analytics, no usage statistics, nothing sent anywhere except to the
+        local <code>claude</code> process you started. Your conversation is never written to disk.</p>
+
+        <p>
+        Sightline is an independent, open-source project (Apache-2.0) and is not affiliated with or
+        endorsed by Anthropic, JetBrains or Google. "Claude" and "Claude Code" are trademarks of
+        Anthropic; "Android Studio" is a trademark of Google. Both are used only to describe
         compatibility.
+        </p>
     ]]></description>
 
     <change-notes><![CDATA[
-        <b>0.6.0</b> — New <b>Agent Activity Map</b>: replaces the generic "Thinking…" indicator with a
-        live, force-directed graph of what Claude is <i>observably</i> touching — files, searches,
-        commands, Gradle tasks, tests, errors and generated patches — grouped into architectural
-        clusters, with a current-focus card, clickable node details (open/reveal in the IDE), and an
-        activity timeline. Choose a <b>Chat</b>, <b>Split</b> or <b>Map-only</b> layout from the header.
-        Observable activity only; it makes no claim to reveal hidden reasoning.
-        <br/>
-        <b>0.1.0</b> — Initial release: streaming chat panel, extended-thinking &amp; tool-call
-        rendering, edit/diff previews, model &amp; permission-mode selectors, and session resume.
+        <p><b>0.1.0-beta</b> — first public release.</p>
+        <ul>
+            <li><b>Chat panel</b> — streaming replies, extended thinking, Markdown with syntax-highlighted
+            code, collapsible tool cards, and edit diffs you review before they apply.</li>
+            <li><b>Permission control</b> — five modes, inline Allow / Allow-always / Deny, a path guard
+            that refuses credential locations outright, and a device gate that always confirms anything
+            destroying app data.</li>
+            <li><b>Agent Activity Map</b> — a live graph of what Claude is <i>observably</i> touching,
+            with the evidence for every relationship it draws.</li>
+            <li><b>Android control centre</b> — build-variant and device context supplied automatically,
+            typed Gradle failure diagnosis, crash-to-source resolution, targeted test selection, redacted
+            logcat, screen inspection, Compose and manifest analysis.</li>
+            <li><b>No telemetry</b>, and no conversation persistence.</li>
+        </ul>
+        <p>This is a beta. Please report problems on the public issue tracker.</p>
     ]]></change-notes>
 
     <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST
@@ -44,24 +75,24 @@
         <!-- Implemented only from sightline-android.xml, so the implementation class never loads
              where its Android-Studio-internal imports can't resolve. -->
         <extensionPoint name="androidFactProvider" dynamic="true"
-                        interface="io.mp.claudecodepanel.ide.android.AndroidStudioFactProvider"/>
+                        interface="io.mp.sightline.ide.android.AndroidStudioFactProvider"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Sightline"
                     anchor="right"
-                    factoryClass="io.mp.claudecodepanel.ClaudeToolWindowFactory"
+                    factoryClass="io.mp.sightline.ClaudeToolWindowFactory"
                     icon="/icons/claudeToolWindow.svg"/>
-        <applicationService serviceImplementation="io.mp.claudecodepanel.settings.ClaudeSettings"/>
+        <applicationService serviceImplementation="io.mp.sightline.settings.ClaudeSettings"/>
         <!-- Decouple approval/diff decisions from Swing so both the UI and the sandbox test bridge
              resolve them through the same logic. Plain classes, so registered here (not annotated). -->
-        <projectService serviceImplementation="io.mp.claudecodepanel.ide.ApprovalCoordinator"/>
-        <projectService serviceImplementation="io.mp.claudecodepanel.ide.DiffReviewCoordinator"/>
-        <projectService serviceImplementation="io.mp.claudecodepanel.ide.QuestionCoordinator"/>
-        <projectService serviceImplementation="io.mp.claudecodepanel.ui.SightlineUiState"/>
+        <projectService serviceImplementation="io.mp.sightline.ide.ApprovalCoordinator"/>
+        <projectService serviceImplementation="io.mp.sightline.ide.DiffReviewCoordinator"/>
+        <projectService serviceImplementation="io.mp.sightline.ide.QuestionCoordinator"/>
+        <projectService serviceImplementation="io.mp.sightline.ui.SightlineUiState"/>
         <applicationConfigurable parentId="tools"
-                                 id="io.mp.claudecodepanel.settings"
-                                 displayName="Sightline for Claude Code"
-                                 instance="io.mp.claudecodepanel.settings.ClaudeSettingsConfigurable"/>
+                                 id="io.mp.sightline.settings"
+                                 displayName="Sightline"
+                                 instance="io.mp.sightline.settings.ClaudeSettingsConfigurable"/>
     </extensions>
 </idea-plugin>

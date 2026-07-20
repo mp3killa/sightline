@@ -11,8 +11,8 @@
   Keep this file small. Each entry is a piece of Android-Studio-internal API to re-verify on upgrade.
 -->
 <idea-plugin>
-    <extensions defaultExtensionNs="io.mp.claudecodepanel">
+    <extensions defaultExtensionNs="io.mp.sightline">
         <androidFactProvider
-            implementation="io.mp.claudecodepanel.ide.android.studio.StudioFactProvider"/>
+            implementation="io.mp.sightline.ide.android.studio.StudioFactProvider"/>
     </extensions>
 </idea-plugin>

@@ -1,4 +1,4 @@
-# Sightline for Claude Code
+# Sightline
 
 **Sightline** is a **graphical chat panel for Claude Code in Android Studio** (and other IntelliJ‑based IDEs).
 It drives your locally installed `claude` CLI over its streaming‑JSON protocol and renders the
@@ -73,7 +73,7 @@ Launches a throwaway Android Studio with the plugin preinstalled. Edit the Kotli
 
 ## Settings
 
-**Settings → Tools → Sightline for Claude Code** (or the ⚙ button in the panel).
+**Settings → Tools → Sightline** (or the ⚙ button in the panel).
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -135,18 +135,18 @@ Key source files:
 
 | File | Role |
 |---|---|
-| [ClaudeToolWindowFactory.kt](src/main/kotlin/io/mp/claudecodepanel/ClaudeToolWindowFactory.kt) | Registers the tool window |
-| [ui/ClaudePanel.kt](src/main/kotlin/io/mp/claudecodepanel/ui/ClaudePanel.kt) | Swing chat UI + event rendering |
-| [ui/markdown/](src/main/kotlin/io/mp/claudecodepanel/ui/markdown/) | Markdown parsing + rendering for assistant messages |
-| [ui/ActivityMapPanel.kt](src/main/kotlin/io/mp/claudecodepanel/ui/ActivityMapPanel.kt) | The Agent Activity Map view |
-| [activity/](src/main/kotlin/io/mp/claudecodepanel/activity/) | Platform‑free activity model, graph reducer and output parsers |
-| [process/ClaudeSession.kt](src/main/kotlin/io/mp/claudecodepanel/process/ClaudeSession.kt) | CLI process + stream‑json plumbing |
-| [process/ClaudePathResolver.kt](src/main/kotlin/io/mp/claudecodepanel/process/ClaudePathResolver.kt) | Finds the `claude` binary in GUI‑launched IDEs |
-| [ide/IdeServer.kt](src/main/kotlin/io/mp/claudecodepanel/ide/IdeServer.kt) | The `ide` MCP WebSocket server |
-| [ide/PathAccessPolicy.kt](src/main/kotlin/io/mp/claudecodepanel/ide/PathAccessPolicy.kt) | Path guard for open/diff/write targets |
-| [interaction/](src/main/kotlin/io/mp/claudecodepanel/interaction/) | AskUserQuestion parsing, form state and response building |
-| [health/](src/main/kotlin/io/mp/claudecodepanel/health/) | Health / preflight checks + report sanitiser |
-| [settings/ClaudeSettings.kt](src/main/kotlin/io/mp/claudecodepanel/settings/ClaudeSettings.kt) | Persisted settings |
+| [ClaudeToolWindowFactory.kt](src/main/kotlin/io/mp/sightline/ClaudeToolWindowFactory.kt) | Registers the tool window |
+| [ui/ClaudePanel.kt](src/main/kotlin/io/mp/sightline/ui/ClaudePanel.kt) | Swing chat UI + event rendering |
+| [ui/markdown/](src/main/kotlin/io/mp/sightline/ui/markdown/) | Markdown parsing + rendering for assistant messages |
+| [ui/ActivityMapPanel.kt](src/main/kotlin/io/mp/sightline/ui/ActivityMapPanel.kt) | The Agent Activity Map view |
+| [activity/](src/main/kotlin/io/mp/sightline/activity/) | Platform‑free activity model, graph reducer and output parsers |
+| [process/ClaudeSession.kt](src/main/kotlin/io/mp/sightline/process/ClaudeSession.kt) | CLI process + stream‑json plumbing |
+| [process/ClaudePathResolver.kt](src/main/kotlin/io/mp/sightline/process/ClaudePathResolver.kt) | Finds the `claude` binary in GUI‑launched IDEs |
+| [ide/IdeServer.kt](src/main/kotlin/io/mp/sightline/ide/IdeServer.kt) | The `ide` MCP WebSocket server |
+| [ide/PathAccessPolicy.kt](src/main/kotlin/io/mp/sightline/ide/PathAccessPolicy.kt) | Path guard for open/diff/write targets |
+| [interaction/](src/main/kotlin/io/mp/sightline/interaction/) | AskUserQuestion parsing, form state and response building |
+| [health/](src/main/kotlin/io/mp/sightline/health/) | Health / preflight checks + report sanitiser |
+| [settings/ClaudeSettings.kt](src/main/kotlin/io/mp/sightline/settings/ClaudeSettings.kt) | Persisted settings |
 
 For the reverse‑engineered CLI protocol see [docs/PROTOCOL.md](docs/PROTOCOL.md); for how the
 interactive flows are verified see [docs/TESTING.md](docs/TESTING.md).
@@ -169,3 +169,31 @@ interactive flows are verified see [docs/TESTING.md](docs/TESTING.md).
 - **“Could not launch claude”** — set an absolute path in *Settings → Tools → Sightline for Claude Code → Claude command*. GUI apps often don't inherit your shell `PATH`; the panel shows an error you can act on.
 - **Build fails with a Kotlin “internal compiler error”** — the Kotlin plugin version in `build.gradle.kts` must be ≥ the Kotlin bundled in your Android Studio (2026.1 ships **2.3.10**).
 - **Build can't find Java 21** — point `org.gradle.java.home` in `gradle.properties` at your Android Studio's `Contents/jbr/Contents/Home`.
+
+---
+
+## Licence, privacy and security
+
+Sightline is **Apache-2.0** licensed ([LICENSE](LICENSE), [NOTICE](NOTICE),
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+- **[PRIVACY.md](PRIVACY.md)** — no telemetry, no conversation persistence, no credential handling, and
+  exactly what does leave your machine.
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability privately, and the guards in place.
+- **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** — what each permission mode allows, and the three
+  guards that apply regardless of mode.
+- **[docs/DATA-FLOW.md](docs/DATA-FLOW.md)** — where data goes, with the code paths to check it yourself.
+
+Sightline requires a **user-managed Claude Code installation**: you install and authenticate the
+`claude` CLI yourself, and pay Anthropic directly. Sightline does not provide Claude access, has no
+login screen, and never handles your credentials.
+
+Sightline is an independent project, not affiliated with or endorsed by Anthropic, JetBrains or Google.
+"Claude" and "Claude Code" are trademarks of Anthropic; "Android Studio" is a trademark of Google. Both
+are used only to describe compatibility.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Bug reports are
+especially welcome while this is in beta — run the in-plugin **Health check** first and use *Copy
+report*, which is sanitised and safe to paste publicly.

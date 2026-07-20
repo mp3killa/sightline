@@ -14,24 +14,25 @@ Guiding principle: correctness logic lands as **platform-free, unit-tested** cla
 
 # Release gates (before the Marketplace listing)
 
-## Run `verifyPlugin` on CI
+## ~~Run `verifyPlugin` on CI~~ — DONE (2026-07-20)
 
-Config is correct (`sinceBuild=253`, targets IntelliJ IDEA Community `253.*`), but it can't run in the dev
-env: IPGP 2.6.0 mis-resolves the IC distribution coordinate (looks up `idea:ideaIC:<v>` while the ZIP
-lives at `com.jetbrains.intellij.idea:ideaIC:<v>` — the ZIP exists + downloads), and `local(AndroidStudio)`
-collides with the compile-time platform dependency. Run it where the IC distribution resolves (CI / a
-newer IPGP) and fix anything it flags (internal/experimental API usage, binary compat across the range).
+**Result: `io.mp.sightline:0.1.0-beta` against `IC-253.28294.334` — Compatible. 0 compatibility problems.**
 
-**This gate got more important with the Android work.** `ide/android/studio/StudioFactProvider` calls
-`com.android.tools.idea.*` — Android-Studio-internal API, and exactly what the verifier is for. The
-design already assumes it may break (any failure degrades to tier 2; the class only loads via the
-optional `META-INF/sightline-android.xml`), but the verifier is what turns "we think it's isolated" into
-a checked fact. Two things to confirm specifically:
-- The verifier is **not** confused by the optional `<depends>` — a plain IC has no `org.jetbrains.android`,
-  so the descriptor and its implementation class should simply be skipped rather than reported missing.
-- Nothing outside `ide/android/studio/` references an Android-Studio-only class. That is the whole
-  isolation claim of docs/ANDROID.md §1.1, and a stray import elsewhere would silently break plain-IDEA
-  installs while still compiling here.
+Run it with **`tools/verify-plugin.sh`**, not `./gradlew verifyPlugin`. IPGP 2.6.0 resolves the IDE
+under `idea:ideaIC:<v>` (group `idea`), which does not exist — the artifact is at
+`com.jetbrains.intellij.idea:ideaIC:<v>`. Both `select { }` and `ide(...)` hit the same wrong group, so
+the Gradle task fails before the verifier starts. The script downloads from the correct coordinate and
+runs the same verifier CLI. Re-run it before every release; it caches the IDE, so only the first is slow.
+
+One real finding, fixed: `StudioFactProvider` referenced `com.android.sdklib.AndroidVersion` (via
+`AndroidModel.getMinSdkVersion()`), which is unresolvable against a plain IC. The code path never runs
+there, but a reported problem on a submission is a real cost — and tier 3 already parses min/target/
+compile SDK out of the build file. Dropping those three reads removed the finding *and* shrank the
+internal-API surface, which is what the narrow-interface rule asks for anyway.
+
+The 10 remaining findings are all `ToolWindowFactory` interface members Kotlin materialises for any
+implementor (`isApplicable`, `isDoNotActivateOnStart`, `getIcon`, `getAnchor`, `manage`). Informational,
+and not avoidable without abandoning the interface. `ProcessAdapter` → `ProcessListener` was fixed.
 
 ## Live Android Studio verification (manual)
 
@@ -95,7 +96,37 @@ Verify:
   paste it and confirm no home path, username, email or token survives. The sanitiser is heavily
   unit-tested; this pass is the copy round-trip.
 
+- **First-run disclosure**: on a fresh install, the notice appears **before** the first message is sent
+  and before **Catch up on this project** (both send paths are gated). Closing it without acknowledging
+  must *cancel* the send, not proceed. Confirm the mode-specific sentence changes with the mode chip,
+  and that switching to **Unrestricted** shows the blunt wording in the warning colour. Then confirm it
+  never appears again, including after an upgrade.
+
 ## Marketplace listing submission
 
-Naming (Sightline), plugin icon, `<vendor>`, `<description>`, `<change-notes>`, and the "requires the
-Claude CLI" wording are all in place — the remaining step is actually submitting the listing.
+Repository scaffolding is done: Apache-2.0 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, `PRIVACY.md`,
+`SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/DATA-FLOW.md`,
+`docs/PERMISSIONS.md`. Plugin identity is `io.mp.sightline` / **Sightline** / `0.1.0-beta`, and the
+listing description, change-notes and independence disclaimer are in `plugin.xml`.
+
+**Still to do, and all of it needs a human:**
+
+1. **Settle the Anthropic position.** This is the one blocker worth resolving before a *public* listing.
+   Sightline launches a user-installed, user-authenticated CLI — it has no login screen, receives no
+   OAuth tokens, proxies no API traffic and runs no backend — but Anthropic's third-party guidance is
+   written around API-key integrations, so the case is adjacent rather than identical. Ask them directly
+   and get it in writing. A draft is in `docs/ANTHROPIC-CLARIFICATION.md`. Until it is answered, describe
+   Sightline as *requiring a user-managed Claude Code installation*, never as *providing Claude access*.
+2. **Vendor profile + trader status.** The Vendor ID cannot be changed later. Do not tick non-trader
+   reflexively — JetBrains does not decide it on whether money changes hands, and this plugin is close
+   to professional work. Trader contact details are shown publicly, so use a dedicated support address,
+   not a personal inbox.
+3. **A public repository**, with the issue tracker enabled. An OSS-licensed listing must link to real
+   source. Replace the `OWNER/sightline` placeholders in `CHANGELOG.md` and `README.md` once it exists.
+4. **A Marketplace icon** — 40×40 SVG, distinct from JetBrains, Anthropic and Google marks. Concept:
+   an aperture or eye formed from graph nodes with one highlighted line of sight.
+5. **Four screenshots**, ≥1200×760: chat with Markdown, an AskUserQuestion card, the Activity Map with
+   real relationships, and a diff/approval. Scrub secrets, private repo names, emails and machine paths
+   before uploading — the screenshots are the one place where a leak is permanent and public.
+6. **The compatibility claim.** The listing should say *tested on Android Studio*; it is verified
+   compatible with IntelliJ IDEA 2025.3 but has not been exercised there (see the plain-IDEA item above).

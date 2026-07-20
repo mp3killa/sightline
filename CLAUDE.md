@@ -1,10 +1,22 @@
 # Sightline for Claude Code — internal notes
 
-**Sightline** (product name; formerly "Claude Code Panel") is a native **Android Studio / IntelliJ
-plugin** that wraps the `claude` CLI in a graphical chat panel (message bubbles, collapsible tool
-cards, diffs, interactive approval, IDE integration). It drives the CLI over its streaming-JSON
-protocol and renders everything in **native Swing**. The Kotlin package stays `io.mp.claudecodepanel`
-and the plugin `<id>` is unchanged (only the user-visible brand moved to a neutral, trademark-safe name).
+**Sightline** (formerly "Claude Code Panel") is a native **Android Studio / IntelliJ plugin** that
+wraps the `claude` CLI in a graphical chat panel (message bubbles, collapsible tool cards, diffs,
+interactive approval, IDE integration). It drives the CLI over its streaming-JSON protocol and renders
+everything in **native Swing**.
+
+**Identity (settled 2026-07-20, pre-publication — the only free moment to change it):** plugin `<id>`
+`io.mp.sightline`, Kotlin package `io.mp.sightline`, Marketplace name **Sightline**, artifact
+`sightline-<version>.zip`, settings `sightline.xml`, version **0.1.0-beta**. Changing an `<id>` after
+publication orphans every install, which is why it was done now. Identifiers the **CLI** consumes are
+deliberately untouched — `CLAUDE_CODE_ENTRYPOINT`, the `ide` MCP server name, and its `serverInfo`
+name are an integration contract with an external tool, not our branding.
+
+Licensed **Apache-2.0**. Legal and trust scaffolding lives at the repo root: `LICENSE`, `NOTICE`,
+`THIRD_PARTY_NOTICES.md`, `PRIVACY.md`, `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
+`CODE_OF_CONDUCT.md`, plus `docs/DATA-FLOW.md` and `docs/PERMISSIONS.md`. **Keep them true** — they
+describe specific code (`LogcatRedactor`, `PathAccessPolicy`, `AndroidActionPolicy`, `HealthSanitizer`),
+and a privacy or security claim that drifts from the implementation is worse than no claim.
 
 > Detailed, reverse-engineered CLI protocol facts live in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 > Read that before touching `ClaudeSession` or `IdeServer`.
@@ -131,6 +143,15 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
   `~/Library/Application Support/Google/AndroidStudio<ver>/studio.jdk`.
 - **Bundled libraries** (platform doesn't expose them): `gson` (parse stream-json) and
   `Java-WebSocket` (the ide server; `exclude group: "org.slf4j"` — platform provides slf4j).
+- **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
+  under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
+  Both `select { }` and `ide(...)` hit the same wrong group. The script fetches the correct coordinate
+  and runs the same verifier CLI. **Last run: `io.mp.sightline:0.1.0-beta` vs `IC-253.28294.334` —
+  Compatible, 0 problems.** Re-run before every release.
+- **A NUL byte makes a source file invisible to `grep`.** Two files here had one (a mangled `' '` char
+  literal), so `file` reported them as `data`, grep skipped them, and a package-wide rename silently
+  missed both — surfacing only as unresolved references at compile time. If a text tool seems to be
+  ignoring a file, run `file <path>`. Scan with Python over bytes, not grep, when correctness matters.
 
 ## Standing decisions (don't re-litigate)
 

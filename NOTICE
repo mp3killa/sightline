@@ -1,0 +1,32 @@
+Sightline
+Copyright 2026 Michael Carroll
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+Sightline is an independent project. It is not affiliated with, endorsed by, or
+sponsored by Anthropic PBC, JetBrains s.r.o., or Google LLC.
+
+"Claude" and "Claude Code" are trademarks of Anthropic PBC. "IntelliJ" and
+"JetBrains" are trademarks of JetBrains s.r.o. "Android" and "Android Studio"
+are trademarks of Google LLC. These names are used solely to describe
+compatibility, as permitted by nominative fair use. Sightline uses none of these
+parties' logos or marks in its own branding.
+
+Sightline requires a separately installed and separately authenticated Claude
+Code CLI. Sightline does not provide, resell, proxy, or broker access to any
+model service, and never handles the user's credentials. See PRIVACY.md.
+
+Third-party components redistributed with this plugin are listed in
+THIRD_PARTY_NOTICES.md.

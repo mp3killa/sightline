@@ -1,0 +1,485 @@
+package io.mp.sightline.ui.markdown
+
+import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.EditorFontType
+import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.project.Project
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
+import io.mp.sightline.theme.ClaudeUiTokens
+import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Component
+import java.awt.Cursor
+import java.awt.Dimension
+import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import java.awt.Insets
+import java.awt.Rectangle
+import java.awt.datatransfer.StringSelection
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.BorderFactory
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.JButton
+import javax.swing.JComponent
+import javax.swing.JPopupMenu
+import javax.swing.JMenuItem
+import javax.swing.SwingUtilities
+import javax.swing.JPanel
+import javax.swing.JTextPane
+import javax.swing.JViewport
+import javax.swing.Scrollable
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
+import javax.swing.text.StyledDocument
+
+/**
+ * Turns the platform-free [MdBlock] model into theme-aware Swing components — the thin presentation half
+ * of the Markdown layer. Text-bearing blocks (headings, paragraphs, list items, quotes, table cells)
+ * render into wrapping, selectable [JTextPane]s that mirror the app's existing styled-pane approach;
+ * tables and code become dedicated components. All colours/fonts come from [ClaudeUiTokens] / the editor
+ * scheme, so it follows the light/dark theme.
+ *
+ * [onLink] is invoked when a hyperlink is clicked (default: open in the browser); Phase 2 routes project
+ * file references through it. [project] is optional and only sharpens fenced-code highlighting — without
+ * it, blocks still render, just with the language-neutral lexer where one exists.
+ * Rendering is defensive — a single bad block never throws past its component.
+ */
+class BlockRenderer(
+    private val project: Project? = null,
+    private val onLink: (String) -> Unit = { runCatching { BrowserUtil.browse(it) } },
+    /**
+     * Optional "Reveal in Project" for a `file:` reference, offered on right-click. Null means the
+     * host can't reveal (or doesn't want to), and no context menu is shown — never a dead menu item.
+     */
+    private val onReveal: ((String) -> Unit)? = null,
+) {
+
+    fun render(blocks: List<MdBlock>): List<JComponent> = blocks.map { block(it) }
+
+    private fun block(b: MdBlock): JComponent = when (b) {
+        is MdHeading -> heading(b)
+        is MdParagraph -> paragraph(b.inlines)
+        is MdList -> list(b, depth = 0)
+        is MdCodeBlock -> codeBlock(b)
+        is MdQuote -> quote(b.blocks)
+        is MdTable -> table(b)
+        is MdCallout -> callout(b) // populated in Phase 2; render as a tinted quote until then
+        MdThematicBreak -> thematicBreak()
+    }
+
+    // ---- text blocks ----
+
+    private fun heading(h: MdHeading): JComponent {
+        val size = when (h.level) {
+            1 -> 17f; 2 -> 15f; 3 -> 13.5f; else -> 12.5f
+        }
+        val pane = inlinePane(h.inlines, baseFont().deriveFont(Font.BOLD, JBUI.scaleFontSize(size).toFloat()))
+        return boxed(pane, top = if (h.level <= 2) 10 else 8, bottom = 3)
+    }
+
+    private fun paragraph(inlines: List<MdInline>): JComponent =
+        boxed(inlinePane(inlines, baseFont()), top = 0, bottom = 4)
+
+    private fun quote(blocks: List<MdBlock>): JComponent {
+        val inner = JPanel()
+        inner.layout = BoxLayout(inner, BoxLayout.Y_AXIS)
+        inner.isOpaque = true
+        inner.background = ClaudeUiTokens.subtleSurface()
+        inner.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, JBUI.scale(3), 0, 0, ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), 0.5f)),
+            JBUI.Borders.empty(2, 10),
+        )
+        blocks.map { block(it) }.forEach { it.alignmentX = Component.LEFT_ALIGNMENT; inner.add(it) }
+        return boxed(inner, top = 2, bottom = 4)
+    }
+
+    private fun callout(c: MdCallout): JComponent {
+        val accent = when (c.kind) {
+            MdCalloutKind.WARNING, MdCalloutKind.CAUTION -> ClaudeUiTokens.warning()
+            MdCalloutKind.IMPORTANT -> ClaudeUiTokens.accent()
+            else -> ClaudeUiTokens.info() // NOTE, TIP
+        }
+        val inner = JPanel()
+        inner.layout = BoxLayout(inner, BoxLayout.Y_AXIS)
+        inner.isOpaque = true
+        inner.background = ClaudeUiTokens.subtleSurface()
+        // Restrained: a coloured left rule + label, not a bright full-card border.
+        inner.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, JBUI.scale(3), 0, 0, accent),
+            JBUI.Borders.empty(4, 10),
+        )
+        val head = JBLabel(c.kind.name.lowercase().replaceFirstChar { it.uppercase() })
+        head.foreground = accent
+        head.font = baseFont().deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat())
+        head.alignmentX = Component.LEFT_ALIGNMENT
+        inner.add(head)
+        c.blocks.map { block(it) }.forEach { it.alignmentX = Component.LEFT_ALIGNMENT; inner.add(it) }
+        return boxed(inner, top = 4, bottom = 6)
+    }
+
+    private fun thematicBreak(): JComponent {
+        val line = JPanel()
+        line.isOpaque = true
+        line.background = ClaudeUiTokens.border()
+        line.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(1))
+        line.preferredSize = Dimension(JBUI.scale(1), JBUI.scale(1))
+        return boxed(line, top = 8, bottom = 8)
+    }
+
+    // ---- lists ----
+
+    private fun list(l: MdList, depth: Int): JComponent {
+        val panel = JPanel()
+        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
+        panel.isOpaque = false
+        l.items.forEachIndexed { i, item -> panel.add(listItem(l, item, i)) }
+        val col = MdColumn()
+        col.add(panel, BorderLayout.CENTER)
+        col.border = JBUI.Borders.emptyLeft(if (depth == 0) 2 else 14)
+        return boxed(col, top = 2, bottom = 4)
+    }
+
+    private fun listItem(l: MdList, item: MdListItem, index: Int): JComponent {
+        val row = MdColumn()
+        val marker = when {
+            item.task != MdTask.NONE -> if (item.task == MdTask.CHECKED) "☑" else "☐"
+            l.ordered -> "${l.start + index}."
+            else -> "•"
+        }
+        val bullet = JBLabel(marker)
+        bullet.foreground = if (item.task != MdTask.NONE) ClaudeUiTokens.textSecondary() else ClaudeUiTokens.accent()
+        bullet.font = baseFont()
+        bullet.border = JBUI.Borders.empty(0, 0, 0, 6)
+        bullet.verticalAlignment = javax.swing.SwingConstants.TOP
+        val bulletWrap = JPanel(BorderLayout())
+        bulletWrap.isOpaque = false
+        bulletWrap.add(bullet, BorderLayout.NORTH)
+        // The slot must never be narrower than the marker itself, or JBLabel truncates it to "…".
+        // A task marker (☑/☐) is wider than "•" yet a task list *is* unordered, and an ordered list
+        // past "99." outgrows the ordered slot — both clipped before this floor was added.
+        val slotW = maxOf(JBUI.scale(if (l.ordered) 22 else 14), bullet.preferredSize.width)
+        bulletWrap.preferredSize = Dimension(slotW, bullet.preferredSize.height)
+
+        val content = JPanel()
+        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
+        content.isOpaque = false
+        item.blocks.map { block(it) }.forEach { it.alignmentX = Component.LEFT_ALIGNMENT; content.add(it) }
+
+        row.add(bulletWrap, BorderLayout.WEST)
+        row.add(content, BorderLayout.CENTER)
+        return row
+    }
+
+    // ---- code ----
+
+    private fun codeBlock(c: MdCodeBlock): JComponent {
+        val wrap = MdColumn()
+        wrap.isOpaque = true
+        wrap.background = ClaudeUiTokens.subtleSurface()
+        wrap.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(ClaudeUiTokens.subtleBorder(), 1, true),
+            JBUI.Borders.empty(4, 8),
+        )
+
+        val header = JPanel(BorderLayout())
+        header.isOpaque = false
+        c.language?.let {
+            val lang = JBLabel(it)
+            lang.foreground = ClaudeUiTokens.textSecondary()
+            lang.font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+            header.add(lang, BorderLayout.WEST)
+        }
+        val copy = JButton("Copy")
+        copy.font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        copy.isFocusable = true
+        copy.margin = Insets(0, 6, 0, 6)
+        copy.addActionListener {
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(c.code), null)
+            copy.text = "Copied"
+            javax.swing.Timer(1200) { copy.text = "Copy" }.apply { isRepeats = false }.start()
+        }
+
+        val area = codePane(c)
+        // JTextPane wraps whenever a viewport is its direct parent; an intermediate panel suppresses that,
+        // so long lines scroll horizontally (as code should) instead of re-flowing.
+        val noWrap = JPanel(BorderLayout())
+        noWrap.isOpaque = false
+        noWrap.add(area, BorderLayout.CENTER)
+
+        // A long block is clipped to its first lines so it can't push the rest of the turn off-screen;
+        // the toggle restores the full height. Short blocks render whole with no toggle at all.
+        val collapsible = CodeBlockLayout.isCollapsible(c.code)
+        var expanded = !collapsible
+        val scroll = object : JBScrollPane(noWrap, VERTICAL_SCROLLBAR_NEVER, HORIZONTAL_SCROLLBAR_AS_NEEDED) {
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                if (expanded) return natural
+                val lineHeight = area.getFontMetrics(area.font).height
+                val cap = JBUI.scale(CodeBlockLayout.collapsedHeight(lineHeight, verticalPadding = 4))
+                return Dimension(natural.width, minOf(natural.height, cap))
+            }
+        }
+        scroll.isOpaque = false
+        scroll.viewport.isOpaque = false
+        scroll.border = JBUI.Borders.empty()
+
+        val actions = JPanel()
+        actions.layout = BoxLayout(actions, BoxLayout.X_AXIS)
+        actions.isOpaque = false
+        if (collapsible) {
+            val toggle = JButton(CodeBlockLayout.toggleLabel(expanded, c.code))
+            toggle.font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+            toggle.isFocusable = true
+            toggle.margin = Insets(0, 6, 0, 6)
+            toggle.addActionListener {
+                expanded = !expanded
+                toggle.text = CodeBlockLayout.toggleLabel(expanded, c.code)
+                // The height cap lives in getPreferredSize, so the whole column must re-measure.
+                scroll.revalidate()
+                wrap.revalidate()
+                wrap.repaint()
+            }
+            actions.add(toggle)
+            actions.add(Box.createHorizontalStrut(JBUI.scale(4)))
+        }
+        actions.add(copy)
+        header.add(actions, BorderLayout.EAST)
+
+        wrap.add(header, BorderLayout.NORTH)
+        wrap.add(scroll, BorderLayout.CENTER)
+        return boxed(wrap, top = 4, bottom = 6)
+    }
+
+    /** The code text itself: monospace, read-only, and lexer-coloured when the language is one we know. */
+    private fun codePane(c: MdCodeBlock): JTextPane {
+        val pane = JTextPane()
+        pane.isEditable = false
+        pane.isOpaque = false
+        pane.font = monoFont()
+        pane.foreground = ClaudeUiTokens.textPrimary()
+        pane.border = JBUI.Borders.emptyTop(4)
+        pane.text = c.code
+
+        val spans = CodeHighlighting.spans(project, c.language, c.code)
+        if (spans.isNotEmpty()) {
+            val doc = pane.styledDocument
+            val mono = pane.font
+            for (span in spans) {
+                val length = minOf(span.end, doc.length) - span.start
+                if (span.start < 0 || length <= 0) continue // a lexer that over-runs must never throw
+                doc.setCharacterAttributes(span.start, length, tokenStyle(span.attributes, mono), false)
+            }
+        }
+        return pane
+    }
+
+    /**
+     * Editor [TextAttributes] → a Swing style. Foreground and bold/italic only: token *backgrounds* would
+     * fight the block's own surface and read as stray highlighting in the transcript.
+     */
+    private fun tokenStyle(attributes: TextAttributes, mono: Font): SimpleAttributeSet = SimpleAttributeSet().apply {
+        StyleConstants.setFontFamily(this, mono.family)
+        StyleConstants.setFontSize(this, mono.size)
+        attributes.foregroundColor?.let { StyleConstants.setForeground(this, it) }
+        if (attributes.fontType and Font.BOLD != 0) StyleConstants.setBold(this, true)
+        if (attributes.fontType and Font.ITALIC != 0) StyleConstants.setItalic(this, true)
+    }
+
+    // ---- table ----
+
+    private fun table(t: MdTable): JComponent {
+        val grid = JPanel(GridBagLayout())
+        grid.isOpaque = false
+        val cols = maxOf(t.header.size, t.rows.maxOfOrNull { it.size } ?: 0)
+        val gridColor = ClaudeUiTokens.subtleBorder()
+
+        fun addCell(cellInlines: List<MdInline>, row: Int, col: Int, headerRow: Boolean) {
+            val align = t.alignments.getOrNull(col) ?: MdAlign.LEFT
+            val pane = inlinePane(cellInlines, if (headerRow) baseFont().deriveFont(Font.BOLD) else baseFont(), align)
+            val cell = JPanel(BorderLayout())
+            cell.isOpaque = headerRow
+            if (headerRow) cell.background = ClaudeUiTokens.elevatedSurface()
+            cell.border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, if (col < cols - 1) 1 else 0, gridColor),
+                JBUI.Borders.empty(4, 8),
+            )
+            cell.add(pane, BorderLayout.CENTER)
+            // A width floor per column: without it, wrapping cells let a wide table squeeze itself down to
+            // a few unreadable characters per column instead of overflowing into the scroller below.
+            cell.minimumSize = Dimension(JBUI.scale(TableLayout.minColumnWidth(cols)), 0)
+            val gbc = GridBagConstraints().apply {
+                gridx = col; gridy = row; weightx = 1.0; fill = GridBagConstraints.BOTH
+                anchor = GridBagConstraints.NORTHWEST
+            }
+            grid.add(cell, gbc)
+        }
+
+        t.header.forEachIndexed { col, cell -> addCell(cell, 0, col, headerRow = true) }
+        t.rows.forEachIndexed { r, row -> row.forEachIndexed { col, cell -> addCell(cell, r + 1, col, headerRow = false) } }
+
+        val framed = MdColumn()
+        framed.border = BorderFactory.createLineBorder(gridColor, 1, true)
+        framed.add(tableScroller(grid, cols), BorderLayout.CENTER)
+        return boxed(framed, top = 4, bottom = 6)
+    }
+
+    /**
+     * Hosts [grid] so a wide table scrolls horizontally instead of squeezing. While the table fits, the host
+     * tracks the viewport width and cells wrap as before; once [TableLayout] says it can't fit, the host
+     * takes its own (wider) preferred width, which is what makes the scrollbar appear.
+     */
+    private fun tableScroller(grid: JComponent, columnCount: Int): JComponent {
+        val minWidth = JBUI.scale(TableLayout.minTableWidth(columnCount))
+        val host = object : JPanel(BorderLayout()), Scrollable {
+            init { isOpaque = false; add(grid, BorderLayout.CENTER) }
+
+            private fun overflowing(): Boolean =
+                TableLayout.needsHorizontalScroll(columnCount, (parent as? JViewport)?.width ?: 0)
+
+            override fun getPreferredSize(): Dimension {
+                val natural = super.getPreferredSize()
+                return if (overflowing()) Dimension(maxOf(minWidth, natural.width), natural.height) else natural
+            }
+            override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+            override fun getScrollableUnitIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(24)
+            override fun getScrollableBlockIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(120)
+            override fun getScrollableTracksViewportWidth() = !overflowing()
+            override fun getScrollableTracksViewportHeight() = false
+        }
+        val scroll = JBScrollPane(host, JBScrollPane.VERTICAL_SCROLLBAR_NEVER, JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED)
+        scroll.isOpaque = false
+        scroll.viewport.isOpaque = false
+        scroll.border = JBUI.Borders.empty()
+        return scroll
+    }
+
+    // ---- inline ----
+
+    /** A wrapping, selectable pane rendering [inlines] with the app's inline styling + link handling. */
+    private fun inlinePane(inlines: List<MdInline>, font: Font, align: MdAlign = MdAlign.LEFT): JTextPane {
+        val pane = JTextPane()
+        pane.isEditable = false
+        pane.isOpaque = false
+        pane.border = JBUI.Borders.empty()
+        pane.font = font
+        pane.foreground = ClaudeUiTokens.textPrimary()
+        val doc = pane.styledDocument
+        val links = ArrayList<LinkSpan>()
+        val base = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, ClaudeUiTokens.textPrimary())
+            StyleConstants.setFontFamily(this, font.family)
+            StyleConstants.setFontSize(this, font.size)
+            if (font.isBold) StyleConstants.setBold(this, true)
+        }
+        appendInlines(doc, inlines, base, links)
+        // Paragraph attributes: readable line spacing + cell/heading alignment.
+        val para = SimpleAttributeSet().apply {
+            StyleConstants.setLineSpacing(this, 0.25f)
+            StyleConstants.setAlignment(this, when (align) {
+                MdAlign.CENTER -> StyleConstants.ALIGN_CENTER
+                MdAlign.RIGHT -> StyleConstants.ALIGN_RIGHT
+                MdAlign.LEFT -> StyleConstants.ALIGN_LEFT
+            })
+        }
+        doc.setParagraphAttributes(0, doc.length.coerceAtLeast(1), para, false)
+        installLinks(pane, links)
+        return pane
+    }
+
+    private fun appendInlines(doc: StyledDocument, inlines: List<MdInline>, attr: SimpleAttributeSet, links: MutableList<LinkSpan>) {
+        for (inline in inlines) when (inline) {
+            is MdText -> doc.insertString(doc.length, inline.text, attr)
+            is MdBold -> appendInlines(doc, inline.inlines, clone(attr) { StyleConstants.setBold(it, true) }, links)
+            is MdItalic -> appendInlines(doc, inline.inlines, clone(attr) { StyleConstants.setItalic(it, true) }, links)
+            is MdStrikethrough -> appendInlines(doc, inline.inlines, clone(attr) { StyleConstants.setStrikeThrough(it, true) }, links)
+            is MdCode -> doc.insertString(doc.length, inline.text, codeAttr(attr))
+            is MdLink -> {
+                val start = doc.length
+                appendInlines(doc, inline.inlines, clone(attr) {
+                    StyleConstants.setForeground(it, ClaudeUiTokens.info())
+                    StyleConstants.setUnderline(it, true)
+                }, links)
+                if (inline.href.isNotBlank()) links.add(LinkSpan(start, doc.length, inline.href))
+            }
+        }
+    }
+
+    private fun codeAttr(base: SimpleAttributeSet) = clone(base) {
+        StyleConstants.setFontFamily(it, monoFont().family)
+        StyleConstants.setBackground(it, ClaudeUiTokens.subtleSurface())
+        StyleConstants.setForeground(it, ClaudeUiTokens.textPrimary())
+    }
+
+    private fun clone(attr: SimpleAttributeSet, mutate: (SimpleAttributeSet) -> Unit): SimpleAttributeSet =
+        SimpleAttributeSet(attr).also(mutate)
+
+    private data class LinkSpan(val start: Int, val end: Int, val href: String)
+
+    private fun installLinks(pane: JTextPane, links: List<LinkSpan>) {
+        if (links.isEmpty()) return
+        fun hrefAt(e: MouseEvent): String? {
+            val offset = pane.viewToModel2D(e.point)
+            return links.firstOrNull { offset in it.start until it.end }?.href
+        }
+
+        /**
+         * Right-click on a file reference offers the actions a click can't. Inline links are styled
+         * ranges inside a text pane rather than components, so they can't host a hover row the way a
+         * block can — a popup is the affordance that fits.
+         */
+        fun maybePopup(e: MouseEvent): Boolean {
+            if (!e.isPopupTrigger) return false
+            val href = hrefAt(e) ?: return false
+            val reveal = onReveal ?: return false
+            // Only project files can be revealed; a web URL has nothing to reveal in the tree.
+            if (!href.startsWith("file:")) return false
+            val menu = JPopupMenu()
+            menu.add(JMenuItem("Open").apply { addActionListener { onLink(href) } })
+            menu.add(JMenuItem("Reveal in Project").apply { addActionListener { reveal(href) } })
+            menu.show(pane, e.x, e.y)
+            return true
+        }
+
+        pane.addMouseListener(object : MouseAdapter() {
+            // Popup triggers differ by platform: macOS fires on press, others on release.
+            override fun mousePressed(e: MouseEvent) { maybePopup(e) }
+            override fun mouseReleased(e: MouseEvent) { maybePopup(e) }
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.isPopupTrigger || SwingUtilities.isRightMouseButton(e)) return
+                hrefAt(e)?.let { onLink(it) }
+            }
+        })
+        pane.addMouseMotionListener(object : MouseAdapter() {
+            override fun mouseMoved(e: MouseEvent) {
+                pane.cursor = Cursor.getPredefinedCursor(if (hrefAt(e) != null) Cursor.HAND_CURSOR else Cursor.TEXT_CURSOR)
+            }
+        })
+    }
+
+    // ---- layout helpers ----
+
+    /** A BorderLayout panel with the block contract for a BoxLayout.Y transcript (left-aligned, height-capped). */
+    private open class MdColumn : JPanel(BorderLayout()) {
+        init { alignmentX = Component.LEFT_ALIGNMENT; isOpaque = false }
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }
+
+    private fun boxed(content: JComponent, top: Int, bottom: Int): JComponent {
+        val col = MdColumn()
+        col.isOpaque = content.isOpaque && content !is JTextPane
+        if (col.isOpaque) col.background = content.background
+        col.border = JBUI.Borders.empty(JBUI.scale(top), 0, JBUI.scale(bottom), 0)
+        col.add(content, BorderLayout.CENTER)
+        return col
+    }
+
+    private fun baseFont(): Font = UIUtil.getLabelFont()
+    private fun monoFont(): Font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+}

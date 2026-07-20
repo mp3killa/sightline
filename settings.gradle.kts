@@ -5,4 +5,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = "sightline-for-claude-code"
+rootProject.name = "sightline"

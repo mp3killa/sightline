@@ -12,3 +12,9 @@ build/
 
 # OS
 .DS_Store
+
+# Sightline's own opt-in Android cache, if this repo is ever opened with the plugin
+.sightline/
+
+# Plugin Verifier reports (tools/verify-plugin.sh writes these into the CWD)
+verification-*/
