@@ -101,12 +101,22 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
                 x.components.forEach { walk(it) }
             }
         }
+        // doLayout() alone does not clear BoxLayout's cached child sizes, so a wrapping JTextPane keeps
+        // the single-line preferred height it reported before it had a width — text then renders
+        // clipped in the image while being perfectly fine in a real, validated hierarchy. Invalidating
+        // between passes is what makes the preview representative.
+        fun invalidateAll(x: Component) {
+            x.invalidate()
+            if (x is Container) x.components.forEach { invalidateAll(it) }
+        }
         c.setSize(w, h)
         walk(c)
         UIUtil.dispatchAllInvocationEvents() // let applyProfile() see the real width
         c.setSize(w, h)
+        invalidateAll(c)
         walk(c)
         UIUtil.dispatchAllInvocationEvents() // and let any re-install of the center settle
+        invalidateAll(c)
         walk(c)
     }
 

@@ -6,6 +6,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.UIUtil
 import io.mp.claudecodepanel.settings.ClaudeSettings
+import io.mp.claudecodepanel.ui.state.TranscriptRetention
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
@@ -125,11 +126,18 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         fun walk(x: Component) {
             if (x is Container) { x.doLayout(); x.components.forEach { walk(it) } }
         }
+        // Invalidate between passes: doLayout() alone leaves BoxLayout's cached child sizes in place,
+        // so a wrapping JTextPane keeps the one-line height it reported before it had a width and the
+        // image shows clipped text that is perfectly fine in a real hierarchy.
+        fun invalidateAll(x: Component) {
+            x.invalidate()
+            if (x is Container) x.components.forEach { invalidateAll(it) }
+        }
         c.setSize(w, h); walk(c)
         UIUtil.dispatchAllInvocationEvents()
-        c.setSize(w, h); walk(c)
+        c.setSize(w, h); invalidateAll(c); walk(c)
         UIUtil.dispatchAllInvocationEvents()
-        walk(c)
+        invalidateAll(c); walk(c)
     }
 
     private fun render(c: JComponent, w: Int, h: Int, out: File) {
@@ -236,6 +244,40 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             "selecting a node must reveal the hidden transcript row, not silently do nothing",
             ClaudeSettings.getInstance().state.showDetails,
         )
+    }
+
+    /**
+     * M6: a marathon session must not grow an unbounded component tree. Drives more turns than the
+     * cap through the real event path and checks the oldest are actually released.
+     */
+    fun testLongSessionEvictsOldestTurns() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = false
+        settings.showActivityMap = false
+        settings.activityViewMode = "chat"
+        val p = ClaudePanel(project, testRootDisposable)
+
+        val overshoot = 12
+        repeat(TranscriptRetention.MAX_TURNS + overshoot) { i ->
+            p.addUserMessageForPreview("turn $i")
+            p.renderProtocolLineForPreview(
+                """{"type":"assistant","message":{"content":[{"type":"text","text":"reply $i"}]}}"""
+            )
+            p.renderProtocolLineForPreview("""{"type":"result","result":"ok","is_error":false}""")
+        }
+        layoutTree(p.component, 900, 900)
+
+        assertEquals(
+            "the transcript must stay capped",
+            TranscriptRetention.MAX_TURNS,
+            p.liveTurnCountForTest(),
+        )
+        // And the user is told, in wording that doesn't promise the turns can come back.
+        val notice = descendants(p.component).filterIsInstance<javax.swing.JLabel>()
+            .map { it.text.orEmpty() }
+            .firstOrNull { it.contains("earlier turn") }
+        assertNotNull("eviction must be disclosed, not silent", notice)
+        assertFalse("must not imply the turns are recoverable", notice!!.contains("load", ignoreCase = true))
     }
 
     /** Hover actions must exist but stay hidden until hover/focus, or the default view gets cluttered. */

@@ -25,18 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M6 — Long-session cost
-
-- **Unbounded turn retention**: `turns` is appended to and never pruned (contrast the graph, which has
-  `activityMaxRetained`). Add an eviction cap with a "load earlier" affordance.
-- **Paragraph wrap clipping — reproduces headlessly, not yet confirmed live.** In
-  `chat-layout-medium.png` (720px) an assistant paragraph renders as a single line with the trailing
-  text cut (`…the guard existed but` — "was dead code." missing) instead of wrapping. Consistent across
-  regenerations, and the same text wraps fine at 1400px. Suspicious rather than proven: a wrapping
-  `JTextPane`'s preferred height depends on a width the detached tree may not have settled — though the
-  diff pane in the same image *does* wrap, which argues against a pure harness artifact. Reproduce in
-  `runIde` at a ~720px tool window before chasing it.
-
 ## M7 — Composer: queue while running
 
 Today `doSend` hard-returns while running and `sendEnabled = !running && ...`, but the input is never

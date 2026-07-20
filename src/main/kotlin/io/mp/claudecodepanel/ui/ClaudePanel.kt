@@ -42,6 +42,7 @@ import java.awt.GridLayout
 import io.mp.claudecodepanel.ui.state.ProcessingSummary
 import io.mp.claudecodepanel.activity.ActivityNode
 import javax.swing.Timer
+import io.mp.claudecodepanel.ui.state.TranscriptRetention
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -203,6 +204,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private var viewMode = ViewMode.SPLIT
     private var lastProfile: LayoutProfile? = null
     private var lastDiffWidth = -1
+    private var evictedTurns = 0
+
+    /** Sits above the transcript once old turns have been released; hidden until then. */
+    private val retentionNotice = JBLabel("").apply {
+        foreground = ClaudeUiTokens.textSecondary()
+        font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+        border = JBUI.Borders.empty(4, 2, 8, 2)
+        alignmentX = Component.LEFT_ALIGNMENT
+        isVisible = false
+    }
 
     private val transcript = object : JPanel(), Scrollable {
         init {
@@ -344,6 +355,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         scroll.border = BorderFactory.createEmptyBorder()
         scroll.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         scroll.viewport.background = ClaudeUiTokens.surface()
+        transcript.add(retentionNotice)
         chatHost.add(transcriptLayer, BorderLayout.CENTER)
         mapSplitter.setHonorComponentsMinimumSize(false)
         installCenter()
@@ -472,6 +484,41 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         transcript.add(c)
         transcript.add(Box.createVerticalStrut(JBUI.scale(10)))
         scrollToBottomSoon()
+    }
+
+    /**
+     * Drops the oldest turns once past [TranscriptRetention.MAX_TURNS] so a marathon session doesn't
+     * grow an unbounded component tree that every layout pass has to walk.
+     *
+     * The components are genuinely released, not hidden — that is the point — so the notice says the
+     * turns are gone rather than offering a "load earlier" that has nothing to load from (there is no
+     * session persistence). Their tool-card bookkeeping goes with them, or the id maps would leak
+     * exactly what the eviction was meant to free.
+     */
+    private fun evictOldTurns() {
+        val drop = TranscriptRetention.evictCount(turns.size)
+        if (drop <= 0) return
+        val dropped = turns.subList(0, drop).toList()
+        repeat(drop) { turns.removeAt(0) }
+        for (t in dropped) {
+            // The strut that follows each turn goes with it.
+            val i = transcript.components.indexOf(t)
+            if (i >= 0) {
+                if (i + 1 < transcript.componentCount) transcript.remove(i + 1)
+                transcript.remove(i)
+            }
+        }
+        val goneIds = toolMetaById.filterValues { it.turn in dropped }.keys.toList()
+        goneIds.forEach { toolMetaById.remove(it); toolCardsById.remove(it); renderedTools.remove(it) }
+        evictedTurns += drop
+        updateRetentionNotice()
+        transcript.revalidate(); transcript.repaint()
+    }
+
+    private fun updateRetentionNotice() {
+        val text = TranscriptRetention.noticeText(evictedTurns)
+        retentionNotice.text = text
+        retentionNotice.isVisible = text.isNotEmpty()
     }
 
     private fun addInfo(text: String, err: Boolean) {
@@ -870,6 +917,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     @TestOnly
     internal fun selectActivityNodeByPathForTest(path: String): Boolean = activityMap.selectByPath(path)
 
+    /** Test-only: how many turns are still held as live components (see [TranscriptRetention]). */
+    @TestOnly
+    internal fun liveTurnCountForTest(): Int = turns.size
+
     private fun handleEvent(line: String) {
         val o = try {
             JsonParser.parseString(line).asJsonObject
@@ -943,6 +994,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         curTurn = turn
         turns.add(turn)
         addRow(turn)
+        evictOldTurns()
         inAssistant = true; sawStream = false
         resetBlock()
     }
@@ -1444,7 +1496,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); toolMetaById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        // removeAll() takes the notice with it — put it back, or a later eviction has nowhere to report.
+        transcript.add(retentionNotice)
+        toolCardsById.clear(); toolMetaById.clear(); renderedTools.clear(); evictedTurns = 0; pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        updateRetentionNotice()
         interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
         statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
