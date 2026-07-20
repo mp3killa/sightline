@@ -97,6 +97,11 @@ Verify:
   a "Skip"-style option coming back as a normal answer, and the returned `answers` object being keyed by
   full question text. The bridge can drive the non-visual half
   (`runIde -PtestBridge` + `sightline.test.simulate_question` → `respond_question`).
+- **Health panel (needs eyes):** **More ▸ Health check…** opens the dialog; it shows a brief "Checking…"
+  then a row per check with the right colour/glyph; **Recheck** re-runs (try it mid-indexing → diagnostics
+  should WARN, then OK once indexed); **Open settings** opens Sightline settings; **Copy report** puts a
+  **sanitised** report on the clipboard — paste it and confirm no home path, username, email or token
+  survives. Sanitiser logic is heavily unit-tested; this pass is for the render + the copy round-trip.
 
 ## Marketplace listing submission
 
@@ -129,9 +134,3 @@ data class RecordedActivityEvent(val schemaVersion: Int, val sequence: Long,
 Persistence: workspace-relative paths only; **never** absolute paths, source contents, prompts, or
 reasoning; versioned schema; max session count + retention; delete-one / clear-all. Default **off** in
 beta (current session in memory); opt-in retention of the last ~10 sessions.
-
-## Health / preflight panel
-
-Small diagnostic screen: Claude CLI found + version, auth, IDE bridge, workspace, permission mode, AS
-version, activity events, diagnostics availability. Actions: Recheck, Open settings, Copy sanitised
-report, Open logs. High support-cost saver for early users.

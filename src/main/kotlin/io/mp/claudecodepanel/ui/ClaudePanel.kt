@@ -42,6 +42,7 @@ import io.mp.claudecodepanel.activity.ErrorObserved
 import io.mp.claudecodepanel.activity.FileEdited
 import io.mp.claudecodepanel.activity.FileRead
 import io.mp.claudecodepanel.activity.OutputParsers
+import io.mp.claudecodepanel.health.HealthGatherer
 import io.mp.claudecodepanel.ide.ApprovalCoordinator
 import io.mp.claudecodepanel.ide.ApprovalDecision
 import io.mp.claudecodepanel.ide.PendingApproval
@@ -566,9 +567,29 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(modelGroup)
         group.add(Separator.getInstance())
         group.add(action("Clear conversation") { session.newConversation() })
+        group.add(action("Health check…") { showHealth() })
         group.add(action("Activity map preferences…") { openSettings() })
         group.add(action("Settings…") { openSettings() })
         popup("More", group, anchor)
+    }
+
+    /** Opens the preflight panel, sourcing live session/diagnostics facts each time it (re)checks. */
+    private fun showHealth() {
+        HealthDialog(project) {
+            HealthGatherer.SessionFacts(
+                running = session.isRunning,
+                sawSession = session.sawSession,
+                activityEventCount = activityMap.observedEventCount(),
+                diagnosticsAvailable = diagnosticsAvailability()?.first,
+                diagnosticsReason = diagnosticsAvailability()?.second,
+            )
+        }.show()
+    }
+
+    /** Best-effort read of whether scoped diagnostics can be collected right now. Null = couldn't tell. */
+    private fun diagnosticsAvailability(): Pair<Boolean, String?>? = when {
+        DumbService.getInstance(project).isDumb -> false to "IDE indexing is in progress"
+        else -> true to null
     }
 
     private fun setModel(value: String) {

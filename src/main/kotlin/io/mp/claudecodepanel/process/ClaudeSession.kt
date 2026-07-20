@@ -32,6 +32,10 @@ class ClaudeSession(
     val isRunning: Boolean
         get() = handler?.let { !it.isProcessTerminated } ?: false
 
+    /** True once the CLI has reported a `session_id` this launch — i.e. it authenticated and responded. */
+    val sawSession: Boolean
+        get() = lastSessionId != null
+
     @Synchronized
     fun sendUserMessage(text: String) {
         if (!isRunning) startProcess()

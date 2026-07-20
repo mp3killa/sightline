@@ -156,6 +156,9 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         canvas.repaint()
     }
 
+    /** Number of timeline events observed this session — read by the health panel as context. */
+    fun observedEventCount(): Int = graph.timeline.size
+
     fun clearSession() {
         graph.clear()
         timelineModel.clear()
