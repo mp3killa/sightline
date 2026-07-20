@@ -111,6 +111,16 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         )
     }
 
+    private fun descendants(root: Component): List<Component> {
+        val out = ArrayList<Component>()
+        fun walk(c: Component) {
+            out.add(c)
+            if (c is Container) c.components.forEach { walk(it) }
+        }
+        walk(root)
+        return out
+    }
+
     private fun layoutTree(c: Component, w: Int, h: Int) {
         fun walk(x: Component) {
             if (x is Container) { x.doLayout(); x.components.forEach { walk(it) } }
@@ -160,9 +170,9 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         return if (dark) luminance < 0.5 else luminance > 0.5
     }
 
-    private fun renderGallery(name: String) {
+    private fun renderGallery(name: String, details: Boolean = true) {
         val settings = ClaudeSettings.getInstance().state
-        settings.showDetails = true          // tool cards visible — their weight is the point
+        settings.showDetails = details       // tool cards visible — their weight is the point
         settings.showActivityMap = false     // gallery is about the conversation column
         settings.activityViewMode = "chat"
 
@@ -193,5 +203,52 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             return
         }
         try { renderGallery("dark") } finally { JBColor.setDark(false) }
+    }
+
+    /**
+     * Details **off** — the shipped default. Every tool card is hidden, so this is the view most users
+     * actually see, and the one where the [ProcessingSummary] row has to carry what happened.
+     */
+    fun testRendersTheCompactGalleryWithDetailsOff() {
+        if (!applyTheme(dark = false)) return
+        try { renderGallery("compact", details = false) } finally { JBColor.setDark(false) }
+    }
+
+    /** Hover actions must exist but stay hidden until hover/focus, or the default view gets cluttered. */
+    fun testHoverActionsExistButStartHidden() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showDetails = true
+        settings.showActivityMap = false
+        settings.activityViewMode = "chat"
+        val p = ClaudePanel(project, testRootDisposable)
+        seed(p)
+        layoutTree(p.component, 900, 1750)
+
+        // A button's own isVisible stays true inside a hidden row, so check the whole ancestor chain.
+        fun effectivelyVisible(c: Component): Boolean {
+            var cur: Component? = c
+            while (cur != null && cur !== p.component) {
+                if (!cur.isVisible) return false
+                cur = cur.parent
+            }
+            return true
+        }
+        fun buttons(text: String) = descendants(p.component)
+            .filterIsInstance<javax.swing.JButton>().filter { it.text == text }
+
+        // "Copy command"/"Copy output" are unambiguous — they only exist as hover actions.
+        for (label in listOf("Copy command", "Copy output")) {
+            val bs = buttons(label)
+            assertTrue("expected a '$label' hover action to be constructed", bs.isNotEmpty())
+            bs.forEach { assertFalse("'$label' must stay hidden until hover or focus", effectivelyVisible(it)) }
+        }
+        // The code fence's own Copy is deliberately always visible — it is not a hover action, and
+        // this is the distinction the first version of this test got wrong.
+        assertTrue(
+            "a code fence keeps its always-visible Copy",
+            buttons("Copy").any { effectivelyVisible(it) },
+        )
+        // An edit's Open file / Copy diff are likewise deliberate, always-on affordances.
+        assertTrue("the edit block keeps its actions visible", buttons("Copy diff").any { effectivelyVisible(it) })
     }
 }

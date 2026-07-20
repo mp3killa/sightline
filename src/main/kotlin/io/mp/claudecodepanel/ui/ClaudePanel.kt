@@ -39,6 +39,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.mp.claudecodepanel.ui.state.DiffLayout
 import io.mp.claudecodepanel.ui.state.DiffPresentation
 import java.awt.GridLayout
+import io.mp.claudecodepanel.ui.state.ProcessingSummary
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.TestOnly
 import io.mp.claudecodepanel.activity.ActivityInterpreter
@@ -89,6 +90,7 @@ import io.mp.claudecodepanel.ui.state.WorkspaceModes
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Container
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -101,6 +103,8 @@ import java.awt.RenderingHints
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.KeyEvent
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.time.Instant
@@ -291,6 +295,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // off the EDT. Only files already touched are enriched; results feed back as background relations.
     private val structureEnricher by lazy { ProjectStructureEnricher(project, this) }
     private val toolCardsById = HashMap<String, ToolCard>()
+
+    /** What a tool call was, so its later result (which carries only an id) can be attributed. */
+    private inner class ToolMeta(val name: String, val path: String?, val turn: AssistantTurn?)
+    private val toolMetaById = HashMap<String, ToolMeta>()
     private val renderedTools = HashSet<String>()
     private var pendingScroll = false
     private var showDetails = ClaudeSettings.getInstance().state.showDetails
@@ -531,6 +539,45 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun copyToClipboard(text: String) {
         runCatching { CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(text)) }
+    }
+
+    /**
+     * Builds a row of secondary actions that stays hidden until the pointer is over [host] (or one of
+     * the buttons takes keyboard focus), so the default view stays clean without the actions being
+     * unreachable. Focus is included deliberately: hover-only actions are invisible to keyboard users.
+     */
+    private fun hoverActions(host: JComponent, vararg actions: Pair<String, () -> Unit>): JComponent {
+        val row = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
+        row.isOpaque = false
+        row.isVisible = false
+        val buttons = actions.map { (label, run) -> smallLink(label, run) }
+        buttons.forEach { row.add(it) }
+
+        fun show(v: Boolean) {
+            // Never hide while a button still holds focus, or tabbing into it makes it vanish.
+            if (!v && buttons.any { it.hasFocus() }) return
+            if (row.isVisible != v) { row.isVisible = v; row.revalidate(); row.repaint() }
+        }
+
+        val hover = object : MouseAdapter() {
+            override fun mouseEntered(e: MouseEvent) = show(true)
+            override fun mouseExited(e: MouseEvent) {
+                // Moving onto a child still counts as being over the host.
+                val p = SwingUtilities.convertPoint(e.component, e.point, host)
+                if (!host.contains(p)) show(false)
+            }
+        }
+        fun install(c: Component) {
+            c.addMouseListener(hover)
+            if (c is Container) c.components.forEach { install(it) }
+        }
+        install(host)
+        val focus = object : FocusAdapter() {
+            override fun focusGained(e: FocusEvent) = show(true)
+            override fun focusLost(e: FocusEvent) = show(false)
+        }
+        buttons.forEach { it.addFocusListener(focus) }
+        return row
     }
 
     private fun <T : JComponent> fullWidth(c: T): T { c.alignmentX = Component.LEFT_ALIGNMENT; c.isOpaque = false; return c }
@@ -960,6 +1007,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val text = extractText(b.get("content"))
                 feed(interpreter.toolResult(id, text, isErr))
                 id?.let { toolCardsById[it] }?.addResult(text, isErr)
+                id?.let { toolMetaById[it] }?.let { meta ->
+                    meta.turn?.noteToolOutcome(meta.name, if (isErr) ToolOutcome.ERROR else ToolOutcome.OK, meta.path)
+                }
                 id?.let { tid -> pendingReportScans.remove(tid)?.let { (cmd, started) -> scanReportsAsync(cmd, started) } }
             }
         }
@@ -984,7 +1034,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         card.setDetails(name, input ?: JsonObject(), renderToolContent(name, input ?: JsonObject(), card))
         target = null
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
-        if (id != null) { renderedTools.add(id); toolCardsById[id] = card }
+        if (id != null) {
+            renderedTools.add(id); toolCardsById[id] = card
+            // Remembered so the turn can tally the outcome when the result arrives — the result event
+            // carries only the tool_use_id, not what the tool was or which file it touched.
+            toolMetaById[id] = ToolMeta(name, input?.str("file_path"), curTurn)
+        }
         feed(interpreter.toolUse(id, name, input))
         noteBuildCommand(id, name, input)
     }
@@ -1208,6 +1263,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         feed(interpreter.toolDenied(toolUseId, toolName, input))
         val reason = "Denied by user"
         toolUseId?.let { toolCardsById[it] }?.markBlocked(reason)
+        toolUseId?.let { toolMetaById[it] }?.let { it.turn?.noteToolOutcome(it.name, ToolOutcome.BLOCKED, it.path) }
     }
 
     private fun resolvePermission() { statusModel.permissionResolved(); refreshStatus() }
@@ -1342,7 +1398,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun clearAll() {
         transcript.removeAll()
-        toolCardsById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
+        toolCardsById.clear(); toolMetaById.clear(); renderedTools.clear(); pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
         statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
@@ -1466,7 +1522,23 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** The component keyboard focus should land on when the tool window activates. */
     fun preferredFocusComponent(): JComponent = composer.inputComponent()
 
-    override fun dispose() { session.dispose() }
+    /**
+     * Releases everything this panel installed on **project-level** services, not just the process.
+     *
+     * The coordinators, `SightlineUiState` and the test-bridge simulator seam all outlive the panel,
+     * so a disposed panel that left them wired would keep a dead component reachable and leave stale
+     * pending approvals/questions that a later panel — or the sandbox bridge — would still see.
+     */
+    override fun dispose() {
+        session.dispose()
+        approvalCoordinator.clear()
+        questionCoordinator.clear()
+        if (uiState.rootComponent === component) {
+            uiState.rootComponent = null
+            uiState.toolWindowVisible = false
+        }
+        uiState.askQuestionSimulator = null
+    }
 
     // ---------- block components ----------
 
@@ -1479,6 +1551,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val body = JPanel()
         private var textCount = 0
         private val detailKids = ArrayList<Component>()
+        private var summary = ProcessingSummary()
+        private val summaryLabel = JBLabel("")
+        private val summaryRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
         init {
             layout = BorderLayout()
             border = JBUI.Borders.empty(2, 2, 6, 2)
@@ -1487,6 +1562,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             add(role, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
             add(body, BorderLayout.CENTER)
+
+            // The collapsed stand-in for the hidden tool cards. Clicking it turns details on, so the
+            // summary is a way *into* the detail rather than a dead end.
+            summaryRow.isOpaque = false
+            summaryRow.isVisible = false
+            summaryRow.cursor = hand
+            summaryLabel.foreground = mutedFg()
+            summaryLabel.font = summaryLabel.font.deriveFont(JBUI.scaleFontSize(11f).toFloat())
+            val chev = JBLabel(ClaudeIcons.chevronRight.withSize(11))
+            summaryRow.add(chev); summaryRow.add(summaryLabel)
+            summaryRow.addMouseListener(click { setShowDetails(true) })
+            summaryRow.alignmentX = Component.LEFT_ALIGNMENT
+            body.add(fullWidth(summaryRow))
             refreshVisibility()
         }
         fun addBlock(c: JComponent) {
@@ -1499,11 +1587,32 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             }
             refreshVisibility(); relayout()
         }
-        fun applyDetails(show: Boolean) { detailKids.forEach { it.isVisible = show }; refreshVisibility() }
+        fun applyDetails(show: Boolean) {
+            detailKids.forEach { it.isVisible = show }
+            refreshSummary()
+            refreshVisibility()
+        }
 
         /** Propagates the transcript column's width so hosted diffs can pick unified vs side-by-side. */
         fun applyDiffWidth(widthPx: Int) {
             for (c in body.components) if (c is ToolCard) c.applyDiffWidth(widthPx)
+        }
+
+        /**
+         * Folds a finished tool call into this turn's tally. With details off every card is hidden, so
+         * without this a turn that edited four files looks identical to one that answered from memory.
+         */
+        fun noteToolOutcome(toolName: String?, outcome: ToolOutcome, path: String?) {
+            summary = summary.plus(toolName, outcome, path)
+            refreshSummary()
+        }
+
+        /** Shows the one-line tally only when the detailed cards are hidden and something actually ran. */
+        private fun refreshSummary() {
+            val show = !showDetails && !summary.isEmpty
+            summaryRow.isVisible = show
+            if (show) summaryLabel.text = summary.text()
+            relayout()
         }
 
         /** A subtle run-metadata footer ("Completed · 51.6s · 13 turns · $0.404") — secondary, never the answer. */
@@ -1534,6 +1643,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             layout = BorderLayout()
             blocks.layout = BoxLayout(blocks, BoxLayout.Y_AXIS); blocks.isOpaque = false; blocks.alignmentX = Component.LEFT_ALIGNMENT
             add(stream, BorderLayout.CENTER)
+            // Copy the message as its original Markdown, not the rendered text — that is what is useful
+            // to paste back into an editor or an issue.
+            add(hoverActions(this, "Copy" to { copyToClipboard(sb.toString()) }), BorderLayout.SOUTH)
         }
         fun append(t: String) {
             sb.append(t)
@@ -1611,6 +1723,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private var outcome: ToolOutcome = ToolOutcome.RUNNING
         private var weight: ToolWeight = ToolEventPresentation.weight(name, ToolOutcome.RUNNING)
         private val editBlocks = ArrayList<FileEditBlock>()
+        private var installedActions = false
 
         init {
             layout = BorderLayout()
@@ -1648,6 +1761,20 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             toolName = name
             actionLabel.text = toolAction(name)
             targetLabel.text = summary
+            // A command is the thing people most often want to re-run or paste into a report, so it
+            // gets Copy command / Copy output on hover.
+            if (name == "Bash" && !installedActions) {
+                installedActions = true
+                val cmd = input.str("command") ?: ""
+                bodyWrap.add(
+                    hoverActions(
+                        this,
+                        "Copy command" to { copyToClipboard(cmd) },
+                        "Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) },
+                    ),
+                    BorderLayout.SOUTH,
+                )
+            }
             applyWeight()
             relayout()
         }

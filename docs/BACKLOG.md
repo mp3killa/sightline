@@ -25,15 +25,6 @@ Three asks from that review were assessed and **rejected** — do not re-import 
   It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
   block. The real cost is unbounded turn retention → **M6**.
 
-## M4 — Processing summary + hover actions
-
-- Collapse "Processing details" into a compact expandable summary once meaningful content begins —
-  e.g. *"17 operations · 4 files edited · 3 checks passed"*. Nothing counts operations today;
-  `CompletionSummary` covers only the cost/duration/turns footer. Extend it or add a sibling.
-- Hover/focus-revealed actions, which currently do not exist anywhere in the transcript (the only Copy
-  is the always-visible one on code fences): Copy on an assistant message; Copy command / Copy output on
-  a command; Open file / Reveal in Project on a file reference.
-
 ## M5 — Activity map ↔ chat linking
 
 `ActivityMapPanel` has no outbound callback at all — selecting a node opens the file in the editor and
@@ -62,6 +53,15 @@ disabled — so a user can type a full message, press Enter, and have **nothing 
 Fix the silent failure first (cheap), then decide whether to queue the message or explicitly block it.
 stdin is writable mid-turn (it already carries `control_response`), so queueing is feasible; it needs a
 deliberate "send now" vs "queue next" distinction.
+
+## M8 — File-reference context menu
+
+Hover actions landed for assistant messages (Copy), commands (Copy command / Copy output) and edits
+(Open file / Copy diff), but **not** for an inline file reference in prose. Clicking one already opens
+the file, so this is additive: a right-click menu offering *Open* and *Reveal in Project*. Deferred from
+M4 rather than dropped — inline links are styled ranges inside a text pane, not components, so they
+can't host a hover row the way a block can, and `BlockRenderer` only receives an open-link callback.
+Needs a popup-trigger listener plus a widened renderer callback.
 
 ---
 
