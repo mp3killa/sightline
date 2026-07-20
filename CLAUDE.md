@@ -124,6 +124,31 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - **Bundled libraries** (platform doesn't expose them): `gson` (parse stream-json) and
   `Java-WebSocket` (the ide server; `exclude group: "org.slf4j"` — platform provides slf4j).
 
+## Standing decisions (don't re-litigate)
+
+These outlived the backlog items that recorded them. They are constraints on future work, not roadmap.
+
+- **Nothing is persisted to disk except settings.** There is no session/transcript persistence:
+  `ClaudeSession.lastSessionId` is in-memory and `--resume` exists only to survive a user Stop. If
+  persistence is ever built it must be **workspace-relative paths only** — **never** absolute paths,
+  source contents, prompts, or reasoning — with a versioned schema, a session cap + retention limit,
+  delete-one / clear-all, and **off by default**. Do not let persistence arrive as a side effect of
+  satisfying some other requirement.
+- **The transcript's eviction notice must not promise recovery.** `TranscriptRetention` genuinely
+  releases old turns, and with no persistence there is nothing to reload them from, so the wording is
+  *"N earlier turns were released…"* — never a "load earlier" control that cannot work. A test asserts
+  the string never contains "load". (Decision confirmed 2026-07-20.)
+- **The graph never claims a relationship it can't evidence.** Deep inference (ViewModel→Composable,
+  UseCase→Repository, broad call graphs) was considered and **dropped**: it is heuristic pattern-matching
+  presented as structural fact, which is exactly what `RelationshipEvidence`/`EvidenceSource` exist to
+  prevent. Structural edges come from PSI/UAST or parsed command output, or they don't exist.
+- **Reading width stays ~760px.** A "1,100–1,250px content width" was proposed from a full-screen editor
+  window; a docked IntelliJ tool window is typically 400–700px, so that cap would never engage.
+- **The transcript is not virtualised, deliberately.** The case for it assumed the component tree is
+  rebuilt per streamed token. It isn't: streaming is a single `insertString` into one reused pane and the
+  tree rebuilds once per *block*. The real long-session cost was unbounded turn retention, which
+  `TranscriptRetention` now caps.
+
 ## Feature flags (settings)
 
 - `interactiveApproval` (default on) → `--permission-prompt-tool stdio` + control protocol.

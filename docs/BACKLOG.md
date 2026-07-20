@@ -1,26 +1,14 @@
 # Backlog
 
-**Only remaining work** — anything already built has been removed to keep this list honest. See
-[../CLAUDE.md](../CLAUDE.md) for what exists and [PROTOCOL.md](PROTOCOL.md) for CLI facts.
+**Only remaining work.** Anything built is deleted from this file rather than annotated, so the list
+stays honest and short. Decisions that outlive their backlog item — what was rejected and why — move to
+the **Standing decisions** section of [../CLAUDE.md](../CLAUDE.md) so they can't be silently re-litigated;
+see there for what exists, and [PROTOCOL.md](PROTOCOL.md) for CLI facts.
+
+Everything below is a **release gate**: the feature work is done.
 
 Guiding principle: correctness logic lands as **platform-free, unit-tested** classes (mirroring
 `activity/`, `ui/state/`, `interaction/`), with thin Swing on top.
-
----
-
-# Chat experience — VS Code-parity polish
-
-**All milestones (M1–M8) from the 2026-07-20 team/GPT review are complete and have been deleted.** What
-remains here is only the record of what was *rejected*, so it doesn't get re-imported by a future review:
-
-- *"Existing stored sessions must still open"* — there is **no session persistence**; `lastSessionId`
-  is in-memory and `--resume` exists only to survive a user Stop. Building persistence to satisfy an
-  acceptance criterion would pre-empt the P2 design below (which has deliberate privacy constraints).
-- *"1,100–1,250px max content width"* — that figure is for a full-screen editor window. A docked tool
-  window is typically 400–700px, so the cap would never engage. The existing 760 stays.
-- *"Virtualise the transcript"* — justified by the premise that the tree is rebuilt per streamed token.
-  It is not: streaming is a single `insertString` into one reused pane, and the tree rebuilds once per
-  block. The real cost is unbounded turn retention → **M6**.
 
 ---
 
@@ -72,7 +60,8 @@ Verify:
   stray node.
   Open design question: failed **command/test** nodes (`build`, `test suite`) lose their labels at the
   IMPORTANT tier while `ERROR`-type nodes keep theirs. That follows the tier rules as written, but a
-  *failed* node arguably deserves anchor status — decide before M5.
+  *failed* node arguably deserves anchor status. Decide during the live pass, with a busy graph in
+  front of you — it's a judgement about what the eye needs at density, not something to settle on paper.
 - **AskUserQuestion interaction**: **Other…** free-text actually accepting input, Continue **enabling**
   once every question is answered, **Cancel** genuinely denying and unblocking the turn, and a
   "Skip"-style option coming back as a normal answer. The `answers`-keyed-by-full-question-text contract
@@ -88,30 +77,3 @@ Verify:
 
 Naming (Sightline), plugin icon, `<vendor>`, `<description>`, `<change-notes>`, and the "requires the
 Claude CLI" wording are all in place — the remaining step is actually submitting the listing.
-
----
-
-# P2 — after launch
-
-## Phase 2b — on-demand deep relationships (0.3)
-
-Deferred because false claims / graph explosions concentrate here: full call graphs, broad
-`ReferencesSearch`, ViewModel→Composable / Repository→service / UseCase→Repository inference, automated
-pattern detection (built on the shipped evidence model). Focus-follows-agent (default on; suspend on any
-user pan/zoom/drag/select/inspector; small "Resume following"). Advanced keyboard: arrow-key spatial nav,
-search-driven selection, next/prev active event.
-
-## Timeline replay & persistence (0.4)
-
-Append-only event log; replay builds a **separate** graph state up to a selected sequence — never
-mutates the live graph ("N new events · Return to live"). Introduce the Freeze / Stop-following / Replay
-distinction the pause button hints at.
-
-```kotlin
-data class RecordedActivityEvent(val schemaVersion: Int, val sequence: Long,
-    val timestamp: Instant, val sessionId: String, val event: AgentActivityEvent)
-```
-
-Persistence: workspace-relative paths only; **never** absolute paths, source contents, prompts, or
-reasoning; versioned schema; max session count + retention; delete-one / clear-all. Default **off** in
-beta (current session in memory); opt-in retention of the last ~10 sessions.
