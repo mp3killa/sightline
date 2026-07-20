@@ -1,202 +1,336 @@
+# SIGHTLINE SOURCE-AVAILABLE LICENCE
 
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+**Version 1.0 — 20 July 2026**
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+This licence governs **Sightline** ("the Software"), including its executable files, source code,
+documentation, updates and related materials.
 
-   1. Definitions.
+The Software is owned and licensed by:
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+**Michael Carroll**
+Email: **support@cxk.co.za**
+Country: Republic of South Africa
+("Licensor")
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+**Copyright © 2026 Michael Carroll. All rights reserved.**
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+---
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+## ⚠ This is source-available software, not open source
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+The source code can be read, but this is **not** an open-source licence and Sightline must not be
+described as open source. It does not meet the Open Source Definition: it restricts redistribution and
+commercial exploitation of the source, which a genuine open-source licence may not do.
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+Publishing the source on a public repository does not place it in the public domain and does not waive
+copyright. All rights not expressly granted below are reserved.
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+### In plain English
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+| You may | You may not |
+|---|---|
+| Read, study and review the source | Redistribute the source or a build of it |
+| Build it yourself to evaluate or verify it | Publish a modified version |
+| **Use the Software at work, commercially** | Sell, sublicense or rent the Software or its source |
+| Submit improvements back | Use the source to build a competing product |
+| Fork on GitHub, via GitHub's own features | Run it as a hosted or managed service for others |
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+This table is a summary for convenience. Where it and the clauses below differ, the clauses govern.
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+---
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+## 1. Definitions
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+**"Source Code"** means the human-readable source, build scripts, tests and documentation made
+available in the Licensor's repository.
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+**"Distributed Build"** means a compiled copy of the Software obtained through an authorised
+distribution channel, such as the JetBrains Marketplace.
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+**"Self-Build"** means a copy you compile yourself from the Source Code.
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+**"You"** means the individual or organisation exercising rights under this licence.
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+**"Commercial Exploitation"** means selling, licensing, renting, hosting, or otherwise deriving revenue
+from the Software or the Source Code *as a product or service in itself* — whether alone, bundled, or
+as part of a competing or substantially similar offering.
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+**Commercial Exploitation does not include** using the Software as a tool in the course of your own
+work, business or employment. See clause 3.
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+## 2. Rights granted in the Source Code
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+Subject to this licence, the Licensor grants you a worldwide, non-exclusive, non-transferable,
+non-sublicensable, revocable, royalty-free licence to:
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+1. **view, read, study and evaluate** the Source Code;
+2. **build and run** a Self-Build for the purposes of evaluation, security review, verifying the
+   Licensor's privacy and security claims, or developing a contribution under clause 5;
+3. **make local modifications** for those same purposes; and
+4. **fork the repository** using the hosting platform's own functionality, as permitted by clause 6.
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+These rights exist so that the Software can be inspected and held to account. They are not a grant to
+redistribute, publish or commercially exploit it.
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+A Self-Build is for the purposes above, **not** as a substitute for a Distributed Build in ongoing
+production use. If you want to use Sightline as part of your daily work, use a Distributed Build.
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
+## 3. Rights granted in the Software
 
-   END OF TERMS AND CONDITIONS
+Subject to this licence and payment of any applicable fees, the Licensor grants you a limited,
+non-exclusive, non-transferable, non-sublicensable and revocable licence to:
 
-   APPENDIX: How to apply the Apache License to your work.
+1. download and install a Distributed Build through an authorised distribution channel;
+2. **use the Software for any lawful purpose, including commercial purposes** — in your job, in your
+   business, on client work, and on proprietary or confidential codebases; and
+3. make a reasonable number of backup copies for your own lawful use.
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+**To be unambiguous:** using Sightline as a tool to do paid work is expressly permitted and is the
+intended use. The commercial restrictions in this licence concern selling or exploiting *Sightline
+itself*, not the work you produce with it.
 
-   Copyright [yyyy] [name of copyright owner]
+Your rights in the output you create using the Software are unaffected by this licence. See clause 10.
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+This licence may be limited to a particular user, device, organisation, subscription period or licence
+tier, as stated at the time the Software is obtained.
 
-       http://www.apache.org/licenses/LICENSE-2.0
+## 4. Restrictions
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+Unless the Licensor gives you prior written permission, you may not:
+
+1. redistribute, publish, sell, rent, lease, sublicense or otherwise make available the Software or the
+   Source Code, in original or modified form, to any third party;
+2. publish a modified version, or distribute a Self-Build to anyone else;
+3. engage in Commercial Exploitation of the Software or the Source Code;
+4. use the Source Code, or knowledge derived from it, to develop or distribute a product that competes
+   with or is substantially similar to the Software;
+5. operate the Software as a hosted, managed or multi-tenant service for third parties;
+6. remove or alter copyright, trademark, attribution, licensing or proprietary notices;
+7. share licence credentials or licence keys, or make the Software available to unauthorised users;
+8. bypass, disable or interfere with licence validation, authentication, security controls or technical
+   protection measures;
+9. use the Software unlawfully, or in a way that infringes another person's rights;
+10. introduce malicious code, interfere with the Software's operation, or attempt to gain unauthorised
+    access to related systems; or
+11. represent that you own, created, endorse or are authorised to resell the Software.
+
+These restrictions do not limit rights that cannot lawfully be excluded, including any statutory right
+to decompile for interoperability.
+
+## 5. Contributions
+
+You may submit patches, pull requests, or other contributions ("Contributions").
+
+**By submitting a Contribution, you grant the Licensor a perpetual, worldwide, irrevocable,
+non-exclusive, royalty-free, sublicensable and transferable licence** to use, reproduce, modify, adapt,
+publish, distribute and commercially exploit that Contribution as part of the Software or otherwise,
+under any licence terms the Licensor chooses, including proprietary and commercial terms.
+
+You confirm that:
+
+1. the Contribution is your own original work, or you have the rights to submit it; and
+2. it does not knowingly infringe anyone else's intellectual-property rights.
+
+You retain copyright in your Contribution and may use it elsewhere. This clause exists so that a
+Contribution can be merged, relicensed and shipped commercially without needing to trace back and ask
+— which is otherwise a genuine obstacle for a project licensed this way.
+
+The Licensor is under no obligation to accept, merge or retain any Contribution.
+
+## 6. Public repository, forking and confidentiality
+
+Where the Source Code is published in a public repository, the hosting platform's terms of service may
+grant other users of that platform limited rights, such as viewing and forking within the platform.
+Nothing in this licence purports to override those platform terms, and exercising them is not a breach
+of this licence.
+
+However, a platform fork grants **no rights beyond that platform's own functionality**. It does not
+grant any right to redistribute, publish, commercially exploit, or relicense the Source Code.
+
+Where the Source Code is made available privately, it and any accompanying internal documentation,
+credentials, designs, roadmaps or technical information are **confidential**. You may use them only for
+the purpose for which access was granted, must not disclose or copy them, and must not retain them
+after your access ends.
+
+## 7. Accounts and licence management
+
+Some features may require an account, subscription, licence key or connection to a licensing service.
+
+You are responsible for keeping credentials secure, for activity performed through your account, for
+providing accurate account information, and for notifying the Licensor promptly of suspected
+unauthorised access.
+
+The Licensor may suspend access where there is reasonable evidence of licence sharing, fraud, misuse, a
+security threat, or a material breach of this licence.
+
+## 8. Third-party services and artificial intelligence
+
+The Software integrates with services supplied by third parties, including JetBrains products,
+source-control platforms, cloud services and artificial-intelligence providers.
+
+Your use of a third-party service is governed by that provider's own terms, privacy policy,
+availability rules and charges. The Licensor does not control and is not responsible for third-party
+services.
+
+**Sightline requires a separately installed and separately authenticated Claude Code CLI.** The
+Licensor does not provide, resell, proxy or broker access to any model service, and does not handle
+your credentials. Where the Software sends prompts, source code, project information or files to a
+third-party service, the accompanying privacy policy explains the processing. You are responsible for
+ensuring that you are authorised to submit that content.
+
+You should review generated code, suggestions and other automated output before relying on or deploying
+it. Such output may be incomplete, inaccurate, insecure or unsuitable for your purpose.
+
+## 9. Third-party components
+
+The Software includes third-party libraries governed by separate licences. Those licences apply to
+those components, and nothing here restricts rights they grant you. Required notices are in
+`THIRD_PARTY_NOTICES.md` and the `licenses/` directory.
+
+## 10. Your content and your output
+
+You retain ownership of source code, prompts, files and other content you provide through the Software,
+and of the work you produce using it.
+
+You grant the Licensor only the limited rights reasonably necessary to operate, secure, maintain and
+support the Software. You confirm you have the rights required to submit and process your content
+through the Software and any enabled third-party integrations.
+
+## 11. Privacy
+
+The Licensor processes personal information in accordance with the privacy policy accompanying the
+Software (`PRIVACY.md`) and applicable data-protection law. That policy forms part of this licence
+where applicable.
+
+## 12. Updates and compatibility
+
+The Licensor may release updates, improvements, security fixes or new versions but is not required to
+do so unless a separate written support agreement states otherwise. Updates may modify, add or remove
+features.
+
+The Licensor does not guarantee continued compatibility with every version of Android Studio,
+IntelliJ-based IDEs, operating systems, APIs, third-party plugins or external services. Older versions
+may stop receiving support or security updates.
+
+## 13. Fees and subscriptions
+
+The Software may be offered free of charge, as a paid licence, or by subscription. Applicable pricing,
+renewal, trial, cancellation and refund terms are stated through the authorised distribution channel.
+Failure to pay an amount when due may result in suspension or termination of the relevant paid features.
+
+## 14. Feedback
+
+You may voluntarily provide suggestions, ideas or feedback. You grant the Licensor a perpetual,
+worldwide, irrevocable, royalty-free licence to use and incorporate that feedback without an obligation
+to compensate you. This does not transfer ownership of your independently developed software.
+
+## 15. Termination
+
+This licence remains effective until terminated.
+
+You may terminate it by uninstalling the Software, ceasing use, and deleting all copies — including any
+Self-Build and any local copy of the Source Code — in your possession or control.
+
+The Licensor may terminate or suspend your licence if you materially breach it and, where the breach
+can be corrected, you fail to correct it within a reasonable period after notice. The licence may be
+terminated immediately for deliberate licence circumvention, unlawful redistribution, Commercial
+Exploitation, material security abuse, or unauthorised disclosure of confidential source code.
+
+After termination you must stop using the Software and delete all copies, except where retention is
+required by law.
+
+Clauses concerning ownership, contributions, confidentiality, restrictions, disclaimers, liability and
+governing law survive termination.
+
+## 16. Disclaimer of warranties
+
+To the fullest extent permitted by law, the Software is provided **"as is"** and **"as available."**
+
+The Licensor does not warrant that the Software will be uninterrupted, error-free or completely secure;
+meet every requirement; be compatible with every environment; preserve all data without loss; identify
+every defect, vulnerability or coding issue; or produce accurate or reliable automated or
+artificial-intelligence output.
+
+Nothing here excludes warranties or consumer rights that cannot lawfully be excluded.
+
+## 17. Limitation of liability
+
+To the fullest extent permitted by law, the Licensor will not be liable for indirect, incidental,
+special, punitive or consequential loss, including loss of profits, revenue, business opportunity,
+goodwill, data or anticipated savings.
+
+The Licensor's total aggregate liability arising from the Software or this licence will not exceed the
+greater of:
+
+1. the amount you paid for the Software during the twelve months immediately before the event giving
+   rise to the claim; or
+2. **R100**, where the Software was provided free of charge.
+
+These limitations do not apply where liability cannot lawfully be excluded or limited, including
+liability arising from fraud or deliberate misconduct.
+
+## 18. JetBrains
+
+The Software is independently developed and licensed by Michael Carroll.
+
+JetBrains s.r.o., its affiliates and its resellers are not parties to this licence and are not
+responsible for the Software, its performance, maintenance or support, claims relating to it, user
+content processed through it, or any warranties relating to it.
+
+Nothing here restricts rights granted to JetBrains under the applicable JetBrains Marketplace
+agreements, including rights required to review, test, verify, host and distribute the Software.
+
+"JetBrains," "IntelliJ," "IntelliJ IDEA" and "Android Studio" may be trademarks of their respective
+owners. "Claude" and "Claude Code" are trademarks of Anthropic PBC. Use of those names describes
+compatibility only and does not imply endorsement. Sightline is not affiliated with, endorsed by or
+sponsored by Anthropic, JetBrains or Google.
+
+## 19. Export controls and sanctions
+
+You may not use, export or re-export the Software in violation of applicable export-control, sanctions
+or trade laws. You confirm you are not prohibited by applicable law from receiving or using it.
+
+## 20. Governing law
+
+This licence is governed by the laws of the Republic of South Africa, without regard to conflict-of-law
+principles.
+
+Subject to any consumer rights or mandatory dispute-resolution requirements that apply to you, the
+courts of the Republic of South Africa have jurisdiction over disputes arising from this licence.
+
+Before beginning formal proceedings, the parties should first attempt in good faith to resolve the
+dispute through written communication.
+
+## 21. Changes to this licence
+
+The Licensor may update this licence for future versions or renewals. Material changes will be
+communicated through the Software, its repository, the JetBrains Marketplace listing or another
+reasonable channel.
+
+**A change to this licence does not retroactively affect a version you already obtained** — the terms
+you received with a given version continue to govern that version. Nor will changes retroactively
+remove rights already granted for a fully paid perpetual licence, except where required by law or
+reasonably necessary to address fraud, misuse or a serious security risk.
+
+## 22. General
+
+If any provision is found unenforceable, the remaining provisions continue to apply. Failure to enforce
+a provision does not waive the right to enforce it later.
+
+You may not assign or transfer this licence without the Licensor's prior written consent. The Licensor
+may assign it as part of a sale, transfer or restructuring of the Software or related business.
+
+This licence, together with any applicable order terms, the privacy policy and the third-party notices,
+constitutes the entire agreement concerning the Software and replaces earlier discussions or
+representations about its licensing.
+
+## 23. Contact
+
+Questions, permission requests, support and legal notices:
+
+**Michael Carroll**
+**support@cxk.co.za**
+Republic of South Africa
+
+Requests for rights beyond this licence — redistribution, OEM bundling, or a commercial licence — are
+welcome at that address.

@@ -111,10 +111,15 @@ Verify:
 
 ## Marketplace listing submission
 
-Repository scaffolding is done: Apache-2.0 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, `PRIVACY.md`,
-`SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/DATA-FLOW.md`,
+Repository scaffolding is done: proprietary `LICENSE` (EULA), `THIRD_PARTY_NOTICES.md` + `licenses/`,
+`PRIVACY.md`, `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `docs/DATA-FLOW.md`,
 `docs/PERMISSIONS.md`. Plugin identity is `io.mp.sightline` / **Sightline** / `0.1.0-beta`, and the
-listing description, change-notes and independence disclaimer are in `plugin.xml`.
+listing description, change-notes, copyright line and independence disclaimer are in `plugin.xml`.
+
+**Licence settled 2026-07-20: source-available** (`LICENSE` = Sightline Source-Available Licence v1.0).
+Not open source, so the Marketplace OSS route and its public-source-link requirement do not apply — but
+a Developer EULA does, and `LICENSE` is it. Publishing the repo is now a *choice* rather than an
+obligation, and the licence is written to work either way:
 
 **Still to do, and all of it needs a human:**
 
@@ -128,8 +133,14 @@ listing description, change-notes and independence disclaimer are in `plugin.xml
    reflexively — JetBrains does not decide it on whether money changes hands, and this plugin is close
    to professional work. Trader contact details are shown publicly, so use a dedicated support address,
    not a personal inbox.
-3. **A public repository**, with the issue tracker enabled. An OSS-licensed listing must link to real
-   source. Replace the `OWNER/sightline` placeholders in `CHANGELOG.md` and `README.md` once it exists.
+3. **Supply the licence as the Developer EULA during submission.** `LICENSE` is written to serve as
+   one; JetBrains is explicitly not a party to it (clause 18). Do **not** select an open-source licence
+   option on the listing — source-available is not open source, and mislabelling it is both inaccurate
+   and a plausible review rejection.
+4. **Decide whether to make the repository public.** The licence supports it, and several documents
+   already invite the reader to audit named source files — which is only honest while the source is
+   actually readable. If it stays private, `PRIVACY.md`, `SECURITY.md` and `docs/DATA-FLOW.md` must
+   revert to behavioural checks only (the wording for that is in the 2026-07-20 history if needed).
 4. **A Marketplace icon** — 40×40 SVG, distinct from JetBrains, Anthropic and Google marks. Concept:
    an aperture or eye formed from graph nodes with one highlighted line of sight.
 5. ~~**Four screenshots**~~ — **generated.** `./gradlew test --tests "*MarketplaceScreenshotTest*"

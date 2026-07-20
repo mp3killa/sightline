@@ -35,10 +35,16 @@
         local <code>claude</code> process you started. Your conversation is never written to disk.</p>
 
         <p>
-        Sightline is an independent, open-source project (Apache-2.0) and is not affiliated with or
-        endorsed by Anthropic, JetBrains or Google. "Claude" and "Claude Code" are trademarks of
-        Anthropic; "Android Studio" is a trademark of Google. Both are used only to describe
-        compatibility.
+        Sightline is an independent project and is not affiliated with or endorsed by Anthropic,
+        JetBrains or Google. "Claude" and "Claude Code" are trademarks of Anthropic; "Android Studio"
+        is a trademark of Google. Both are used only to describe compatibility.
+        </p>
+
+        <p>
+        Copyright &#169; 2026 Michael Carroll. <b>Source-available</b> &#8212; the source is published so
+        it can be read and audited, but it is not open source and may not be redistributed. Using
+        Sightline in your work, including commercially, is expressly permitted. Free during the beta.
+        See the licence accompanying this listing.
         </p>
     ]]></description>
 

@@ -15,8 +15,8 @@ Email **support@cxk.co.za** with a description, the affected version, and steps 
 I will acknowledge within 7 days and aim to have a fix or a plan within 30. I will credit you unless
 you'd rather I didn't.
 
-This is a personal open-source project with no bug bounty. It is also a beta — if you find something
-serious, telling me privately first genuinely helps the people using it.
+This is a one-person project with no bug bounty. It is also a beta — if you find something serious,
+telling me privately first genuinely helps the people using it.
 
 ### Especially worth reporting
 
@@ -31,6 +31,15 @@ serious, telling me privately first genuinely helps the people using it.
 Sightline is a **client for a CLI you already trust**. If you have installed and authenticated Claude
 Code, that CLI can already read your project and run commands. Sightline does not widen that; it makes
 it visible and interruptible.
+
+**Sightline is source-available**, and this page is the main reason that matters. Every guard described
+below is a named file you can read: `PathAccessPolicy`, `AndroidActionPolicy`, `LogcatRedactor`,
+`HealthSanitizer`. You do not have to believe a security page written by the person who wrote the code —
+you can check it, and build it yourself to confirm the artifact matches. See
+[docs/DATA-FLOW.md](docs/DATA-FLOW.md#verifying-this-yourself).
+
+Source-available is not open source ([LICENSE](LICENSE)): you may read, build and verify, but not
+redistribute or commercially exploit. Reading it to audit it is exactly what the licence is for.
 
 What Sightline adds on top:
 
@@ -115,7 +124,8 @@ heavily unit-tested, and a leak there would be a security bug worth reporting.
 
 Sightline redistributes exactly two libraries — Gson and Java-WebSocket — plus one annotations jar
 that arrives transitively. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keeping that set small
-is deliberate: every bundled jar is attack surface shipped to every user.
+is deliberate: every bundled jar is attack surface shipped to every user, and a small set is one you can
+actually audit against advisories.
 
 Updates are applied when a security advisory affects them, and the bundled set is checked against the
 built artifact whenever it changes.

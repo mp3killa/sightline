@@ -174,15 +174,20 @@ interactive flows are verified see [docs/TESTING.md](docs/TESTING.md).
 
 ## Licence, privacy and security
 
-Sightline is **Apache-2.0** licensed ([LICENSE](LICENSE), [NOTICE](NOTICE),
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+Sightline is **source-available** software — see [LICENSE](LICENSE). The source is published so it can
+be read, audited and built; it is **not** open source, and may not be redistributed or commercially
+exploited. Using it as a tool in your work, including commercially, is expressly permitted and is the
+point of it. Free during the beta.
+
+Redistributed third-party components keep their own licences, reproduced in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licenses/](licenses/).
 
 - **[PRIVACY.md](PRIVACY.md)** — no telemetry, no conversation persistence, no credential handling, and
   exactly what does leave your machine.
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability privately, and the guards in place.
 - **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** — what each permission mode allows, and the three
   guards that apply regardless of mode.
-- **[docs/DATA-FLOW.md](docs/DATA-FLOW.md)** — where data goes, with the code paths to check it yourself.
+- **[docs/DATA-FLOW.md](docs/DATA-FLOW.md)** — where data goes, with the source files and runtime checks to verify it yourself.
 
 Sightline requires a **user-managed Claude Code installation**: you install and authenticate the
 `claude` CLI yourself, and pay Anthropic directly. Sightline does not provide Claude access, has no
@@ -192,8 +197,10 @@ Sightline is an independent project, not affiliated with or endorsed by Anthropi
 "Claude" and "Claude Code" are trademarks of Anthropic; "Android Studio" is a trademark of Google. Both
 are used only to describe compatibility.
 
-## Contributing
+## Reporting problems
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Bug reports are
-especially welcome while this is in beta — run the in-plugin **Health check** first and use *Copy
-report*, which is sanitised and safe to paste publicly.
+Bug reports are very welcome while this is in beta — see [CONTRIBUTING.md](CONTRIBUTING.md). Run the
+in-plugin **Health check** first and use *Copy report*: it is sanitised (no home path, username, email
+or token) and safe to paste anywhere.
+
+Security problems go to **support@cxk.co.za**, not to a public tracker — see [SECURITY.md](SECURITY.md).

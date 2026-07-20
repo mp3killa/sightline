@@ -111,21 +111,56 @@ Nothing in the first two rows is ever written to disk. That is a
 
 ## Verifying this yourself
 
-You don't have to take the diagram's word for it:
+Sightline is **source-available**: the source is published so that claims like the ones on this page can
+be checked rather than taken on trust. That is most of the reason it is published at all. (Source-available
+is not open source — see [LICENSE](../LICENSE) — but reading and building it to verify these claims is a
+right the licence grants explicitly.)
+
+### In the source
 
 ```bash
-# Everything the plugin sends is one JSON line per message on the CLI's stdin.
-# Watch the process it starts:
-ps aux | grep '[c]laude -p'
-
-# The bridge is loopback-only. Nothing should be listening on an external interface:
-lsof -nP -iTCP -sTCP:LISTEN | grep -i java
-
-# The source of the prompt block, and its tests:
+# The exact text prepended to a message, and the tests pinning its behaviour:
 src/main/kotlin/io/mp/sightline/android/AndroidContextFormatter.kt
 src/test/kotlin/io/mp/sightline/android/AndroidContextFormatterTest.kt
 
-# The redactor, and its corpus test:
+# The redactor, and its corpus test — asserts both that secrets don't survive
+# and that ordinary log lines are untouched:
 src/main/kotlin/io/mp/sightline/android/LogcatRedactor.kt
 src/test/kotlin/io/mp/sightline/android/LogcatRedactorTest.kt
+
+# The path guard, and the device-action gate:
+src/main/kotlin/io/mp/sightline/ide/PathAccessPolicy.kt
+src/main/kotlin/io/mp/sightline/android/AndroidActionPolicy.kt
+
+# Build it and run the suite yourself:
+./gradlew test
 ```
+
+### In the running plugin
+
+Source tells you what it intends; behaviour tells you what it does. These take a minute and are worth
+more than either alone:
+
+```bash
+# 1. Sightline starts exactly one CLI process and talks to it over stdin/stdout.
+#    Another child process would be a red flag.
+ps aux | grep '[c]laude -p'
+
+# 2. The bridge is loopback-only — 127.0.0.1, never 0.0.0.0 or an external interface.
+lsof -nP -iTCP -sTCP:LISTEN | grep -i java
+
+# 3. Sightline makes no outbound connections of its own. Established remote
+#    connections should belong to `claude`, not to the IDE.
+lsof -nP -iTCP -sTCP:ESTABLISHED | grep -iE 'java|claude'
+
+# 4. Nothing is written outside settings and the opt-in cache.
+ls -la .sightline/ 2>/dev/null        # absent unless you enabled it
+```
+
+Two more you can see without any tooling:
+
+- **Every logcat capture reports what it removed** — "8 values redacted (3 tokens, 2 emails …)". A
+  capture that redacted nothing says so too. A zero count on a log you know contains a token is a bug
+  worth reporting.
+- **The Activity Map shows what was actually touched.** A file appearing there that you did not expect
+  Claude to read is visible at the time, not after the fact.

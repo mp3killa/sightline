@@ -4,12 +4,13 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0-beta] — 2026-07-20
+## 0.1.0-beta — 2026-07-20
 
 First public release. Beta: the interfaces described here may change before 1.0.
 
 Development versions 0.1–0.6 were never published; this is the first release with a public artifact,
-and the version was reset to reflect that.
+and the version was reset to reflect that. Sightline is **source-available** software — see
+[LICENSE](LICENSE) — and free to use during the beta.
 
 ### Chat and review
 - Streaming replies with token-level rendering, extended thinking, and a per-turn footer showing
@@ -60,4 +61,3 @@ and the version was reset to reflect that.
 - The Compose semantics tree requires `testTagsAsResourceId` in the app under test.
 - Tested on Android Studio. Verified compatible with IntelliJ IDEA 2025.3, but not exercised there.
 
-[0.1.0-beta]: https://github.com/OWNER/sightline/releases/tag/v0.1.0-beta

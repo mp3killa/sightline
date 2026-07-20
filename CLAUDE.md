@@ -12,20 +12,37 @@ publication orphans every install, which is why it was done now. Identifiers the
 deliberately untouched — `CLAUDE_CODE_ENTRYPOINT`, the `ide` MCP server name, and its `serverInfo`
 name are an integration contract with an external tool, not our branding.
 
-Licensed **Apache-2.0**. Legal and trust scaffolding lives at the repo root: `LICENSE`, `NOTICE`,
-`THIRD_PARTY_NOTICES.md`, `PRIVACY.md`, `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
-`CODE_OF_CONDUCT.md`, plus `docs/DATA-FLOW.md` and `docs/PERMISSIONS.md`. **Keep them true** — they
-describe specific code (`LogcatRedactor`, `PathAccessPolicy`, `AndroidActionPolicy`, `HealthSanitizer`),
-and a privacy or security claim that drifts from the implementation is worse than no claim.
+**Licensing (settled 2026-07-20): source-available.** `LICENSE` is the *Sightline Source-Available
+Licence v1.0* — SA law, Michael Carroll, support@cxk.co.za. Apache-2.0 was considered and dropped. The
+distinctions that matter, because they are easy to blur:
+- **Source-available is NOT open source.** Never describe it as open source anywhere — listing, README,
+  docs. The licence says so in a banner at the top for that reason.
+- **Two different "commercial" questions, and conflating them breaks the licence.** *Using* Sightline at
+  work, commercially, on client code is **expressly permitted** — that is the entire audience. What is
+  barred is *Commercial Exploitation of the Software or its source*: selling it, redistributing it,
+  building a competing plugin from it, running it as a service. Clause 1 defines the difference and
+  clause 3 states the permission in bold. Do not let a future edit collapse them.
+- **Contributions carry an inbound grant (clause 5)** — broad, irrevocable, sublicensable, contributor
+  keeps copyright. Without it a merged patch could not be relicensed or shipped commercially without
+  tracing its author. `CONTRIBUTING.md` explains it in plain words.
+- **A GitHub fork is carved out (clause 6)** — the platform's own ToS grants view/fork, and a licence
+  purporting to forbid what the host permits would be incoherent. A fork grants nothing beyond that.
+- **Third-party obligations are unchanged by any of this.** Gson (Apache-2.0) and Java-WebSocket (MIT)
+  must have their notices reproduced wherever redistributed; none of the jars ships one, so
+  `THIRD_PARTY_NOTICES.md` + `licenses/` are the *only* place that is discharged. Update both in the
+  same commit as any dependency change.
+- **No `NOTICE` file** — that is an Apache convention; trademark/independence statements live in
+  `LICENSE` §18 and the README.
+- **Source-readability claims are now legitimate again.** `PRIVACY.md`, `SECURITY.md` and
+  `docs/DATA-FLOW.md` point at named files (`LogcatRedactor`, `PathAccessPolicy`, `AndroidActionPolicy`,
+  `HealthSanitizer`) and invite the reader to build and check. That is the main *point* of publishing
+  the source, and it is only honest while the repo is actually readable — if it ever goes private again,
+  those sections must revert to behavioural checks only.
 
-> Detailed, reverse-engineered CLI protocol facts live in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
-> Read that before touching `ClaudeSession` or `IdeServer`.
-> How the interactive flows are verified (coordinators + the sandbox test bridge) lives in
-> **[docs/TESTING.md](docs/TESTING.md)** — read it before touching approval/diff wiring.
-> The plan to turn Sightline into an **Android control centre** — the fact ladder, the CLI-first /
-> AS-optional dependency strategy, and milestones M0–M5 — lives in
-> **[docs/ANDROID.md](docs/ANDROID.md)**. It records four standing-decision amendments (Appendix B)
-> that must land with M0.
+Trust scaffolding at the repo root: `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/`, `PRIVACY.md`,
+`SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, plus `docs/DATA-FLOW.md` and
+`docs/PERMISSIONS.md`. **Keep them true** — they describe specific code, and a privacy or security claim
+that drifts from the implementation is worse than no claim.
 
 ## Architecture
 
