@@ -5,7 +5,7 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**835 tests**, green as of 2026-07-20; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**887 tests**, green as of 2026-07-20; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
 - `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
@@ -64,7 +64,15 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
   `ComposeSourceAnalyzerTest` — stacked `@Preview` annotations merge their coverage, a multi-line
   `Image(` call isn't accused of omitting a `contentDescription` it supplies further down, and a test
   asserting **no finding kind claims anything about recomposition or stability** — the boundary is
-  enforced by the suite, not just by intent.
+  enforced by the suite, not just by intent;
+  `ManifestAuditTest` — a launcher activity is not flagged for being exported, an unparseable
+  `android:exported="@bool/x"` is *unknown* rather than false, and a manifest with no `<application>`
+  produces no application-level findings;
+  `RouteExtractorTest` — `navigate("earnings/old-statements")` is dangling against a declared
+  `earnings/statements` (comparing first segments alone waved through exactly the renamed-route crash
+  the check exists for), and `composable("prefix" + suffix)` yields **no** route rather than `prefix`.
+- `activity/GraphLensTest` — that a lens filters **edges**, not just nodes, and the boundary test: every
+  lens can only select from the nodes and edges it was given, never construct one.
 - `activity/ActivityInterpreterAndroidTest` — crash attribution (a logcat crash attaches to the file
   that threw; no app prefixes or an unresolvable name attaches to *nothing* rather than to a framework
   frame) and typed build labels (a diagnosed cause replaces `> Task :app:foo FAILED`; an unrecognised
@@ -203,7 +211,7 @@ is null-until-lazy.
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-./gradlew test                 # the 835 unit tests
+./gradlew test                 # the 887 unit tests
 ./gradlew test --rerun-tasks   # same, and actually regenerates the preview PNGs (a cached run does not)
 ./gradlew buildPlugin          # the distributable zip
 ./gradlew runIde               # sandbox AS with the plugin, bridge OFF (production-like)

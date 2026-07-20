@@ -32,6 +32,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.JBUI
+import io.mp.claudecodepanel.ide.android.AndroidAuditTools
 import io.mp.claudecodepanel.ide.android.AndroidDeviceTools
 import io.mp.claudecodepanel.ide.android.AndroidMcpTools
 import io.mp.claudecodepanel.ide.android.AndroidScreenTools
@@ -89,6 +90,9 @@ class IdeServer(private val project: Project) : Disposable {
 
     /** `android.*` screen inspection + Compose source analysis. */
     private val androidScreenTools: AndroidScreenTools by lazy { AndroidScreenTools(project) }
+
+    /** `android.*` static audits — manifest and navigation routes. No device needed. */
+    private val androidAuditTools: AndroidAuditTools by lazy { AndroidAuditTools(project) }
 
     private companion object {
         const val DIFF_TIMEOUT_MINUTES = 10L
@@ -194,6 +198,8 @@ class IdeServer(private val project: Project) : Disposable {
                 if (testBridge.handles(name)) {
                     val r = testBridge.call(name, args)
                     reply(conn, id, toolResult(r.text, r.imagePng))
+                } else if (androidAuditTools.handles(name)) {
+                    reply(conn, id, toolResult(androidAuditTools.call(name, args)))
                 } else if (androidScreenTools.handles(name)) {
                     reply(conn, id, toolResult(androidScreenTools.call(name, args)))
                 } else if (androidDeviceTools.handles(name)) {
@@ -272,6 +278,7 @@ class IdeServer(private val project: Project) : Disposable {
         androidTools.addToolDefs(tools) // no-op unless the Android features are on
         androidDeviceTools.addToolDefs(tools)
         androidScreenTools.addToolDefs(tools)
+        androidAuditTools.addToolDefs(tools)
         testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
     }

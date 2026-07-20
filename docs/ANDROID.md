@@ -207,7 +207,9 @@ deliberate and tested, not incidental.
 
 ## 3. Milestones
 
-Each is independently shippable with a stated gate. Release mapping: **0.9.0** = M5.
+**All five milestones have shipped** (2026-07-20). What remains in this file is the cross-cutting
+command/workflow surface below, the deferred appendix, and the two pieces explicitly held back for a
+human with `runIde` — noted inline.
 
 Shipped milestones are **deleted from this file**, not annotated — the same rule
 [BACKLOG.md](BACKLOG.md) follows, so what's left stays honest and short. Decisions that outlive a
@@ -218,7 +220,8 @@ optional-dependency boundary, the action gate, the persistence guardrails and th
 are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt injection, `android.getContext`
 and the tier-2/3 parsers — and **M2** — variant-aware task resolution, the build-failure classifier,
 stack-trace-to-source and targeted test selection — and **M3** — the logcat redactor, device actions,
-revertible state recipes and evidence-graded crash investigation — shipped 2026-07-20 too. **M4** shipped
+revertible state recipes and evidence-graded crash investigation — and **M5** — the manifest audit, route
+and deep-link analysis, and `GraphLens` — shipped 2026-07-20 too. **M4** shipped
 its verifiable half the same day — screen inspection, Compose source analysis, and the `limits` contract
 on both; what it deliberately did **not** ship is listed below.)
 
@@ -234,45 +237,6 @@ on both; what it deliberately did **not** ship is listed below.)
 > The screenshot **consent card** (§1.4: show the image, then attach/discard) is UI work that belongs
 > with that same live pass — `AndroidScreenTools.screenshotAction` exposes the capture for it, and the
 > MCP surface deliberately does not capture on its own.
-
-### M5 — Static audits, routes & graph modes *(§10, §11, §15, §9)*
-
-Grouped because they share one substrate: parsing the merged manifest and the navigation graph.
-
-- **Manifest & permission audit** (§10) — over the *merged* manifest from tier 2. Exported components,
-  intent filters, deep links, runtime permissions, foreground service types, `POST_NOTIFICATIONS`
-  handling, network security config, cleartext, FileProvider paths, backup config, PendingIntent
-  mutability, WebView settings, package visibility. Plus the code-vs-manifest cross-check (permission
-  requested in code, absent from manifest). Purely static, no device, high value per line of code.
-- **Routes & deep links** (§11) — `RouteExtractor` over Compose `NavHost` and nav XML. Unreachable
-  routes, argument validation, duplicate deep links, `[Launch on device]` (M3), generated deep-link tests.
-- **Accessibility & adaptive matrix** (§15) — the condition matrix, driven by M3's recipes and M4's
-  capture. Reports per cell rather than one verdict.
-- **Graph modes** (§9) — the model is closer to ready than it looks. `VIEW_MODEL`, `USE_CASE`,
-  `REPOSITORY`, `COMPOSABLE` already exist as node types *and* categories. Two pieces of work:
-  1. **Lift the lens.** `ActivityMapPanel.Filter` is a private Swing enum filtering nodes only
-     (`ui/ActivityMapPanel.kt:122-132`). A data-flow or module-dependency mode needs **edge** predicates
-     too. Move it to a platform-free `GraphLens { nodePred, edgePred, spinePolicy }` — testable, and
-     usable by `ActivityMapRenderer` for the headless previews.
-  2. **New id scheme for non-file nodes.** Every node is currently `file:<path>`-keyed; a route is not
-     1:1 with a file. Needs a `route:` id, a `SCREEN`/`ROUTE` node type, and a new `AgentActivityEvent`
-     variant — the `when` at `ActivityGraph.kt:84-118` is exhaustive over a sealed interface, so the
-     compiler finds every call site.
-
-> **Standing-decision boundary — read before implementing §9.** "The graph never claims a relationship
-> it can't evidence" explicitly rejected ViewModel→UseCase→Repository inference. That rejection stands
-> for *name-pattern* inference. But **constructor injection is a PSI-resolvable declaration**, and
-> Hilt/Dagger `@Inject`/`@Binds`/`@Provides` are real annotations. So the architecture graph is
-> permitted **only** where PSI resolves the edge, tagged `PSI_DECLARATION`. It is never permitted from a
-> filename ending in `Repository`.
->
-> Note the existing classifier *does* name-match — but only to assign a node's **cluster**, which is
-> presentation. The rule is: **naming may colour a node; it may never create an edge.**
-
-**Gate:** every architecture edge carries `PSI_DECLARATION` or `PSI_REFERENCE`; a test asserts no edge
-is ever emitted with `NAMING_HEURISTIC`. Manifest audit findings each cite the manifest line.
-
----
 
 ### Cross-cutting: commands and workflows *(§18, §19)*
 
