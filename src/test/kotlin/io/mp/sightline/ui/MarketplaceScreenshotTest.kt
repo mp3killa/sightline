@@ -327,7 +327,20 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
      * client, path or address may appear. Asserted rather than trusted to review.
      */
     fun testScreenshotsCarryNoRealProjectNames() {
-        val forbidden = listOf("demo", "cxk", "mp3killa", "devuser", "/Users/", "claudecodepanel")
+        // Assembled from fragments, not written literally.
+        //
+        // A history scrub replaces these very strings wherever they appear — including here. When one
+        // ran, it rewrote this list to forbid the *replacement* term, so the guard started failing on
+        // the scrubbed-and-therefore-correct fixture. A denylist that a scrubber can rewrite is a
+        // denylist that silently inverts, and the pressure is then to delete the test rather than fix it.
+        val forbidden = listOf(
+            "pic" + "up",
+            "c" + "xk",
+            "mp3" + "killa",
+            "mich" + "ael",
+            "/Us" + "ers/",
+            "claudecode" + "panel",
+        )
         val source = File("src/test/kotlin/io/mp/sightline/ui/MarketplaceScreenshotTest.kt").readText()
 
         // Scan the fixture only — everything above this guard. Including the guard would match its own
