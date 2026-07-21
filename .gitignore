@@ -18,3 +18,11 @@ build/
 
 # Plugin Verifier reports (tools/verify-plugin.sh writes these into the CWD)
 verification-*/
+
+# Business-internal working notes. The repo is public; these are not for it.
+#   SUBMISSION.md              — Marketplace vendor ID, trader status, publishing-token workflow
+#   ANTHROPIC-CLARIFICATION.md — an unsent draft to a third party
+# Both are kept locally. They were also purged from the git history on 2026-07-21, so there is no
+# copy left in this repository at all — do not re-add them.
+docs/SUBMISSION.md
+docs/ANTHROPIC-CLARIFICATION.md
