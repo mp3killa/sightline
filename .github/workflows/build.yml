@@ -42,11 +42,21 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # gradle.properties pins `org.gradle.java.home` to the local Android Studio JBR, because a
+      # developer's PATH java is typically 17 while the platform needs 21. That path does not exist on a
+      # runner and Gradle rejects it before any task runs. Override it with the JDK just installed.
+      # Keeping the pin in gradle.properties is deliberate — it is correct for the machine it describes.
+      #
+      # Computed in a step, not in `env:` above: JAVA_HOME is not known until setup-java has run, and
+      # GitHub does not shell-expand `env:` values.
+      - name: Point Gradle at the runner's JDK
+        run: echo "JDK_ARG=-Dorg.gradle.java.home=$JAVA_HOME" >> "$GITHUB_ENV"
+
       - name: Test
-        run: ./gradlew test $PLATFORM_ARGS
+        run: ./gradlew $JDK_ARG test $PLATFORM_ARGS
 
       - name: Build the plugin
-        run: ./gradlew buildPlugin $PLATFORM_ARGS
+        run: ./gradlew $JDK_ARG buildPlugin $PLATFORM_ARGS
 
       # The preview PNGs are the project's only automated visual channel (docs/TESTING.md). They are
       # written by the test task, not declared as task outputs, so they are collected here rather than
@@ -100,23 +110,25 @@ jobs:
       - name: Cache the verifier IDE
         uses: actions/cache@v4
         with:
-          path: ~/.cache/sightline-verify
+          path: /home/runner/.cache/sightline-verify
           key: verifier-ide-2025.3-cli-1.388
 
       # NOT `./gradlew verifyPlugin` — that task cannot resolve an IDE under IntelliJ Platform Gradle
       # Plugin 2.6.0 (it looks under group `idea` rather than `com.jetbrains.intellij.idea`). The
       # script fetches the correct coordinate and runs the same verifier CLI. See its header.
+      # GRADLE_ARGS is built inside the run block rather than in `env:` so that $JAVA_HOME expands —
+      # the script makes its own buildPlugin call and needs both the platform target and the JDK.
       - name: Verify against the sinceBuild floor
         env:
-          VERIFY_WORK_DIR: ~/.cache/sightline-verify
-          GRADLE_ARGS: "-PplatformType=AI -PplatformVersion=2025.3.1.1"
-        run: tools/verify-plugin.sh
+          VERIFY_WORK_DIR: /home/runner/.cache/sightline-verify
+        run: |
+          GRADLE_ARGS="$PLATFORM_ARGS -Dorg.gradle.java.home=$JAVA_HOME" tools/verify-plugin.sh
 
       - name: Upload the verifier report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verifier-report
-          path: ~/.cache/sightline-verify/last-report.txt
+          path: /home/runner/.cache/sightline-verify/last-report.txt
           if-no-files-found: warn
           retention-days: 14
