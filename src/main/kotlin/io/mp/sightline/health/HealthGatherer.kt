@@ -35,6 +35,10 @@ class HealthGatherer(private val project: Project) {
     fun gather(session: SessionFacts): HealthInputs {
         val settings = ClaudeSettings.getInstance().state
         val configured = (settings.claudeCommand ?: "claude")
+        // A health check is the moment a user runs *because* something is wrong — often right after
+        // installing the CLI. Re-probe rather than reporting a cached miss they can no longer clear
+        // without restarting the IDE.
+        ClaudePathResolver.invalidate()
         val resolved = runCatching { ClaudePathResolver.resolve(configured) }.getOrNull()
         val (path, source) = classifyPath(configured, resolved)
         val version = path?.let { probeVersion(it) }

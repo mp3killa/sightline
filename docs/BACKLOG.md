@@ -7,6 +7,10 @@ see there for what exists, and [PROTOCOL.md](PROTOCOL.md) for CLI facts.
 
 Everything below is a **release gate**: the feature work is done.
 
+Scope: **engineering gates only.** The Marketplace listing checklist — vendor profile, trader status,
+licence field, publishing — is business-internal and lives in an untracked local sheet, not in this
+public repo. Its absence here does not mean it is done.
+
 Guiding principle: correctness logic lands as **platform-free, unit-tested** classes (mirroring
 `activity/`, `ui/state/`, `interaction/`), with thin Swing on top.
 
@@ -93,6 +97,14 @@ Verify:
   with `adb kill-server` mid-check). Then open a **non-Android** project and confirm the three rows are
   absent entirely rather than failing. The SDK path goes through the sanitiser, so **Copy report** must
   show it as `~/Library/Android/sdk`, never with the username.
+- **The `ide` bridge still connects** — one check that validates the owner-only `--mcp-config` change end
+  to end. Confirm `system/init.mcp_servers` reports `{"name":"ide","status":"connected"}`. The config is
+  now written to a temp file (`rw-------`) and passed by path rather than inline, because the inline form
+  put the bridge's auth token in the process arguments where another local user could read it. The path
+  form was verified against CLI 2.1.215 outside the IDE, but never from the plugin. Note the new failure
+  mode this introduces: if the file cannot be made owner-only Sightline **disables the bridge** rather
+  than falling back to the command line, and says so only in `idea.log` — so if `mcp_servers` has no
+  `ide` entry at all, look there first. Also confirm the temp file is **gone** after the CLI exits.
 - **Plain IntelliJ IDEA degradation** — the core claim of docs/ANDROID.md §1.1. Install the built zip in an
   IntelliJ IDEA **without** the Android plugin: the plugin must load with no errors, and the "Build variant"
   Health row must read WARN ("expected outside Android Studio"), never FAIL or a stack trace. This is the
@@ -108,53 +120,3 @@ Verify:
   must *cancel* the send, not proceed. Confirm the mode-specific sentence changes with the mode chip,
   and that switching to **Unrestricted** shows the blunt wording in the warning colour. Then confirm it
   never appears again, including after an upgrade.
-
-## Marketplace listing submission
-
-Repository scaffolding is done: proprietary `LICENSE` (EULA), `THIRD_PARTY_NOTICES.md` + `licenses/`,
-`PRIVACY.md`, `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `docs/DATA-FLOW.md`,
-`docs/PERMISSIONS.md`. Plugin identity is `io.mp.sightline` / **Sightline** / `0.1.0-beta`, and the
-listing description, change-notes, copyright line and independence disclaimer are in `plugin.xml`.
-
-**Licence settled 2026-07-20: source-available** (`LICENSE` = Sightline Source-Available Licence v1.0).
-Not open source, so the Marketplace OSS route and its public-source-link requirement do not apply — but
-a Developer EULA does, and `LICENSE` is it. Publishing the repo is now a *choice* rather than an
-obligation, and the licence is written to work either way:
-
-**Still to do, and all of it needs a human:**
-
-1. ~~**Settle the Anthropic position.**~~ **Parked 2026-07-20 (user decision).** Their docs were
-   reviewed and say nothing that restricts a wrapper of this shape; if anything they encourage
-   integrations. The draft in `docs/ANTHROPIC-CLARIFICATION.md` is kept unsent in case the position
-   changes or the listing draws a query. The wording rule stands regardless, because it is accurate:
-   describe Sightline as *requiring a user-managed Claude Code installation*, never as *providing
-   Claude access*.
-2. **Vendor profile + trader status.** The Vendor ID cannot be changed later. Do not tick non-trader
-   reflexively — JetBrains does not decide it on whether money changes hands, and this plugin is close
-   to professional work. Trader contact details are shown publicly, so use a dedicated support address,
-   not a personal inbox.
-3. **Supply the licence as the Developer EULA during submission.** `LICENSE` is written to serve as
-   one; JetBrains is explicitly not a party to it (clause 18). Do **not** select an open-source licence
-   option on the listing — source-available is not open source, and mislabelling it is both inaccurate
-   and a plausible review rejection.
-4. ~~**Decide whether to make the repository public.**~~ **Done 2026-07-20 — it is public**, at
-   https://github.com/mp3killa/sightline. That makes the audit claims in `SECURITY.md` and
-   `docs/DATA-FLOW.md` true rather than aspirational. GitHub reports the licence as *Other /
-   NOASSERTION*, which is correct and wanted: source-available is not OSI-approved and must never be
-   badged as though it were. **If the repo ever goes private again**, those two documents have to
-   revert to behavioural-verification wording — that version is in the 2026-07-20 history.
-4. ~~**A Marketplace icon**~~ — **done.** `META-INF/pluginIcon.svg` (+ `_dark`) is an aperture formed
-   from graph nodes with one highlighted line of sight, built as geometry rather than traced so it
-   holds up at 16px and at listing size. The tool-window stripe icon (`icons/sightline.svg`) is a
-   deliberately reduced version — twenty nodes smudge at 13px, so it keeps only what carries the
-   identity: the lens silhouette, the pupil, and the sight line. The accent token was retoned from the
-   old warm orange to the icon's teal; that orange was close enough to Anthropic's palette to read as
-   their branding on a plugin that is explicitly not theirs.
-5. ~~**Four screenshots**~~ — **generated.** `./gradlew test --tests "*MarketplaceScreenshotTest*"
-   --rerun-tasks` writes `build/marketplace/0{1..4}-*.png` at 1280×800, driven through the production
-   event path so they show what the plugin actually renders. Content is a **fictional** app
-   (`com.example.routes`) — a guard test asserts no real project, client, path or address appears,
-   because a listing image is public permanently and cannot be quietly corrected later. Regenerate
-   after any UI change; **look at them** before uploading.
-6. **The compatibility claim.** The listing should say *tested on Android Studio*; it is verified
-   compatible with IntelliJ IDEA 2025.3 but has not been exercised there (see the plain-IDEA item above).

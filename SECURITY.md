@@ -58,8 +58,10 @@ What Sightline adds on top:
 Sightline runs a WebSocket server so the CLI can ask about your editor.
 
 - **Loopback only.** Bound to `127.0.0.1` on an ephemeral port. Not reachable from another machine.
-- **Authenticated.** A 16-byte random token is generated per session and required in the handshake;
-  a connection without it is closed immediately.
+- **Authenticated.** A 16-byte random token is generated per session and required in the handshake.
+  A connection without it is closed *and* marked unauthenticated, so any frame already queued behind
+  the close is dropped rather than served — closing a WebSocket only asks the peer to leave, so the
+  close alone was never the gate.
 - **Discoverable only locally.** The port and token go in `~/.claude/ide/<port>.lock`, which is
   created with owner-only read permission.
 - **Nothing else listens.** Sightline opens no other socket and makes no outbound requests of its own.
@@ -68,6 +70,13 @@ Known limitation: any process running as **your user** can read that lock file a
 same trust boundary the official Claude Code IDE integrations use, but it is a real boundary — a
 hostile process already running as you can reach the bridge. It cannot be closed without a
 fundamentally different design.
+
+The token is **not** passed on the CLI's command line. `--mcp-config` is given the path to a temp file
+created owner-only (`rw-------`) *before* the token is written to it, and deleted when the process
+exits. Process arguments are readable by other users on most systems, so the inline form would have let
+a different local user on a shared machine read the token and reach the bridge — a wider boundary than
+the owner-only lock file. If the file cannot be created with owner-only permission, Sightline disables
+the bridge for that session rather than falling back to the command line.
 
 ## Path access
 

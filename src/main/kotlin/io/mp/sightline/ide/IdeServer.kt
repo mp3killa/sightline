@@ -42,7 +42,6 @@ import org.java_websocket.server.WebSocketServer
 import java.awt.Dimension
 import java.io.File
 import java.net.InetSocketAddress
-import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import javax.swing.JComponent
@@ -96,6 +95,10 @@ class IdeServer(private val project: Project) : Disposable {
 
     private companion object {
         const val DIFF_TIMEOUT_MINUTES = 10L
+        const val START_TIMEOUT_MS = 5_000L
+
+        /** Connection attachment marking a handshake that presented the right token. */
+        val AUTHENTICATED = Any()
     }
 
     private fun projectRoots(): List<String> {
@@ -122,12 +125,17 @@ class IdeServer(private val project: Project) : Disposable {
 
     private fun start() {
         authToken = randomHex(16)
-        val freePort = ServerSocket(0).use { it.localPort }
-        val s = Srv(InetSocketAddress("127.0.0.1", freePort))
-        s.isReuseAddr = true
+        // Bind port 0 and let the OS pick, then read back the port the server actually bound. Probing
+        // with a throwaway ServerSocket first and re-binding the number leaves a window in which another
+        // process can take it — and `isReuseAddr` widens that window rather than closing it.
+        val s = Srv(InetSocketAddress("127.0.0.1", 0))
         s.start()
+        if (!s.awaitStart(START_TIMEOUT_MS)) {
+            s.stop()
+            throw IllegalStateException("ide server did not bind within ${START_TIMEOUT_MS}ms")
+        }
         server = s
-        port = freePort
+        port = s.boundPort
         writeLockFile()
         EditorFactory.getInstance().eventMulticaster.addSelectionListener(object : SelectionListener {
             override fun selectionChanged(e: SelectionEvent) {
@@ -163,18 +171,36 @@ class IdeServer(private val project: Project) : Disposable {
     // ---------- websocket server ----------
 
     private inner class Srv(addr: InetSocketAddress) : WebSocketServer(addr) {
+        private val started = java.util.concurrent.CountDownLatch(1)
+
+        /** The port the server actually bound, valid once [awaitStart] returns true. */
+        val boundPort: Int get() = super.getPort()
+
+        fun awaitStart(timeoutMs: Long): Boolean =
+            started.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) && boundPort > 0
+
         override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
             val token = handshake.getFieldValue("x-claude-code-ide-authorization")
             if (token != authToken) {
                 conn.close(1008, "unauthorized")
+                return
             }
+            // Mark the connection authenticated. `close()` only *asks* the peer to go away — frames
+            // already queued on this connection still arrive at onMessage — so refusing the token has
+            // to leave a fact behind that the message path can check, not just initiate a close.
+            conn.setAttachment(AUTHENTICATED)
         }
         override fun onClose(conn: WebSocket?, code: Int, reason: String?, remote: Boolean) {}
         override fun onMessage(conn: WebSocket, message: String) {
+            if (conn.getAttachment<Any?>() !== AUTHENTICATED) {
+                thisLogger().warn("ide: dropped a message from an unauthenticated connection")
+                conn.close(1008, "unauthorized")
+                return
+            }
             try { handle(conn, message) } catch (e: Exception) { thisLogger().warn("ide message error", e) }
         }
         override fun onError(conn: WebSocket?, ex: Exception) { thisLogger().warn("ide ws error", ex) }
-        override fun onStart() {}
+        override fun onStart() { started.countDown() }
     }
 
     private fun broadcast(text: String) {
@@ -271,8 +297,8 @@ class IdeServer(private val project: Project) : Disposable {
             JsonObject().apply { add("uri", JsonObject().apply { addProperty("type", "string") }) }))
         tools.add(tool("openFile", "Open a file in the editor"))
         tools.add(tool("openDiff", "Open a diff view for proposed changes (blocking)"))
-        tools.add(tool("close_tab", "Close a tab by name"))
-        tools.add(tool("closeAllDiffTabs", "Close all diff tabs"))
+        tools.add(tool("close_tab", "Close an open editor tab by name. Reports a failure if no tab matches."))
+        tools.add(tool("closeAllDiffTabs", "Close all diff tabs. This IDE reviews diffs in a modal dialog, not a tab, so the count is always 0."))
         tools.add(tool("checkDocumentDirty", "Check whether a document has unsaved changes"))
         tools.add(tool("saveDocument", "Save a document"))
         androidTools.addToolDefs(tools) // no-op unless the Android features are on
@@ -291,8 +317,8 @@ class IdeServer(private val project: Project) : Disposable {
         "getDiagnostics" -> getDiagnostics(args)
         "openFile" -> openFile(args)
         "openDiff" -> openDiff(args)
-        "close_tab" -> "TAB_CLOSED"
-        "closeAllDiffTabs" -> "CLOSED_0_DIFF_TABS"
+        "close_tab" -> closeTab(args)
+        "closeAllDiffTabs" -> closeAllDiffTabs()
         "checkDocumentDirty" -> checkDirty(args)
         "saveDocument" -> saveDoc(args)
         else -> fail("Unknown tool: $name")
@@ -459,6 +485,32 @@ class IdeServer(private val project: Project) : Disposable {
         } ?: false
         return if (ok) "Opened file: $path" else fail("Could not open: $path")
     }
+
+    /**
+     * Closes an open editor tab by name. [tab_name] is matched against the file name first and the
+     * full path second, which is how the CLI refers to a tab it asked us to open.
+     *
+     * Returns `TAB_CLOSED` only when a tab was actually closed. A miss reports the miss: the previous
+     * implementation returned the success string unconditionally without closing anything, which told
+     * the model an action had happened that never did.
+     */
+    private fun closeTab(args: JsonObject): String {
+        val name = args.str("tab_name")?.takeIf { it.isNotBlank() } ?: return fail("tab_name required")
+        val closed = onEdt {
+            val fem = FileEditorManager.getInstance(project)
+            val match = fem.openFiles.firstOrNull { it.name == name } ?: fem.openFiles.firstOrNull { it.path == name }
+            if (match != null) { fem.closeFile(match); true } else false
+        } ?: false
+        return if (closed) "TAB_CLOSED" else fail("No open tab named \"$name\"")
+    }
+
+    /**
+     * Sightline reviews diffs in a modal dialog rather than an editor tab (see [showDiffDialog]), so a
+     * diff never outlives its dialog and there is genuinely never anything here to close. The count is
+     * therefore always zero — a true statement about this IDE integration rather than a stub, and the
+     * reason it is not implemented further.
+     */
+    private fun closeAllDiffTabs(): String = "CLOSED_0_DIFF_TABS"
 
     private fun openDiff(args: JsonObject): String {
         val oldPath = args.str("old_file_path")

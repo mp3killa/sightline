@@ -86,6 +86,7 @@ import io.mp.sightline.ui.markdown.MarkdownDocParser
 import io.mp.sightline.ui.state.CompletionSummary
 import io.mp.sightline.ui.state.ComposerModel
 import io.mp.sightline.ui.state.LayoutProfile
+import io.mp.sightline.ui.state.LineDiff
 import io.mp.sightline.ui.state.PermissionModes
 import io.mp.sightline.ui.state.ResponsiveLayout
 import io.mp.sightline.ui.state.ScrollFollow
@@ -337,6 +338,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val curToolJson = StringBuilder()
     private var target: StyledDocument? = null
     private var malformedEventCount = 0
+    private var permissionModeFallbackNoted = false
 
     // After a build/test/analysis command, its structured report files are read off-EDT for richer
     // results than the console gives. tool_use_id -> (command, start millis).
@@ -1223,20 +1225,50 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onPanel(o: JsonObject) {
         when (o.str("subtype")) {
-            "started" -> setRunning(true)
+            // A new process may be a new model, so the mode-fallback notice re-arms with each launch.
+            "started" -> { setRunning(true); permissionModeFallbackNoted = false }
             "cleared" -> clearAll()
             "config" -> applyConfigToUi()
             "error" -> { addInfo(o.str("text") ?: "Error", true); noteError(o.str("text") ?: "Error"); setRunning(false) }
-            "exited" -> { finalizeCurrent(); inAssistant = false; setRunning(false); val c = o.intOrNull("code"); if (c != null && c != 0) noteError("Claude exited (code $c)") }
-            "stderr" -> {}
+            "exited" -> {
+                finalizeCurrent(); inAssistant = false; setRunning(false)
+                val c = o.intOrNull("code")
+                if (c != null && c != 0) {
+                    // The CLI's own stderr is the only thing that explains an exit code — an expired
+                    // login, an unknown flag from extraArgs. Showing the code alone sends the user to
+                    // idea.log to find out what the plugin already had in hand.
+                    val why = o.str("text")?.takeIf { it.isNotBlank() }
+                    val msg = if (why != null) "Claude exited (code $c): ${why.lineSequence().last { l -> l.isNotBlank() }}" else "Claude exited (code $c)"
+                    addInfo(msg, true)
+                    noteError(msg)
+                }
+            }
         }
     }
 
     private fun onSystem(o: JsonObject) {
         when (o.str("subtype")) {
-            "init" -> setRunning(true)
+            "init" -> { setRunning(true); notePermissionModeFallback(o.str("permissionMode")) }
             "status" -> if (o.str("status") == "requesting") feed(interpreter.status("Thinking"))
         }
+    }
+
+    /**
+     * `--permission-mode auto` is model-gated: on a model that can't run the classifier the CLI
+     * **silently** falls back to `default` and only says so by echoing the mode back in `system/init`
+     * (docs/PROTOCOL.md §2). Left unreported, the mode chip claims a policy that isn't in force — the
+     * user believes routine actions are being auto-approved while every one of them is prompting, or
+     * worse, reads the chip as the reason something was allowed. Reported once per launch, not per turn.
+     */
+    private fun notePermissionModeFallback(reported: String?) {
+        if (reported.isNullOrBlank() || permissionModeFallbackNoted) return
+        val requested = (ClaudeSettings.getInstance().state.permissionMode ?: "").ifBlank { return }
+        if (reported == requested) return
+        permissionModeFallbackNoted = true
+        // Name an unrecognised mode by its raw CLI value rather than through byValue(), which falls back
+        // to `auto` — naming the wrong mode here would be the same class of error this notice exists for.
+        fun name(v: String) = PermissionModes.all.firstOrNull { it.value == v }?.shortName ?: v
+        addInfo("Claude is running in \"${name(reported)}\", not \"${name(requested)}\" — this model does not support that mode.", false)
     }
 
     private fun onStream(ev: JsonObject) {
@@ -1382,7 +1414,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val shown = rows.take(DiffPresentation.visibleRows(rows.size, expanded = false))
         for ((kind, text) in shown) {
             val style = when (kind) { "add" -> sDiffAdd; "del" -> sDiffDel; else -> sCode }
-            insert(when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " } + text + "\n", style)
+            insert(LineDiff.sign(kind) + text + "\n", style)
         }
         DiffPresentation.overflowText(DiffPresentation.overflow(rows.size, expanded = false))
             ?.let { insert("$it\n", sMuted) }
@@ -1445,7 +1477,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             "Edit" -> {
                 val path = inp.str("file_path")
                 summary = shortPath(path)
-                addEditOrText(card, path, listOf(lineDiff(inp.str("old_string") ?: "", inp.str("new_string") ?: "")), null)
+                addEditOrText(card, path, listOf(LineDiff.diff(inp.str("old_string") ?: "", inp.str("new_string") ?: "")), null)
             }
             "MultiEdit" -> {
                 val path = inp.str("file_path")
@@ -1455,14 +1487,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 // document made several edits to one file read as a single incoherent change.
                 val hunks = edits?.map { e ->
                     val eo = e.asJsonObject
-                    lineDiff(eo.str("old_string") ?: "", eo.str("new_string") ?: "")
+                    LineDiff.diff(eo.str("old_string") ?: "", eo.str("new_string") ?: "")
                 }.orEmpty()
                 addEditOrText(card, path, hunks, null)
             }
             "Write" -> {
                 val path = inp.str("file_path")
                 summary = shortPath(path)
-                addEditOrText(card, path, listOf(lineDiff("", inp.str("content") ?: "")), "New file")
+                addEditOrText(card, path, listOf(LineDiff.diff("", inp.str("content") ?: "")), "New file")
             }
             "Read" -> { summary = shortPath(inp.str("file_path")); insert(shortPath(inp.str("file_path")) + "\n", sMuted) }
             "Grep" -> { summary = inp.str("pattern") ?: ""; insert("pattern: " + (inp.str("pattern") ?: "") + "\n", sMuted); inp.str("path")?.let { insert("path: $it\n", sMuted) } }
@@ -1625,14 +1657,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     private fun resolvePermission() { statusModel.permissionResolved(); refreshStatus() }
-
-    private fun renderDiff(oldStr: String, newStr: String) {
-        for (r in lineDiff(oldStr, newStr)) {
-            val style = when (r.first) { "add" -> sDiffAdd; "del" -> sDiffDel; else -> sCode }
-            val sign = when (r.first) { "add" -> "+ "; "del" -> "- "; else -> "  " }
-            insert(sign + r.second + "\n", style)
-        }
-    }
 
     private fun insertMarkdown(src: String) {
         val fence = Regex("```[\\w+#.\\-]*\\n?([\\s\\S]*?)```")
@@ -1867,25 +1891,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             else if (el.isJsonObject && el.asJsonObject.has("text")) el.asJsonObject.str("text") ?: "" else ""
         }
         return e.toString()
-    }
-
-    private fun lineDiff(aStr: String, bStr: String): List<Pair<String, String>> {
-        val a = aStr.split("\n"); val b = bStr.split("\n")
-        val n = a.size; val m = b.size
-        if (n.toLong() * m > 400_000L) return a.map { "del" to it } + b.map { "add" to it }
-        val dp = Array(n + 1) { IntArray(m + 1) }
-        for (i in n - 1 downTo 0) for (j in m - 1 downTo 0)
-            dp[i][j] = if (a[i] == b[j]) dp[i + 1][j + 1] + 1 else maxOf(dp[i + 1][j], dp[i][j + 1])
-        val out = ArrayList<Pair<String, String>>()
-        var i = 0; var j = 0
-        while (i < n && j < m) {
-            if (a[i] == b[j]) { out.add("ctx" to a[i]); i++; j++ }
-            else if (dp[i + 1][j] >= dp[i][j + 1]) { out.add("del" to a[i]); i++ }
-            else { out.add("add" to b[j]); j++ }
-        }
-        while (i < n) out.add("del" to a[i++])
-        while (j < m) out.add("add" to b[j++])
-        return out
     }
 
     private fun JsonObject.str(k: String): String? = if (has(k) && get(k).isJsonPrimitive) get(k).asString else null
@@ -2373,7 +2378,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             val doc = pane.styledDocument
             for ((kind, text) in rs) {
                 val style = when (kind) { "add" -> sDiffAdd; "del" -> sDiffDel; else -> sCode }
-                val sign = when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " }
+                val sign = LineDiff.sign(kind)
                 try { doc.insertString(doc.length, sign + text + "\n", style) } catch (e: BadLocationException) { /* drop */ }
             }
             return pane
@@ -2415,7 +2420,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun unifiedText(): String = buildString {
             path?.let { append("--- ").append(it).append('\n') }
             for ((kind, text) in rows) {
-                append(when (kind) { "add" -> "+ "; "del" -> "- "; else -> "  " }).append(text).append('\n')
+                append(LineDiff.sign(kind)).append(text).append('\n')
             }
         }
     }

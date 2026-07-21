@@ -22,9 +22,13 @@ and the version was reset to reflect that. Sightline is **source-available** sof
 - File edits render as a diff — unified or side-by-side by available width — before they apply.
 - Structured `AskUserQuestion` support: radio, checkbox and free-text, rather than raw JSON.
 - Messages sent mid-turn are queued rather than silently dropped.
+- When the CLI exits unexpectedly, its own error text is shown alongside the exit code, rather than
+  leaving a bare number and the IDE log as the only way to find out why.
 
 ### Permissions and safety
-- Five permission modes, with `auto` as the default.
+- Five permission modes, with `auto` as the default. `auto` requires a capable model, and if the CLI
+  quietly falls back to a different mode Sightline says so rather than letting the mode chip claim a
+  policy that is not in force.
 - Inline Allow / Allow-always / Deny before a tool runs. A denial is recorded as a denial, never as
   an error, and a denied edit never renders as though it happened.
 - `PathAccessPolicy` refuses credential and IDE-internal locations outright and requires explicit

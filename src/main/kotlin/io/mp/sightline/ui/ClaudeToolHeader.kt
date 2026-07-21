@@ -110,7 +110,7 @@ class ClaudeToolHeader(
 
     /** Coarse session state shown as a semantic dot + short label. */
     fun setSessionState(kind: StatusKind, label: String) {
-        stateDot.color = colorFor(kind)
+        stateDot.color = ClaudeUiTokens.statusColor(kind)
         stateDot.repaint()
         stateLabel.text = label
     }
@@ -124,15 +124,6 @@ class ClaudeToolHeader(
         revalidate(); repaint()
     }
 
-    private fun colorFor(kind: StatusKind): Color = when (kind) {
-        StatusKind.READY -> ClaudeUiTokens.textSecondary()
-        StatusKind.WORKING, StatusKind.RUNNING -> ClaudeUiTokens.accent()
-        StatusKind.READING, StatusKind.SEARCHING, StatusKind.TESTING -> ClaudeUiTokens.info()
-        StatusKind.EDITING -> ClaudeUiTokens.warning()
-        StatusKind.SUCCESS, StatusKind.COMPLETED -> ClaudeUiTokens.success()
-        StatusKind.WARNING, StatusKind.PERMISSION -> ClaudeUiTokens.warning()
-        StatusKind.ERROR -> ClaudeUiTokens.error()
-    }
 
     private class StateDot : JPanel() {
         var color: Color = ClaudeUiTokens.textSecondary()

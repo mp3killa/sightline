@@ -104,6 +104,7 @@ Two places, both before data can leave:
 | Settings | `sightline.xml` | Until uninstall |
 | Android cache *(opt-in)* | `.sightline/` | Until deleted; capped and versioned |
 | Bridge lock | `~/.claude/ide/<port>.lock` | Until the IDE closes |
+| Bridge MCP config *(owner-only)* | A temp file, `rw-------` | Deleted when the CLI process exits |
 | Diagnostics | `idea.log` | IDE log rotation |
 
 Nothing in the first two rows is ever written to disk. That is a

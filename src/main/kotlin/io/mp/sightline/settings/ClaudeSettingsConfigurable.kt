@@ -151,7 +151,12 @@ class ClaudeSettingsConfigurable : Configurable {
     }
 
     override fun isModified(): Boolean = dialog?.isModified() ?: false
-    override fun apply() { dialog?.apply() }
+    override fun apply() {
+        dialog?.apply()
+        // The command may have changed, and the resolver caches a miss for the session — so a user who
+        // just installed the CLI and pointed us at it would otherwise still get the stale answer.
+        io.mp.sightline.process.ClaudePathResolver.invalidate()
+    }
     override fun reset() { dialog?.reset() }
     override fun disposeUIResources() { dialog = null }
 }

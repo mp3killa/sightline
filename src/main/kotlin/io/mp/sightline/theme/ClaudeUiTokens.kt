@@ -4,6 +4,7 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import io.mp.sightline.ui.state.StatusKind
 import java.awt.Color
 
 /**
@@ -73,6 +74,23 @@ object ClaudeUiTokens {
         Color(c.red, c.green, c.blue, (alpha.coerceIn(0f, 1f) * 255).toInt())
 
     fun isDark(c: Color = panel()): Boolean = (c.red * 0.299 + c.green * 0.587 + c.blue * 0.114) < 128
+
+    /**
+     * The colour a session state is drawn in — the header's state dot and the status strip's.
+     *
+     * Both used to carry their own identical copy of this mapping, which is one edit away from the two
+     * disagreeing about what, say, PERMISSION looks like while both still compiling. Semantic
+     * colour belongs to the token layer for the same reason the raw hexes do.
+     */
+    fun statusColor(kind: StatusKind): Color = when (kind) {
+        StatusKind.READY -> textSecondary()
+        StatusKind.WORKING, StatusKind.RUNNING -> accent()
+        StatusKind.READING, StatusKind.SEARCHING, StatusKind.TESTING -> info()
+        StatusKind.EDITING -> warning()
+        StatusKind.SUCCESS, StatusKind.COMPLETED -> success()
+        StatusKind.WARNING, StatusKind.PERMISSION -> warning()
+        StatusKind.ERROR -> error()
+    }
 
     private fun clamp(v: Int) = if (v < 0) 0 else if (v > 255) 255 else v
 }

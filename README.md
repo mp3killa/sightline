@@ -52,13 +52,13 @@ stock Android Studio runtime.
 Installable zip:
 
 ```
-build/distributions/sightline-for-claude-code-0.6.0.zip
+build/distributions/sightline-0.1.0-beta.zip
 ```
 
 ## Install into Android Studio
 
 1. **Settings → Plugins → ⚙ → Install Plugin from Disk…**
-2. Choose `build/distributions/sightline-for-claude-code-0.6.0.zip`
+2. Choose `build/distributions/sightline-0.1.0-beta.zip`
 3. Restart the IDE.
 4. Open the **Sightline** tool window on the right edge and start chatting.
 

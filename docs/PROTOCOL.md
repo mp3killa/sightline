@@ -113,6 +113,11 @@ The CLI talks to an in-IDE **WebSocket MCP** server (MCP spec 2025-03-26 over ws
   {"mcpServers":{"ide":{"type":"ws","url":"ws://127.0.0.1:<port>",
      "headers":{"x-claude-code-ide-authorization":"<token>"}}}}
   ```
+  **Pass this as a file path, not a literal.** `--mcp-config` accepts either ("Load MCP servers from
+  JSON files or strings"); verified against 2.1.215 by pointing it at a file and confirming
+  `system/init.mcp_servers` listed `ide` (as `failed`, since the port was dead — proof the file was read
+  and parsed, not ignored). The literal form puts the auth token in the process arguments, which other
+  local users can read. Sightline writes an owner-only temp file and passes its path.
   Then the CLI connects, does the MCP handshake, and `system/init.mcp_servers` includes
   `{"name":"ide","status":"connected"}` (verified). Name it exactly **`ide`** for the CLI's special
   handling (auto-selection context, `openDiff` for edits when `diffTool=auto`).
@@ -141,7 +146,10 @@ project sweep; returns `{available,files:[{path,problems:[{severity,message,line
 **`openDiff`** (`{old_file_path,new_file_path,new_file_contents,tab_name}` → **blocking**; returns
 `"FILE_SAVED"` on accept / `"DIFF_REJECTED"` on reject; the IDE writes the file on accept. Guarded by
 `PathAccessPolicy`: sensitive targets are refused; writes outside the project require a second confirm),
-`close_tab` (`"TAB_CLOSED"`), `closeAllDiffTabs` (`"CLOSED_<n>_DIFF_TABS"`),
+`close_tab` (`{tab_name}` → `"TAB_CLOSED"` **only if a tab actually matched and closed**; otherwise a
+failure naming the tab. Matches the file name first, then the full path),
+`closeAllDiffTabs` (`"CLOSED_0_DIFF_TABS"` — always zero here, and truthfully so: Sightline reviews a
+diff in a **modal dialog**, not an editor tab, so one never outlives its dialog),
 `checkDocumentDirty`, `saveDocument`, `executeCode` (Jupyter — N/A here).
 Naming: camelCase except `close_tab`. Reference:
 <https://github.com/coder/claudecode.nvim/blob/main/PROTOCOL.md>.

@@ -62,7 +62,7 @@ class ClaudeStatusStrip(parent: Disposable) : JPanel(BorderLayout()), Disposable
 
     fun update(v: StatusView, meta: String?) {
         view = v
-        dot.color = colorFor(v.kind)
+        dot.color = ClaudeUiTokens.statusColor(v.kind)
         dot.animated = v.animated
         primary.text = v.primary.ifBlank { " " }
         primary.foreground = if (v.kind == StatusKind.ERROR) ClaudeUiTokens.error() else ClaudeUiTokens.textPrimary()
@@ -73,15 +73,6 @@ class ClaudeStatusStrip(parent: Disposable) : JPanel(BorderLayout()), Disposable
         dot.repaint()
     }
 
-    private fun colorFor(kind: StatusKind): Color = when (kind) {
-        StatusKind.READY -> ClaudeUiTokens.textSecondary()
-        StatusKind.WORKING, StatusKind.RUNNING -> ClaudeUiTokens.accent()
-        StatusKind.READING, StatusKind.SEARCHING, StatusKind.TESTING -> ClaudeUiTokens.info()
-        StatusKind.EDITING -> ClaudeUiTokens.warning()
-        StatusKind.SUCCESS, StatusKind.COMPLETED -> ClaudeUiTokens.success()
-        StatusKind.WARNING, StatusKind.PERMISSION -> ClaudeUiTokens.warning()
-        StatusKind.ERROR -> ClaudeUiTokens.error()
-    }
 
     override fun dispose() { pulse.stop() }
 
