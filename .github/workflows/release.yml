@@ -35,16 +35,16 @@ jobs:
       contents: write # to create the GitHub release
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # gradle.properties pins `org.gradle.java.home` to the local Android Studio JBR, because a
       # developer's PATH java is typically 17 while the platform needs 21. That path does not exist on a
@@ -90,10 +90,17 @@ jobs:
       - name: Build the plugin
         run: ./gradlew $JDK_ARG buildPlugin $PLATFORM_ARGS
 
+      # Only the extracted IDE and the verifier jar — not the 620 MB zip, which is redundant once
+      # extracted and would roughly double the cache entry. `verify-plugin.sh` looks for `build.txt` to
+      # decide whether to download, so a hit skips both the download and the unzip. No `restore-keys`:
+      # the key pins exact IDE and verifier versions, and a fuzzy restore would verify against a
+      # different IDE than this job claims to check.
       - name: Cache the verifier IDE
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: /home/runner/.cache/sightline-verify
+          path: |
+            /home/runner/.cache/sightline-verify/ideaIC-2025.3
+            /home/runner/.cache/sightline-verify/verifier-cli-1.388.jar
           key: verifier-ide-2025.3-cli-1.388
 
       # A Marketplace review runs the verifier too. Failing here costs a re-tag; failing there costs a
@@ -129,7 +136,7 @@ jobs:
 
       - name: Attach the artifact to a GitHub release
         if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/distributions/*.zip
           generate_release_notes: true
@@ -139,7 +146,7 @@ jobs:
 
       - name: Upload the artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sightline-plugin
           path: build/distributions/*.zip
