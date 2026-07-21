@@ -16,6 +16,22 @@ plugins {
 group = "io.mp"
 version = "0.1.0-beta"
 
+// The Marketplace channel is derived from the version, never chosen by hand. A pre-release suffix
+// publishes to its own channel, which users opt into by adding a repository URL; only a bare version
+// reaches the default (stable) channel that everyone browsing the Marketplace sees.
+//
+// This is a safety property, not a convenience: Sightline runs commands and edits code, and the
+// interactive paths that stop it doing so are not yet human-tested. A release must not reach stable
+// because someone forgot a flag. To ship stable, drop the suffix from `version` above — a deliberate,
+// reviewable edit.
+val releaseChannel: String = when {
+    version.toString().contains("-eap") -> "eap"
+    version.toString().contains("-alpha") -> "alpha"
+    version.toString().contains("-beta") -> "beta"
+    version.toString().contains("-rc") -> "rc"
+    else -> "default"
+}
+
 repositories {
     mavenCentral()
     intellijPlatform {
@@ -25,13 +41,23 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        // Build against your installed Android Studio: exact API match, no multi-GB download,
-        // and `runIde` launches that same build. See README for the alternatives below.
-        local("/Applications/Android Studio.app")
-
-        // --- Alternatives: comment out local() above and uncomment ONE of these ---
-        // androidStudio("2026.1.4")        // download a specific Android Studio build
-        // create("IC", "2026.1")           // or IntelliJ IDEA Community
+        // Default: build against your installed Android Studio — exact API match, no multi-GB
+        // download, and `runIde` launches that same build.
+        //
+        // CI has no IDE installed and the local one is a preview build that is not downloadable, so
+        // the target is switchable without editing this file:
+        //
+        //   ./gradlew build -PplatformType=IC -PplatformVersion=2025.3
+        //
+        // Passing both properties selects a downloadable platform; passing neither uses the local
+        // install. `-PlocalIde=/path` overrides where that install is, for a non-default location.
+        val platformType = providers.gradleProperty("platformType").orNull
+        val platformVersion = providers.gradleProperty("platformVersion").orNull
+        if (platformType != null && platformVersion != null) {
+            create(platformType, platformVersion)
+        } else {
+            local(providers.gradleProperty("localIde").orNull ?: "/Applications/Android Studio.app")
+        }
 
         // The platform test framework: needed so the `test` task's JVM (which the plugin decorates
         // with a platform file-system bootstrap arg) can start. Our tests are plain JUnit4 unit
@@ -91,7 +117,30 @@ intellijPlatform {
     // instance and is flaky against a local() Android Studio. Settings search still works.
     buildSearchableOptions = false
 
+    // Marketplace publishing. Both credentials come from the environment and neither has a default:
+    // an absent token must fail the publish, not silently produce an unauthenticated attempt.
+    //
+    // PUBLISH_TOKEN — a Marketplace permanent token (Profile → My Tokens).
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+        channels = listOf(releaseChannel)
+    }
+
+    // Plugin signing. JetBrains recommends it and the Marketplace shows a signed badge; it is optional,
+    // and `signPlugin` is simply skipped when the key material is absent, so a fork or a local build
+    // needs no secrets. See docs/RELEASING.md for generating the chain and key.
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+
     pluginConfiguration {
+        // Single source of truth for the version: the Gradle `version` above. `patchPluginXml` writes it
+        // into the artifact's descriptor, so plugin.xml deliberately carries no <version> element —
+        // when it did, the two could disagree and the descriptor silently won.
+        version = project.version.toString()
+
         ideaVersion {
             // Floor = the latest *released* IntelliJ platform (2025.3 / build 253) rather than the local
             // Android Studio's preview build 261: 253 is downloadable for the Plugin Verifier and gives the
@@ -129,6 +178,18 @@ intellijPlatform {
             }
         }
     }
+}
+
+// Read by the release workflow so CI never re-derives either fact with its own string handling — the
+// build is the single source, and a second parser is a second thing that can disagree with it.
+tasks.register("printVersion") {
+    val v = project.version.toString()
+    doLast { println(v) }
+}
+
+tasks.register("printReleaseChannel") {
+    val c = releaseChannel
+    doLast { println(c) }
 }
 
 tasks.withType<RunIdeTask>().configureEach {

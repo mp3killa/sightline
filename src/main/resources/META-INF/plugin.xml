@@ -1,7 +1,8 @@
 <idea-plugin>
     <id>io.mp.sightline</id>
     <name>Sightline</name>
-    <version>0.1.0-beta</version>
+    <!-- No <version> here on purpose: build.gradle.kts is the single source and `patchPluginXml`
+         writes it into the built descriptor. Two copies could disagree, and this one would win. -->
     <vendor email="support@cxk.co.za" url="https://cxk.co.za">Michael Carroll</vendor>
 
     <description><![CDATA[

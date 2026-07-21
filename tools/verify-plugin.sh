@@ -20,6 +20,11 @@
 #   tools/verify-plugin.sh                 # verify against the default IDE below
 #   IDE_VERSION=2025.3 tools/verify-plugin.sh
 #
+#   # CI has no Android Studio installed, so the platform target must reach the build:
+#   GRADLE_ARGS="-PplatformType=AI -PplatformVersion=2025.3.1.1" tools/verify-plugin.sh
+#
+#   SKIP_BUILD=1 tools/verify-plugin.sh    # verify an artifact a previous step already built
+#
 set -euo pipefail
 
 # Must match `sinceBuild` in build.gradle.kts — that is the floor the listing claims to support, so it
@@ -46,8 +51,14 @@ VERIFIER_JAR="$WORK/verifier-cli-$VERIFIER_VERSION.jar"
 IDE_ZIP="$WORK/ideaIC-$IDE_VERSION.zip"
 IDE_DIR="$WORK/ideaIC-$IDE_VERSION"
 
-echo "==> Building the plugin"
-( cd "$ROOT" && ./gradlew buildPlugin -q )
+if [[ -n "${SKIP_BUILD:-}" ]]; then
+  echo "==> Skipping build (SKIP_BUILD set); verifying the existing artifact"
+else
+  echo "==> Building the plugin"
+  # GRADLE_ARGS is unquoted on purpose: it carries multiple flags that must split into separate words.
+  # shellcheck disable=SC2086
+  ( cd "$ROOT" && ./gradlew buildPlugin -q ${GRADLE_ARGS:-} )
+fi
 
 ARTIFACT="$(ls -t "$ROOT"/build/distributions/*.zip | head -1)"
 echo "    $ARTIFACT"
@@ -58,7 +69,15 @@ if [[ ! -f "$VERIFIER_JAR" ]]; then
     "https://repo1.maven.org/maven2/org/jetbrains/intellij/plugins/verifier-cli/$VERIFIER_VERSION/verifier-cli-$VERIFIER_VERSION-all.jar"
 fi
 
-if [[ ! -d "$IDE_DIR" ]]; then
+# Presence of the directory is NOT proof of a usable IDE: an interrupted unzip, a temp-dir sweep, or a
+# partially-restored CI cache all leave one behind. The verifier's own requirement is `build.txt`, and
+# without it the failure surfaces as "IDE ... is invalid" from deep inside the verifier rather than as
+# the incomplete extraction it actually is. Check for that file and re-extract if it is missing.
+if [[ ! -f "$IDE_DIR/build.txt" ]]; then
+  if [[ -d "$IDE_DIR" ]]; then
+    echo "==> $IDE_DIR is present but incomplete (no build.txt) — re-extracting"
+    rm -rf "$IDE_DIR"
+  fi
   if [[ ! -f "$IDE_ZIP" ]]; then
     echo "==> Downloading IntelliJ IDEA Community $IDE_VERSION (~620 MB, cached in $WORK)"
     # The coordinate the Gradle plugin gets wrong. Note the `com/jetbrains/intellij/idea` path.
@@ -67,7 +86,17 @@ if [[ ! -d "$IDE_DIR" ]]; then
   fi
   echo "==> Extracting"
   mkdir -p "$IDE_DIR"
-  unzip -q -o "$IDE_ZIP" -d "$IDE_DIR"
+  if ! unzip -q -o "$IDE_ZIP" -d "$IDE_DIR"; then
+    # A truncated download extracts partially and then fails here. Drop both so the next run refetches
+    # rather than looping on the same bad zip.
+    echo "Extraction failed — removing the cached zip and directory so the next run refetches." >&2
+    rm -rf "$IDE_DIR" "$IDE_ZIP"
+    exit 1
+  fi
+  if [[ ! -f "$IDE_DIR/build.txt" ]]; then
+    echo "Extracted $IDE_ZIP but $IDE_DIR/build.txt is still missing — the archive is not a usable IDE." >&2
+    exit 1
+  fi
 fi
 
 echo "==> Verifying against $(cat "$IDE_DIR/build.txt" 2>/dev/null || echo "$IDE_VERSION")"

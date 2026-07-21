@@ -142,6 +142,22 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew runIde                # sandbox AS with the plugin
 ```
 
+**CI / releasing — see [docs/RELEASING.md](docs/RELEASING.md).** `.github/workflows/build.yml` tests +
+verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things about it are load-bearing:
+- The platform target is **switchable** (`-PplatformType=AI -PplatformVersion=2025.3.1.1`) because a
+  runner has no local Android Studio. It must be **AI, not IC**: the compile classpath needs
+  `org.jetbrains.android`, and **IC does not bundle it** (it ships the unrelated `android-gradle-dsl`).
+  2025.3.1.1 is build 253 — the `sinceBuild` floor — so CI compiles against the oldest platform the
+  listing claims, and a newer-API slip fails the build instead of a user's IDE.
+- The Marketplace **channel is derived from the version suffix**, never chosen: `-beta` → the opt-in
+  beta channel, a bare version → **stable, everyone**. Shipping stable is a deliberate edit to `version`,
+  not a workflow input, because the interactive safety paths are still human-untested.
+- **`version` lives only in `build.gradle.kts`.** `plugin.xml` carries no `<version>` — `patchPluginXml`
+  writes it in. Two copies could disagree and the descriptor would silently win.
+
+**The first Marketplace upload cannot be automated** — JetBrains has no API for creating a *new*
+listing. The pipeline publishes subsequent versions only.
+
 Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the zip → restart.
 
 ## Build gotchas (each cost real debugging)

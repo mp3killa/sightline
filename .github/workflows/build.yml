@@ -1,0 +1,122 @@
+name: Build
+
+# Every push to main and every pull request. This is the gate the release workflow assumes has
+# already passed — it does not re-litigate correctness, it re-runs it against the tagged commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The CI platform target. There is no Android Studio on a runner and `local()` cannot work, so the
+  # build resolves a downloadable one instead — see build.gradle.kts.
+  #
+  # Why Android Studio and not IntelliJ IDEA Community: the build needs `org.jetbrains.android` on the
+  # compile classpath for `ide/android/studio/StudioFactProvider`. **IC does not bundle it** — it ships
+  # `android-gradle-dsl`, which is a different plugin — so an IC target cannot compile this project.
+  # 2025.3.1.1 is build 253, which is also the `sinceBuild` floor, so CI compiles against the oldest
+  # platform the listing claims to support rather than against a newer one that would hide a break.
+  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2025.3.1.1"
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 21: the platform requires it, and the project compiles to JVM 21 targets.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Test
+        run: ./gradlew test $PLATFORM_ARGS
+
+      - name: Build the plugin
+        run: ./gradlew buildPlugin $PLATFORM_ARGS
+
+      # The preview PNGs are the project's only automated visual channel (docs/TESTING.md). They are
+      # written by the test task, not declared as task outputs, so they are collected here rather than
+      # asserted on — a human still has to look at them.
+      - name: Upload preview renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-renders
+          path: |
+            build/*.png
+            build/marketplace/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+          retention-days: 14
+
+      - name: Upload the plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sightline-plugin
+          path: build/distributions/*.zip
+          retention-days: 14
+
+  verify:
+    name: Plugin Verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The verifier downloads a ~620 MB IDE. Cached on the IDE version so it is fetched once, not
+      # once per run. `tools/verify-plugin.sh` honours VERIFY_WORK_DIR for exactly this.
+      - name: Cache the verifier IDE
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sightline-verify
+          key: verifier-ide-2025.3-cli-1.388
+
+      # NOT `./gradlew verifyPlugin` — that task cannot resolve an IDE under IntelliJ Platform Gradle
+      # Plugin 2.6.0 (it looks under group `idea` rather than `com.jetbrains.intellij.idea`). The
+      # script fetches the correct coordinate and runs the same verifier CLI. See its header.
+      - name: Verify against the sinceBuild floor
+        env:
+          VERIFY_WORK_DIR: ~/.cache/sightline-verify
+          GRADLE_ARGS: "-PplatformType=AI -PplatformVersion=2025.3.1.1"
+        run: tools/verify-plugin.sh
+
+      - name: Upload the verifier report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-report
+          path: ~/.cache/sightline-verify/last-report.txt
+          if-no-files-found: warn
+          retention-days: 14

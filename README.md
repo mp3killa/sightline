@@ -55,6 +55,15 @@ Installable zip:
 build/distributions/sightline-0.1.0-beta.zip
 ```
 
+CI builds without a local Android Studio by selecting a downloadable platform — the same command CI
+runs, if you want to reproduce it:
+
+```bash
+./gradlew test buildPlugin -PplatformType=AI -PplatformVersion=2025.3.1.1
+```
+
+Releasing is documented in [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Install into Android Studio
 
 1. **Settings → Plugins → ⚙ → Install Plugin from Disk…**
