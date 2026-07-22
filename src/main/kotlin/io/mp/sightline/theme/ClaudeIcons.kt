@@ -207,6 +207,20 @@ object ClaudeIcons {
         g.draw(line(s * 0.5f, s * 0.45f, s * 0.5f, s * 0.68f))
     }
 
+    /** The conventional copy glyph: a front sheet plus the exposed top/left edges of the one behind it. */
+    val copy = icon { g, s, c ->
+        g.color = c; g.stroke = stroke(s, 0.085f)
+        val r = s * 0.10f
+        // Back sheet: top and left edges only, so the front sheet reads as sitting on top of it.
+        val bp = GeneralPath()
+        bp.moveTo((s * 0.28f).toDouble(), (s * 0.62f).toDouble())
+        bp.lineTo((s * 0.28f).toDouble(), (s * 0.28f + r).toDouble())
+        bp.quadTo((s * 0.28f).toDouble(), (s * 0.28f).toDouble(), (s * 0.28f + r).toDouble(), (s * 0.28f).toDouble())
+        bp.lineTo((s * 0.62f).toDouble(), (s * 0.28f).toDouble())
+        g.draw(bp)
+        g.draw(RoundRectangle2D.Float(s * 0.40f, s * 0.40f, s * 0.42f, s * 0.42f, r, r))
+    }
+
     // ---- tool / node semantic icons ----
 
     val read = icon { g, s, c ->

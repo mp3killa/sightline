@@ -262,6 +262,7 @@ class BlockRenderer(
         val pane = JTextPane()
         pane.isEditable = false
         pane.isOpaque = false
+        pane.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
         pane.font = monoFont()
         pane.foreground = ClaudeUiTokens.textPrimary()
         pane.border = JBUI.Borders.emptyTop(4)
@@ -370,6 +371,9 @@ class BlockRenderer(
         pane.border = JBUI.Borders.empty()
         pane.font = font
         pane.foreground = ClaudeUiTokens.textPrimary()
+        // The pane is selectable, but nothing *said* so — an arrow cursor over prose reads as inert.
+        // installLinks refines this per-position (hand over a link) when the pane has links.
+        pane.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
         val doc = pane.styledDocument
         val links = ArrayList<LinkSpan>()
         val base = SimpleAttributeSet().apply {

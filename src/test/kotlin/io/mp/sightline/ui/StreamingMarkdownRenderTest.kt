@@ -79,6 +79,49 @@ class StreamingMarkdownRenderTest : BasePlatformTestCase() {
         assertTrue("the finalized message renders the closing prose", finalTexts.any { it.contains("Done.") })
     }
 
+    /**
+     * Rendered prose must be selectable with the mouse — simulated as real press/drag events on the
+     * pane, not `select()`, because the claim under test is the *mouse* path a user actually takes.
+     */
+    fun testRenderedProseIsMouseSelectable() {
+        val p = panel()
+        p.addUserMessageForPreview("say something selectable")
+        stream(p, """{"type":"message_start"}""")
+        stream(p, """{"type":"content_block_start","content_block":{"type":"text"}}""")
+        delta(p, "A plain sentence the user should be able to select with the cursor.")
+        stream(p, """{"type":"content_block_stop"}""")
+
+        p.component.setSize(700, 500)
+        fun layAll(c: Component) { if (c is Container) { c.doLayout(); c.components.forEach { layAll(it) } } }
+        layAll(p.component)
+        UIUtil.dispatchAllInvocationEvents()
+        layAll(p.component)
+
+        val pane = descendants(p.component).filterIsInstance<JTextPane>()
+            .first { it.document.getText(0, it.document.length).contains("plain sentence") }
+        assertTrue("the pane must have a real size to click in, got ${pane.size}", pane.width > 40 && pane.height > 5)
+        assertEquals(
+            "prose should advertise selectability with the text cursor",
+            java.awt.Cursor.TEXT_CURSOR,
+            pane.cursor.type,
+        )
+
+        val y = pane.height / 2
+        fun mouse(id: Int, x: Int) = java.awt.event.MouseEvent(
+            pane, id, System.currentTimeMillis(), java.awt.event.InputEvent.BUTTON1_DOWN_MASK,
+            x, y, 1, false, java.awt.event.MouseEvent.BUTTON1,
+        )
+        pane.dispatchEvent(mouse(java.awt.event.MouseEvent.MOUSE_PRESSED, 3))
+        pane.dispatchEvent(mouse(java.awt.event.MouseEvent.MOUSE_DRAGGED, pane.width - 5))
+        pane.dispatchEvent(mouse(java.awt.event.MouseEvent.MOUSE_RELEASED, pane.width - 5))
+        UIUtil.dispatchAllInvocationEvents()
+
+        assertTrue(
+            "a mouse drag across the pane must produce a selection, got [${pane.selectionStart}, ${pane.selectionEnd}]",
+            pane.selectionEnd > pane.selectionStart,
+        )
+    }
+
     /** Finished blocks keep their components across ticks — only the growing tail is rebuilt. */
     fun testFinishedBlocksAreNotRebuiltByLaterDeltas() {
         val p = panel()

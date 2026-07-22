@@ -135,7 +135,9 @@ parses it (`AskUserQuestionParser`), tracks selections (`QuestionFormState` — 
 checkbox for multi-select, plus a free-text **Other**), and builds the response
 (`AskUserQuestionResponseBuilder`: the original `questions` echoed back plus an `answers` object keyed by
 **full question text**, labels joined by `, `). `QuestionCoordinator` resolves it exactly once (UI or
-test bridge). Continue stays disabled until every question is answered; **Cancel** denies the request to
+test bridge). Each option renders as a **selectable card** (`OptionCard`): the whole rounded row is the
+click target, hover fills it, selection draws the accent border — the toggle button stays inside for
+accessibility and keyboard state, the card is presentation around it. Continue stays disabled until every question is answered; **Cancel** denies the request to
 unblock the turn (a valid option like "Skip" is a normal answer, never a denial). Status reads
 "Waiting for your answer", and the streamed tool card shows `Asked · <header or N questions>`, never JSON.
 

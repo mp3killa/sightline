@@ -80,6 +80,7 @@ import io.mp.sightline.settings.ClaudeSettingsConfigurable
 import io.mp.sightline.theme.ClaudeIcons
 import io.mp.sightline.theme.ClaudeUiTokens
 import io.mp.sightline.ui.components.EmptyStatePanel
+import io.mp.sightline.ui.components.IconActionButton
 import io.mp.sightline.ui.markdown.BlockRenderer
 import io.mp.sightline.ui.markdown.FileRefDetector
 import io.mp.sightline.ui.markdown.MarkdownDocParser
@@ -700,6 +701,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         p.isEditable = false; p.isOpaque = false
         p.border = JBUI.Borders.empty()
         p.font = UIUtil.getLabelFont()
+        // Selectable text should look selectable — the default arrow reads as inert chrome.
+        p.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
         return p
     }
 
@@ -1990,25 +1993,33 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private var summary = ProcessingSummary()
         private val summaryLabel = JBLabel("")
         private val summaryRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+        private val copiedLabel = JBLabel("Copied")
+        private val copyButton = IconActionButton(ClaudeIcons.copy.withSize(14), "Copy response (Markdown)") {
+            val text = markdownText()
+            if (text.isNotBlank()) {
+                copyToClipboard(text)
+                copiedLabel.isVisible = true
+                javax.swing.Timer(1200) { copiedLabel.isVisible = false }.apply { isRepeats = false }.start()
+            }
+        }
         init {
             layout = BorderLayout()
             border = JBUI.Borders.empty(2, 2, 6, 2)
             val role = JBLabel("Claude")
             role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat())
-            // Copy lives on the role line, a row that already exists — so revealing it on hover can
-            // never move the reply underneath it.
+            // Copy lives on the role line, a row that already exists — so it can never move the reply
+            // underneath it. It is a small always-visible icon rather than a hover reveal: "copy the
+            // whole response" is the affordance users actually hunt for, and one they could not find
+            // while it only existed on hover.
             val roleRow = JPanel(BorderLayout()); roleRow.isOpaque = false
             roleRow.border = JBUI.Borders.emptyBottom(3)
             roleRow.add(role, BorderLayout.WEST)
-            // Gated: a turn can be nothing but tool activity, and Copy would then yield an empty string.
-            roleRow.add(
-                hoverActions(
-                    this,
-                    "Copy" to { copyToClipboard(markdownText()) },
-                    enabled = { markdownText().isNotBlank() },
-                ),
-                BorderLayout.EAST,
-            )
+            copiedLabel.foreground = mutedFg()
+            copiedLabel.font = copiedLabel.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+            copiedLabel.isVisible = false
+            val copyGroup = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)); copyGroup.isOpaque = false
+            copyGroup.add(copiedLabel); copyGroup.add(copyButton)
+            roleRow.add(copyGroup, BorderLayout.EAST)
             add(roleRow, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
             add(body, BorderLayout.CENTER)
@@ -2081,7 +2092,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             body.add(fullWidth(footer))
             relayout()
         }
-        private fun refreshVisibility() { isVisible = showDetails || textCount > 0 }
+        private fun refreshVisibility() {
+            isVisible = showDetails || textCount > 0
+            // A turn can be nothing but tool activity; a copy control there would yield "".
+            copyButton.isVisible = body.components.any { it is TextBlock }
+        }
     }
 
     /**
@@ -2612,6 +2627,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); buttons.isOpaque = false
             if (request != null) {
                 continueBtn.isEnabled = false
+                continueBtn.font = continueBtn.font.deriveFont(Font.BOLD)
                 continueBtn.addActionListener { submit() }
                 buttons.add(continueBtn)
             }
@@ -2619,6 +2635,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             buttons.add(cancelBtn)
             decided.foreground = mutedFg()
             val south = JPanel(BorderLayout()); south.isOpaque = false
+            south.border = JBUI.Borders.emptyTop(4)
             south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
             add(south, BorderLayout.SOUTH)
         }
@@ -2629,9 +2646,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 q.header?.takeIf { it.isNotBlank() }?.let { qPanel.add(categoryLabel(it)) }
                 qPanel.add(leftLabel(plainArea(q.question)))
                 if (q.multiSelect) qPanel.add(leftLabel(italicMuted("Select all that apply")))
-                qPanel.add(Box.createVerticalStrut(JBUI.scale(3)))
+                qPanel.add(Box.createVerticalStrut(JBUI.scale(5)))
                 val group = if (q.multiSelect) null else ButtonGroup()
-                q.options.forEachIndexed { oi, opt -> qPanel.add(optionRow(qi, oi, opt, q.multiSelect, group)) }
+                q.options.forEachIndexed { oi, opt ->
+                    qPanel.add(optionRow(qi, oi, opt, q.multiSelect, group))
+                    qPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+                }
                 qPanel.add(otherRow(qi, q.multiSelect, group))
                 centerPanel.add(qPanel)
             }
@@ -2642,6 +2662,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             if (showDetails && !invalidReason.isNullOrBlank()) centerPanel.add(leftLabel(italicMuted(invalidReason)))
         }
 
+        /**
+         * One option as a **selectable card**: the whole rounded row is a click target with a hover
+         * fill and an accent border while selected, so choosing an option feels like picking from a
+         * list rather than hunting a 12px radio circle. The toggle button stays for accessibility
+         * (name, state, keyboard); the card is presentation around it.
+         */
         private fun optionRow(qi: Int, oi: Int, opt: UserQuestionOption, multi: Boolean, group: ButtonGroup?): JComponent {
             val f = form!!
             val button: JToggleButton = if (multi) JCheckBox(opt.label) else JRadioButton(opt.label)
@@ -2653,19 +2679,69 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 if (multi) f.select(qi, opt.label) else { f.select(qi, opt.label); syncOther(qi) }
                 updateContinue()
             }
+            val card = OptionCard { button.isSelected }
+            // Group-driven deselection (another radio chosen) repaints this card too — an action
+            // listener alone would only repaint the one that was clicked.
+            button.addItemListener { card.repaint() }
+            card.installHoverOn(button)
             val col = column(); col.add(leftLabel(button))
             opt.description?.takeIf { it.isNotBlank() }?.let {
                 val d = plainArea(it); d.foreground = mutedFg(); d.font = d.font.deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
                 d.border = JBUI.Borders.emptyLeft(22); d.cursor = hand; d.addMouseListener(click { button.doClick() })
+                card.installHoverOn(d)
                 col.add(leftLabel(d))
             }
             opt.preview?.takeIf { it.isNotBlank() }?.let {
                 val pv = plainArea(it); pv.foreground = mutedFg()
                 pv.font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(11.5f))
                 pv.border = JBUI.Borders.empty(2, 22, 2, 0)
+                pv.cursor = hand; pv.addMouseListener(click { button.doClick() })
+                card.installHoverOn(pv)
                 col.add(leftLabel(pv))
             }
-            return leftLabel(col)
+            card.add(col, BorderLayout.CENTER)
+            card.addMouseListener(click { button.doClick() })
+            card.installHoverOn(card)
+            return leftLabel(card)
+        }
+
+        /** The rounded, hover/selection-aware surface behind one option. */
+        private inner class OptionCard(private val selected: () -> Boolean) : JPanel(BorderLayout()) {
+            private var hovered = false
+            init {
+                isOpaque = false
+                cursor = hand
+                alignmentX = Component.LEFT_ALIGNMENT
+                border = JBUI.Borders.empty(6, 8)
+            }
+            /** Children with their own listeners steal enter/exit from the card; mirror hover from them. */
+            fun installHoverOn(c: Component) {
+                c.addMouseListener(object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) { if (!hovered) { hovered = true; repaint() } }
+                    override fun mouseExited(e: MouseEvent) {
+                        // Leaving a child for elsewhere *inside* the card is not leaving the card.
+                        val pt = SwingUtilities.convertPoint(e.component, e.point, this@OptionCard)
+                        if (!contains(pt)) { hovered = false; repaint() }
+                    }
+                })
+            }
+            override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
+            override fun paintComponent(g: Graphics) {
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = ClaudeUiTokens.radiusMd()
+                val sel = selected()
+                val fill = when {
+                    sel -> ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), 0.10f)
+                    hovered -> ClaudeUiTokens.subtleSurface()
+                    else -> null
+                }
+                fill?.let { g2.color = it; g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc) }
+                g2.color = if (sel) ClaudeUiTokens.accent() else ClaudeUiTokens.subtleBorder()
+                g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                g2.dispose()
+                super.paintComponent(g)
+            }
         }
 
         private fun otherRow(qi: Int, multi: Boolean, group: ButtonGroup?): JComponent {
