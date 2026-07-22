@@ -32,23 +32,26 @@ class WorkspaceModesTest {
         }
     }
 
-    // ---- effectiveMode: SPLIT is a wide-panel-only layout ----
+    // ---- effectiveMode: SPLIT is honoured wherever the split button is offered ----
 
-    @Test fun splitSurvivesOnlyOnAWidePanel() {
+    /**
+     * SPLIT engages wherever [ResponsiveLayout.allowSplit] shows the button (MEDIUM and up). The old
+     * WIDE-only gate left the split toggle visible on a typical docked panel while silently doing
+     * nothing — a dead control that read as a bug.
+     */
+    @Test fun splitSurvivesWhereverTheSplitButtonIsOffered() {
         assertEquals(WorkspaceMode.SPLIT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.WIDE))
-        assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.MEDIUM))
+        assertEquals(WorkspaceMode.SPLIT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.MEDIUM))
         assertEquals(WorkspaceMode.CHAT, WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.NARROW))
     }
 
     /** Regression: a cramped panel used to fall back to the *graph*, leaving no conversation at all. */
     @Test fun tooNarrowSplitFallsBackToChatNeverToActivity() {
-        for (p in listOf(LayoutProfile.NARROW, LayoutProfile.MEDIUM)) {
-            assertEquals(
-                "a demoted SPLIT must keep the conversation, not the graph",
-                WorkspaceMode.CHAT,
-                WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, p),
-            )
-        }
+        assertEquals(
+            "a demoted SPLIT must keep the conversation, not the graph",
+            WorkspaceMode.CHAT,
+            WorkspaceModes.effectiveMode(WorkspaceMode.SPLIT, LayoutProfile.NARROW),
+        )
     }
 
     @Test fun explicitChatOrActivityChoiceIsNeverOverridden() {

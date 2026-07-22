@@ -195,12 +195,34 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     }
 
     private fun buildHeader(): JComponent {
-        val header = JPanel(BorderLayout())
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)); right.isOpaque = false
+        val title = JBLabel("Activity")
+
+        /**
+         * BorderLayout places WEST and EAST at their preferred widths regardless of the room between
+         * them, so on a narrow *pane* — the map now lives in half a MEDIUM panel when the user splits —
+         * the node counter ran underneath the filter combo. Shedding happens in [doLayout], not a
+         * resize listener, for the same reason as [AndroidContextStrip]: a resize event needs a
+         * realised hierarchy, while doLayout always runs. Sheds lowest-value first (counter, then the
+         * wordmark title — the pane is inside the map, its identity is clear from context), and only
+         * flips visibility on an actual change so a layout pass can't re-enter itself.
+         */
+        val header = object : JPanel(BorderLayout()) {
+            private fun setShown(c: java.awt.Component, shown: Boolean) { if (c.isVisible != shown) c.isVisible = shown }
+            override fun doLayout() {
+                val avail = width - insets.left - insets.right
+                if (avail > 0) {
+                    fun overflows() = left.preferredSize.width + right.preferredSize.width > avail
+                    setShown(countLabel, true); setShown(title, true)
+                    if (overflows()) setShown(countLabel, false)
+                    if (overflows()) setShown(title, false)
+                }
+                super.doLayout()
+            }
+        }
         header.isOpaque = false
         header.border = JBUI.Borders.empty(4, 10, 4, 6)
-
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
-        val title = JBLabel("Activity")
         title.font = UIUtil.getLabelFont().deriveFont(Font.BOLD)
         title.foreground = ClaudeUiTokens.textPrimary()
         title.toolTipText = DISCLAIMER
@@ -216,7 +238,6 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         left.add(countLabel)
         header.add(left, BorderLayout.WEST)
 
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)); right.isOpaque = false
         filterCombo.toolTipText = "Filter which nodes are shown"
         filterCombo.addActionListener { ensurePositions(); refreshHeader(); canvas.repaint() }
         right.add(filterCombo)

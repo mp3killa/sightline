@@ -83,6 +83,8 @@ import io.mp.sightline.ui.components.EmptyStatePanel
 import io.mp.sightline.ui.markdown.BlockRenderer
 import io.mp.sightline.ui.markdown.FileRefDetector
 import io.mp.sightline.ui.markdown.MarkdownDocParser
+import io.mp.sightline.ui.markdown.MdBlock
+import io.mp.sightline.ui.markdown.StreamingMarkdown
 import io.mp.sightline.ui.state.CompletionSummary
 import io.mp.sightline.ui.state.ComposerModel
 import io.mp.sightline.ui.state.LayoutProfile
@@ -559,8 +561,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         lastProfile = profile
         header.applyProfile(profile)
         activityMap.applyProfile(profile)
-        // SPLIT only survives on a genuinely wide panel; below that the conversation wins. The
-        // preference is untouched, so widening restores the split.
+        // SPLIT survives wherever the split button is offered (MEDIUM and up); only NARROW demotes,
+        // and the preference is untouched, so widening restores the split.
         if (profileChanged) applyEffectiveMode()
         // Reading width is a property of the *chat column*, not the whole panel: in SPLIT the
         // transcript only gets its share of the width.
@@ -1072,6 +1074,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun installCenter() {
         centerHost.removeAll()
+        // Drop the splitter's component references *before* choosing a layout. CHAT and MAP steal
+        // these components from the splitter (Container.add reparents them silently), but
+        // Splitter.setFirstComponent/setSecondComponent no-op when handed the instance they still
+        // believe they own — so SPLIT → CHAT → SPLIT re-installed a splitter that never re-added
+        // the stolen pane, and one side of the split rendered as dead space while the header's
+        // split toggle claimed both views were on screen.
+        mapSplitter.firstComponent = null
+        mapSplitter.secondComponent = null
         when (viewMode) {
             ViewMode.CHAT -> centerHost.add(chatHost, BorderLayout.CENTER)
             ViewMode.MAP -> centerHost.add(activityMap.component, BorderLayout.CENTER)
@@ -1113,6 +1123,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         showEmptyState(false)
         addUserBubble(text, emptyList())
     }
+
+    /**
+     * Test-only: drives the same workspace switch the header controls do, so mode-transition
+     * regressions (e.g. a splitter pane lost on SPLIT → CHAT → SPLIT) are testable headlessly.
+     */
+    @TestOnly
+    internal fun setWorkspaceForTest(mode: WorkspaceMode) = setWorkspace(fromWorkspace(mode))
 
     /**
      * Test-only: pushes an Android context straight into the composer, bypassing the resolver.
@@ -1162,6 +1179,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Test-only: drives the same deferred scroll the streaming path uses. */
     @TestOnly
     internal fun scrollToBottomForTest() = scrollToBottomSoon()
+
+    /**
+     * Test-only: the chat/map splitter itself. The activity map contains its *own* JBSplitter, so a
+     * tree search cannot distinguish them — mode-transition tests need the real instance to assert
+     * its panes were genuinely (re)installed.
+     */
+    @TestOnly
+    internal fun chatMapSplitterForTest(): JBSplitter = mapSplitter
+
+    /**
+     * Test-only: runs the current text block's pending live render tick now. Deltas after the first
+     * coalesce behind a wall-clock timer ([StreamingMarkdown.TICK_MS]); a test asserting mid-stream
+     * rendering flushes that tick deterministically instead of sleeping through it.
+     */
+    @TestOnly
+    internal fun flushStreamingRenderForTest() { curText?.flushLive() }
 
     /** Test-only: simulates the user dragging the scrollbar up, away from the live end. */
     @TestOnly
@@ -2052,10 +2085,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     /**
-     * A streamed assistant text block. While tokens arrive it shows plain styled text in [stream]; on
-     * `content_block_stop` (finalize) it parses the completed Markdown and swaps to a rendered component
-     * tree ([blocks]). Any parser/renderer failure falls back to the previous regex renderer, so a
-     * malformed or half-formed message is always readable — the response is never dropped.
+     * A streamed assistant text block, rendered as **Markdown while it streams**. Each delta re-parses
+     * the accumulated text on a coalescing tick ([StreamingMarkdown.TICK_MS]) and rebuilds only the
+     * blocks that actually changed — [StreamingMarkdown.stablePrefix] keeps every finished block's
+     * component, so a tick costs one parse plus the growing tail block, and formatting appears as it
+     * arrives instead of at `content_block_stop`. Live ticks skip file-reference linkification (it
+     * queries the project index per candidate); the finalize pass runs the full pipeline, links
+     * included, exactly as the pre-live renderer did.
+     *
+     * Failure never drops the response: a live parse/render failure falls back to plain streamed text
+     * ([stream]) for the rest of the stream, and finalize retries the full render with the old
+     * regex-renderer fallback behind it.
      */
     private inner class TextBlock : Block() {
         /** The original Markdown, which is what "Copy" should yield — not the rendered text. */
@@ -2064,6 +2104,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val blocks = JPanel()
         private val sb = StringBuilder()
         private var showingBlocks = false
+        /** The model [blocks] currently renders — the baseline the next tick diffs against. */
+        private var renderedModel: List<MdBlock> = emptyList()
+        /** Set when a live tick failed; streaming then stays plain text until finalize retries. */
+        private var liveBroken = false
+        private var dirty = false
+        private val liveTimer = javax.swing.Timer(StreamingMarkdown.TICK_MS) { liveTick() }.apply { isRepeats = false }
         init {
             layout = BorderLayout()
             blocks.layout = BoxLayout(blocks, BoxLayout.Y_AXIS); blocks.isOpaque = false; blocks.alignmentX = Component.LEFT_ALIGNMENT
@@ -2071,10 +2117,48 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         fun append(t: String) {
             sb.append(t)
-            if (showingBlocks) { showStream(); insStream(sb.toString()) } else insStream(t)
+            if (liveBroken) { insStream(t); scrollToBottomSoon(); return }
+            dirty = true
+            // First delta renders immediately (the message shows formatted from its first tokens);
+            // while the timer runs, further deltas coalesce into the next tick.
+            if (!liveTimer.isRunning) liveTick()
             scrollToBottomSoon()
         }
-        fun finalizeMarkdown() = renderMarkdown(sb.toString())
+        private fun liveTick() {
+            if (!dirty) return
+            dirty = false
+            renderLive()
+            liveTimer.initialDelay = StreamingMarkdown.tickMs(sb.length)
+            liveTimer.restart()
+        }
+        /** Test seam: render any coalesced-but-unrendered deltas now (see [flushStreamingRenderForTest]). */
+        fun flushLive() {
+            if (liveBroken) return
+            liveTimer.stop()
+            if (dirty) { dirty = false; renderLive() }
+        }
+        private fun renderLive() {
+            try {
+                val model = MarkdownDocParser.parse(sb.toString())
+                val stable = StreamingMarkdown.stablePrefix(renderedModel, model)
+                while (blocks.componentCount > stable) blocks.remove(blocks.componentCount - 1)
+                markdownRenderer.render(model.subList(stable, model.size)).forEach { blocks.add(fullWidth(it)) }
+                renderedModel = model
+                if (!showingBlocks) { remove(stream); add(blocks, BorderLayout.CENTER); showingBlocks = true }
+                relayout()
+            } catch (e: Exception) {
+                // Fail once, stay plain for the rest of the stream — retrying a failing parse on
+                // every tick would burn the EDT for nothing. Finalize retries the full pipeline.
+                thisLogger().warn("Live Markdown render failed (${e.javaClass.simpleName}); streaming plain text")
+                liveBroken = true
+                showStream(); insStream(sb.toString())
+                relayout()
+            }
+        }
+        fun finalizeMarkdown() {
+            liveTimer.stop(); dirty = false; liveBroken = false
+            renderMarkdown(sb.toString())
+        }
         fun setMarkdown(t: String) { sb.setLength(0); sb.append(t); renderMarkdown(t) }
 
         private fun renderMarkdown(raw: String) {
@@ -2083,16 +2167,21 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val comps = markdownRenderer.render(model)
                 blocks.removeAll()
                 comps.forEach { blocks.add(fullWidth(it)) }
+                renderedModel = model
                 if (!showingBlocks) { remove(stream); add(blocks, BorderLayout.CENTER); showingBlocks = true }
                 relayout()
             } catch (e: Exception) {
                 thisLogger().warn("Markdown render failed (${e.javaClass.simpleName}); showing plain text")
                 if (showingBlocks) showStream()
+                blocks.removeAll(); renderedModel = emptyList()
                 clearStream(); target = stream.styledDocument; insertMarkdown(raw); target = null
                 relayout()
             }
         }
-        private fun showStream() { remove(blocks); add(stream, BorderLayout.CENTER); showingBlocks = false; clearStream() }
+        private fun showStream() {
+            remove(blocks); add(stream, BorderLayout.CENTER); showingBlocks = false; clearStream()
+            blocks.removeAll(); renderedModel = emptyList()
+        }
         private fun clearStream() { try { stream.styledDocument.remove(0, stream.styledDocument.length) } catch (e: Exception) {} }
         private fun insStream(t: String) { try { stream.styledDocument.insertString(stream.styledDocument.length, t, sNormal) } catch (e: BadLocationException) {} }
     }

@@ -13,6 +13,7 @@ import io.mp.sightline.android.ModuleContext
 import io.mp.sightline.settings.ClaudeSettings
 import io.mp.sightline.ui.components.ContextChip
 import io.mp.sightline.ui.state.ResponsiveLayout
+import io.mp.sightline.ui.state.WorkspaceMode
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
@@ -32,7 +33,7 @@ import javax.swing.JComponent
  *
  * Alongside the images it asserts the layout invariants Tier 1 fixed, so a regression fails the build
  * rather than waiting to be noticed in a picture:
- *  - SPLIT is demoted to CHAT below the WIDE breakpoint (never to the graph-only view)
+ *  - SPLIT is demoted to CHAT on a NARROW panel (never to the graph-only view)
  *  - the demotion does not rewrite the persisted preference
  *  - the transcript is centred within a readable column once there is room
  *
@@ -41,9 +42,9 @@ import javax.swing.JComponent
 class ChatLayoutPreviewTest : BasePlatformTestCase() {
 
     private val widths = listOf(
-        "narrow" to 420,   // below ResponsiveLayout.NARROW_MAX
+        "narrow" to 420,   // below ResponsiveLayout.NARROW_MAX — the only width that demotes SPLIT
         "medium" to 720,   // between the breakpoints
-        "wide" to 1400,    // above MEDIUM_MAX — the only width that may split
+        "wide" to 1400,    // above MEDIUM_MAX
     )
 
     private fun panel(): ClaudePanel = ClaudePanel(project, testRootDisposable)
@@ -205,38 +206,79 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
     }
 
     /**
-     * The Tier 1 invariant: at a width that cannot carry two panes, the conversation survives.
-     * Before the fix a narrow panel fell back to the *graph*, leaving no transcript at all.
+     * The Tier 1 invariant, narrowed to where it belongs: at a width that genuinely cannot carry
+     * two panes, the conversation survives. Before the fix a narrow panel fell back to the *graph*,
+     * leaving no transcript at all. MEDIUM no longer demotes — the split button is offered there,
+     * and a visible control that silently does nothing reads as a bug.
      */
-    fun testNarrowAndMediumPanelsKeepTheConversation() {
-        val settings = ClaudeSettings.getInstance().state
-        for (w in listOf(420, 720)) {
-            settings.showActivityMap = true
-            settings.activityViewMode = "split"
-            val p = panel()
-            layoutTree(p.component, w, 900)
-
-            assertFalse(
-                "at ${w}px the two-pane split must be demoted so the conversation gets the width",
-                isSplit(p.component),
-            )
-            assertEquals(
-                "a width-driven demotion must not rewrite the user's preference",
-                "split",
-                ClaudeSettings.getInstance().state.activityViewMode,
-            )
-        }
-    }
-
-    /** A wide panel is the one case where the split is a sensible default. */
-    fun testWidePanelHonoursTheSplitPreference() {
+    fun testNarrowPanelsKeepTheConversation() {
         val settings = ClaudeSettings.getInstance().state
         settings.showActivityMap = true
         settings.activityViewMode = "split"
         val p = panel()
+        layoutTree(p.component, 420, 900)
+
+        assertFalse(
+            "at 420px the two-pane split must be demoted so the conversation gets the width",
+            isSplit(p.component),
+        )
+        assertEquals(
+            "a width-driven demotion must not rewrite the user's preference",
+            "split",
+            ClaudeSettings.getInstance().state.activityViewMode,
+        )
+    }
+
+    /** SPLIT engages wherever the split button is offered — MEDIUM and WIDE alike. */
+    fun testMediumAndWidePanelsHonourTheSplitPreference() {
+        val settings = ClaudeSettings.getInstance().state
+        for (w in listOf(720, 1400)) {
+            settings.showActivityMap = true
+            settings.activityViewMode = "split"
+            val p = panel()
+            layoutTree(p.component, w, 900)
+            assertEquals("split", ClaudeSettings.getInstance().state.activityViewMode)
+            assertTrue("a ${w}px panel should honour the split preference", isSplit(p.component))
+        }
+    }
+
+    /**
+     * Regression: Splitter.setFirstComponent no-ops when handed the instance it still believes it
+     * owns, but CHAT/MAP steal the panes from the splitter (Container.add reparents). So
+     * SPLIT → CHAT → SPLIT re-installed a splitter that never re-added the chat pane — the header's
+     * split toggle lit up while only one view rendered. Both round trips must restore both panes.
+     */
+    fun testReenteringSplitRestoresBothPanes() {
+        val settings = ClaudeSettings.getInstance().state
+        settings.showActivityMap = true
+        settings.activityViewMode = "split"
+        val p = panel()
+        seedTranscript(p)
         layoutTree(p.component, 1400, 900)
-        assertEquals("split", ClaudeSettings.getInstance().state.activityViewMode)
-        assertTrue("a wide panel should still honour the split preference", isSplit(p.component))
+
+        // The activity map holds its own internal JBSplitter, so identify the chat/map splitter by
+        // instance — a tree search cannot tell them apart.
+        val s = p.chatMapSplitterForTest()
+        fun assertBothPanes(leg: String) {
+            assertNotNull("[$leg] the splitter should be installed", s.parent)
+            val first = s.firstComponent
+            val second = s.secondComponent
+            assertNotNull("[$leg] the chat pane must be present", first)
+            assertNotNull("[$leg] the map pane must be present", second)
+            assertSame("[$leg] the chat pane must actually be a child of the splitter", s, first.parent)
+            assertSame("[$leg] the map pane must actually be a child of the splitter", s, second.parent)
+        }
+
+        assertBothPanes("initial split")
+
+        for (detour in listOf(WorkspaceMode.CHAT, WorkspaceMode.ACTIVITY)) {
+            p.setWorkspaceForTest(detour)
+            UIUtil.dispatchAllInvocationEvents()
+            assertNull("in ${detour.name} the chat/map splitter should be uninstalled", s.parent)
+            p.setWorkspaceForTest(WorkspaceMode.SPLIT)
+            UIUtil.dispatchAllInvocationEvents()
+            assertBothPanes("split after ${detour.name}")
+        }
     }
 
     private fun descendants(root: Component): List<Component> {
