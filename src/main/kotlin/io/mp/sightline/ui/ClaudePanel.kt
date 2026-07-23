@@ -1843,7 +1843,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun refreshStatus() {
         val view = statusModel.view
         // Live model name while working; nothing extra once done (run metadata lives in the turn footer).
-        val meta = if (running) modelLabel() else null
+        // The health layer rides alongside as muted right-aligned meta — a recovered command failure is
+        // reported here, deliberately kept off the primary status line so it can't pin the agent red.
+        val health = statusModel.health()
+        val healthChip = if (running && health.recoveredFailures > 0) {
+            val n = health.recoveredFailures
+            "$n recovered ${if (n == 1) "failure" else "failures"}"
+        } else null
+        val meta = listOfNotNull(if (running) modelLabel().takeIf { it.isNotBlank() } else null, healthChip)
+            .joinToString("   ·   ").takeIf { it.isNotBlank() }
         statusStrip.update(view, meta)
         header.setSessionState(coarseKind(view), coarseLabel(view))
         uiState.sessionState = if (approvalCoordinator.hasPending()) "WAITING_FOR_APPROVAL" else view.kind.name

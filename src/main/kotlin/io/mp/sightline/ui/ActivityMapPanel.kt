@@ -26,6 +26,12 @@ import io.mp.sightline.activity.ActivityNode
 import io.mp.sightline.activity.ActivityNodeState
 import io.mp.sightline.activity.ActivityNodeType
 import io.mp.sightline.activity.EvidenceSource
+import io.mp.sightline.activity.GraphLens
+import io.mp.sightline.activity.NodeGlyph
+import io.mp.sightline.activity.TYPE_LEGEND
+import io.mp.sightline.activity.arrowhead
+import io.mp.sightline.activity.glyphFor
+import io.mp.sightline.activity.glyphShape
 import io.mp.sightline.activity.AgentActivityEvent
 import io.mp.sightline.activity.TimelineEntry
 import io.mp.sightline.settings.ClaudeSettings
@@ -96,7 +102,10 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
 
     private val liveDot = JBLabel()
     private val countLabel = JBLabel(" ")
-    private val filterCombo = javax.swing.JComboBox(Filter.values())
+    // The graph "mode" picker — a lens selects which nodes *and edges* to show (activity/GraphLens),
+    // e.g. "Data flow" (imports/produced) vs "Problems" (errors + affected files). A lens only ever
+    // *selects* from what the graph established; it can never invent a node or edge.
+    private val lensCombo = javax.swing.JComboBox(GraphLens.ALL.toTypedArray())
     private lateinit var fitButton: IconActionButton
     private lateinit var pauseButton: IconActionButton
     private lateinit var overflowButton: IconActionButton
@@ -112,24 +121,14 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     private var reduceMotion = ClaudeSettings.getInstance().state.activityReduceMotion
     // Session-only view toggle: fold finished command/test/gradle history into its clusters to declutter.
     private var collapseHistory = false
+    // Persistent shape key drawn in the canvas corner, so the map is decodable without opening a menu.
+    private var showLegendKey = true
     // Aggregate ids the user expanded in place (their folded members are shown again). Cleared with the toggle.
     private val expandedAggregates = LinkedHashSet<String>()
     private var profile = LayoutProfile.MEDIUM
 
     private val timer = Timer(33) { step() }
     private val dashedStroke = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 4f, floatArrayOf(4f, 4f), 0f)
-
-    private enum class Filter(val label: String, val pred: (ActivityNode) -> Boolean) {
-        ALL("All activity", { true }),
-        FILES("Files", { it.type == ActivityNodeType.FILE || it.type == ActivityNodeType.COMPOSABLE || it.type == ActivityNodeType.VIEW_MODEL || it.type == ActivityNodeType.REPOSITORY || it.type == ActivityNodeType.USE_CASE || it.type == ActivityNodeType.API_ENDPOINT || it.type == ActivityNodeType.CLASS }),
-        EDITS("Edits", { it.type == ActivityNodeType.PATCH || it.state.name in setOf("EDITING", "CREATED", "DELETED") }),
-        TESTS("Tests", { it.type == ActivityNodeType.TEST }),
-        BUILDS("Builds", { it.type == ActivityNodeType.GRADLE_TASK || it.type == ActivityNodeType.COMMAND }),
-        ERRORS("Errors", { it.type == ActivityNodeType.ERROR || it.type == ActivityNodeType.WARNING }),
-        SYMBOLS("Symbols", { it.type == ActivityNodeType.SYMBOL }),
-        ;
-        override fun toString() = label
-    }
 
     init {
         Disposer.register(parent, this)
@@ -238,9 +237,20 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         left.add(countLabel)
         header.add(left, BorderLayout.WEST)
 
-        filterCombo.toolTipText = "Filter which nodes are shown"
-        filterCombo.addActionListener { ensurePositions(); refreshHeader(); canvas.repaint() }
-        right.add(filterCombo)
+        // Render each lens as its label, with the one-line description as the row tooltip so the mode's
+        // purpose is discoverable in the dropdown itself, not buried.
+        lensCombo.renderer = object : com.intellij.ui.SimpleListCellRenderer<GraphLens>() {
+            override fun customize(list: javax.swing.JList<out GraphLens>, value: GraphLens?, index: Int, selected: Boolean, hasFocus: Boolean) {
+                text = value?.label ?: ""
+                toolTipText = value?.description
+            }
+        }
+        lensCombo.toolTipText = GraphLens.EVERYTHING.description
+        lensCombo.addActionListener {
+            lensCombo.toolTipText = currentLens().description
+            ensurePositions(); refreshHeader(); canvas.repaint()
+        }
+        right.add(lensCombo)
         fitButton = IconActionButton(ClaudeIcons.fit, "Fit graph to view") { fit() }
         right.add(fitButton)
         pauseButton = IconActionButton(ClaudeIcons.pause, "Pause layout animation") { togglePause() }
@@ -262,6 +272,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         val group = com.intellij.openapi.actionSystem.DefaultActionGroup()
         group.add(toggle("Reduce motion", reduceMotion) { setReduceMotion(!reduceMotion) })
         group.add(toggle("Collapse finished history", collapseHistory) { setCollapseHistory(!collapseHistory) })
+        group.add(toggle("Show legend key", showLegendKey) { showLegendKey = !showLegendKey; canvas.repaint() })
         group.add(action("Legend…") { showLegend(anchor) })
         group.add(action("About the Activity Map…") { showAbout(anchor) })
         group.add(com.intellij.openapi.actionSystem.Separator.getInstance())
@@ -360,7 +371,7 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             row.add(dot); row.add(text)
             panel.add(row)
         }
-        val hint = JBLabel("State drives node colour; brightness fades with recency. Failed nodes keep a red ring.")
+        val hint = JBLabel("<html>Shape shows the kind of node (file, command, test, warning, error); colour shows state,<br>fading with recency. Failed nodes keep a red ring.</html>")
         hint.foreground = ClaudeUiTokens.textSecondary()
         hint.font = hint.font.deriveFont(Font.ITALIC, JBUI.scaleFontSize(10.5f).toFloat())
         hint.border = JBUI.Borders.emptyTop(4)
@@ -537,14 +548,22 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
         capOverride = next
         ensurePositions(); refreshHeader(); canvas.repaint()
     }
-    private fun currentFilter(): Filter = (filterCombo.selectedItem as? Filter) ?: Filter.ALL
+    private fun currentLens(): GraphLens = (lensCombo.selectedItem as? GraphLens) ?: GraphLens.EVERYTHING
 
     private fun visibleNodeIds(): Set<String> {
-        val filter = currentFilter()
+        val lens = currentLens()
         val all = graph.nodes.filter { !it.hidden }
-        val matched = all.filter { it.type == ActivityNodeType.TASK || it.type == ActivityNodeType.CATEGORY || filter.pred(it) }
+        // The lens decides which ordinary nodes show; the task/category spine passes only when the lens
+        // keeps it (a focused lens like "Data flow" drops the cluster hubs that would crowd the links).
+        val matched = all.filter { n ->
+            when (n.type) {
+                ActivityNodeType.TASK, ActivityNodeType.CATEGORY -> lens.keepCategorySpine
+                else -> lens.nodePredicate(n)
+            }
+        }
         val must = LinkedHashSet<String>()
-        must.add(ActivityGraph.TASK_ID)
+        // Keep the task root only when the lens keeps its spine; a focused lens shows a lone hub otherwise.
+        if (lens.keepCategorySpine) must.add(ActivityGraph.TASK_ID)
         graph.focus.nodeId?.let { must.add(it) }
         selectedId?.let { must.add(it) }
         // Fold finished command/test/gradle history into its clusters when the user turns collapse on;
@@ -869,9 +888,13 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             val now = Instant.now()
             val focusId = graph.focus.nodeId
 
-            // Edges: faded historical, stronger recent, error paths tinted.
+            // Edges: faded historical, stronger recent, error paths tinted. The active lens decides which
+            // relationship kinds are drawn (e.g. "Data flow" shows only imports/produced), on top of both
+            // endpoints being visible.
+            val lens = currentLens()
             for (e in graph.edges) {
                 if (e.sourceNodeId !in ids || e.targetNodeId !in ids) continue
+                if (!lens.edgePredicate(e)) continue
                 val a = positions[e.sourceNodeId] ?: continue
                 val b = positions[e.targetNodeId] ?: continue
                 val sa = worldToScreen(a); val sb = worldToScreen(b)
@@ -884,6 +907,16 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                 g2.color = withAlpha(base, alpha)
                 g2.stroke = if (seq) dashedStroke else BasicStroke((0.7 + fresh * 1.6 + if (onFocusPath) 0.6 else 0.0).toFloat())
                 g2.drawLine(sa.x, sa.y, sb.x, sb.y)
+                // Directional arrowhead so a relationship reads as a flow, not a bare line. Skip the
+                // CONTAINS spine (task→category→node containment is not a direction worth an arrow).
+                if (e.type.name != "CONTAINS") {
+                    val tr = radiusOf(graph.node(e.targetNodeId))
+                    val ah = (tr * 0.85).coerceIn(3.0, 8.0)
+                    arrowhead(sa.x.toDouble(), sa.y.toDouble(), sb.x.toDouble(), sb.y.toDouble(), tr, ah)?.let {
+                        g2.color = withAlpha(base, (alpha + 0.18f).coerceAtMost(0.9f))
+                        g2.fill(it)
+                    }
+                }
             }
             g2.stroke = BasicStroke(1f)
 
@@ -908,13 +941,17 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
                     g2.color = withAlpha(col, (fresh * 0.18).toFloat())
                     g2.fillOval((s.x - gr).toInt(), (s.y - gr).toInt(), (gr * 2).toInt(), (gr * 2).toInt())
                 }
-                // Category clusters: soft containing halo only.
+                // Category clusters: soft containing halo only. Everything else is drawn as its type
+                // glyph (shape encodes kind; colour + rings still encode state) so a file, a command, a
+                // test and an error are told apart without relying on colour alone.
+                val glyph = if (n.type == ActivityNodeType.CATEGORY || n.type == ActivityNodeType.TASK) NodeGlyph.CIRCLE else glyphFor(n.type)
+                val body = glyphShape(glyph, s.x.toDouble(), s.y.toDouble(), r)
                 val bodyAlpha = (0.4 + fresh * 0.5).toFloat().coerceIn(0.4f, 1f)
                 g2.color = if (n.type == ActivityNodeType.CATEGORY) withAlpha(col, 0.14f) else withAlpha(col, bodyAlpha)
-                g2.fillOval((s.x - r).toInt(), (s.y - r).toInt(), (r * 2).toInt(), (r * 2).toInt())
+                g2.fill(body)
                 g2.color = withAlpha(col, if (low) 0.5f else 0.9f)
                 g2.stroke = if (low) dashedStroke else BasicStroke(1.2f)
-                g2.drawOval((s.x - r).toInt(), (s.y - r).toInt(), (r * 2).toInt(), (r * 2).toInt())
+                g2.draw(body)
                 g2.stroke = BasicStroke(1f)
 
                 if (n.type == ActivityNodeType.TASK) {
@@ -993,7 +1030,49 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
             drawLabels(g2, pendingLabels)
             drawAggregateChips(g2, ids)
             drawFocusOverlay(g2)
+            drawLegendKey(g2)
             g2.dispose()
+        }
+
+        /**
+         * A compact, persistent shape key in the bottom-right corner: the node shapes and what they mean,
+         * plus a reminder that colour carries state. Answers the review's "colours have no visible legend"
+         * without the busy full colour-role list (that stays in the overflow "Legend…" popup). Suppressed
+         * on a canvas too small to spare the room, and toggleable from the overflow menu.
+         */
+        private fun drawLegendKey(g2: Graphics2D) {
+            if (!showLegendKey) return
+            if (height < JBUI.scale(180) || width < JBUI.scale(260)) return
+            val font = UIUtil.getLabelFont().deriveFont(JBUIScale.scale(10.5f))
+            g2.font = font
+            val fm = g2.fontMetrics
+            val footer = "Colour shows state"
+            val rowH = fm.height + JBUI.scale(3)
+            val glyphR = JBUI.scale(6)
+            val padX = JBUI.scale(9); val padY = JBUI.scale(8); val gap = JBUI.scale(7)
+            val textW = maxOf(TYPE_LEGEND.maxOf { fm.stringWidth(it.second) }, fm.stringWidth(footer))
+            val w = padX * 2 + glyphR * 2 + gap + textW
+            val h = padY * 2 + rowH * TYPE_LEGEND.size + JBUI.scale(4) + fm.height
+            val x = width - w - JBUI.scale(10)
+            val y = height - h - JBUI.scale(10)
+            g2.color = withAlpha(ClaudeUiTokens.overlaySurface(), 0.9f)
+            g2.fillRoundRect(x, y, w, h, JBUI.scale(10), JBUI.scale(10))
+            g2.color = withAlpha(ClaudeUiTokens.border(), 0.9f)
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(x, y, w, h, JBUI.scale(10), JBUI.scale(10))
+            val gx = x + padX + glyphR
+            var cy = y + padY + glyphR
+            for ((glyph, label) in TYPE_LEGEND) {
+                val shape = glyphShape(glyph, gx.toDouble(), cy.toDouble(), glyphR.toDouble())
+                g2.color = withAlpha(ClaudeUiTokens.textSecondary(), 0.30f); g2.fill(shape)
+                g2.color = withAlpha(ClaudeUiTokens.textSecondary(), 0.9f)
+                g2.stroke = BasicStroke(1.1f); g2.draw(shape); g2.stroke = BasicStroke(1f)
+                g2.color = ClaudeUiTokens.textPrimary()
+                g2.drawString(label, x + padX + glyphR * 2 + gap, cy + fm.ascent / 2 - JBUI.scale(1))
+                cy += rowH
+            }
+            g2.color = ClaudeUiTokens.textSecondary()
+            g2.drawString(footer, x + padX, cy + fm.ascent / 2 - JBUI.scale(1))
         }
 
         /** A measured but not-yet-drawn node label, held until every node body is painted. */

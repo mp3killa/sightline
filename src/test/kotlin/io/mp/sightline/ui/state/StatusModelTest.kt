@@ -51,14 +51,37 @@ class StatusModelTest {
         assertEquals("3 steps", m.view.secondary)
     }
 
-    @Test fun errorOutranksToolActivityAndPersistsOverLaterTool() {
+    @Test fun recoveredCommandErrorIsShownThenYieldsToOngoingWork() {
+        // A single command failure is a recoverable health signal, not the run's verdict: it shows as
+        // a blip and is tallied, but the next real operation supersedes it — the status must not stay
+        // red while the agent keeps working (the trust bug this model exists to prevent).
         val m = model()
         m.taskStarted()
         m.apply(FileEdited("/a/X.kt", at = t))
         m.apply(ErrorObserved(null, "boom", t))
         assertEquals(StatusKind.ERROR, m.view.kind)
+        assertEquals(1, m.health().recoveredFailures)
         m.apply(FileRead("/a/Y.kt", at = t))
+        assertEquals(StatusKind.READING, m.view.kind)
+    }
+
+    @Test fun thinkingDoesNotBuryARecoveredError() {
+        // Only a real operation supersedes a recovered error — a trailing "Thinking" must not hide it
+        // before the user has a chance to see that something failed.
+        val m = model()
+        m.taskStarted()
+        m.apply(ErrorObserved(null, "boom", t))
+        m.apply(StatusUpdated("Thinking", null, t))
         assertEquals(StatusKind.ERROR, m.view.kind)
+    }
+
+    @Test fun healthTallyResetsOnNewTurn() {
+        val m = model()
+        m.taskStarted()
+        m.apply(ErrorObserved(null, "boom", t))
+        assertEquals(1, m.health().recoveredFailures)
+        m.taskStarted()
+        assertEquals(0, m.health().recoveredFailures)
     }
 
     @Test fun newerOutcomeReplacesOlderOutcome() {

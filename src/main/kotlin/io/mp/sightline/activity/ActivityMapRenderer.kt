@@ -71,6 +71,7 @@ object ActivityMapRenderer {
         val dashed = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 4f, floatArrayOf(5f, 5f), 0f)
 
         // Edges.
+        val nodeById = graph.nodes.associateBy { it.id }
         for (e in graph.edges) {
             val a = pos[e.sourceNodeId] ?: continue
             val b = pos[e.targetNodeId] ?: continue
@@ -78,6 +79,12 @@ object ActivityMapRenderer {
             g.color = if (e.type == ActivityEdgeType.AFFECTED_BY) alpha(color(ActivityColorRole.ERROR, dark), 150) else alpha(border, 150)
             g.stroke = if (seq) dashed else BasicStroke((0.8f + min(3f, e.weight)).coerceAtMost(3f))
             g.drawLine(sx(a), sy(a), sx(b), sy(b))
+            // Directional arrowhead (all but the containment spine), matching the live panel.
+            if (e.type != ActivityEdgeType.CONTAINS) {
+                val tr = (nodeById[e.targetNodeId]?.let { radius(it) } ?: 8).toDouble()
+                val ah = (tr * 0.85).coerceIn(3.0, 8.0)
+                arrowhead(sx(a).toDouble(), sy(a).toDouble(), sx(b).toDouble(), sy(b).toDouble(), tr, ah)?.let { g.fill(it) }
+            }
         }
         g.stroke = BasicStroke(1f)
 
@@ -96,10 +103,13 @@ object ActivityMapRenderer {
                 g.color = alpha(col, 160)
                 g.drawOval(x - r, y - r, r * 2, r * 2)
             } else {
+                // Shape encodes type (files, commands, tests, errors are told apart without colour);
+                // TASK maps to a circle and keeps its accent ring below.
+                val body = glyphShape(glyphFor(n.type), x.toDouble(), y.toDouble(), r.toDouble())
                 g.color = col
-                g.fillOval(x - r, y - r, r * 2, r * 2)
+                g.fill(body)
                 g.color = alpha(if (dark) Color.BLACK else Color.WHITE, 120)
-                g.drawOval(x - r, y - r, r * 2, r * 2)
+                g.draw(body)
             }
             if (n.type == ActivityNodeType.TASK) {
                 g.color = accent; g.stroke = BasicStroke(2.5f)

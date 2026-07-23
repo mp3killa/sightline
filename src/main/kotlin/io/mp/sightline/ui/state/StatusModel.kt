@@ -36,6 +36,13 @@ data class StatusView(
 )
 
 /**
+ * A **separate** layer from the run status: recoverable issues observed during the turn (a command
+ * that exited non-zero and was then worked around). Kept out of the primary status line so a single
+ * recovered failure never pins the whole agent red while it keeps working; surfaced subtly instead.
+ */
+data class HealthState(val recoveredFailures: Int, val note: String?)
+
+/**
  * Coordinates a single status from the **same normalised activity-event stream** that feeds the
  * graph, so the strip, the header state dot and the graph focus never disagree.
  *
@@ -52,13 +59,26 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
     var view: StatusView = ready(clock()); private set
     private var savedBeforePermission: StatusView? = null
 
+    /** Recovered-failure tally for the current turn — the health layer, read via [health]. */
+    private var recoveredFailures: Int = 0
+    private var lastFailureNote: String? = null
+
+    /** The current health snapshot. Reset at each turn boundary and on [reset]. */
+    fun health(): HealthState = HealthState(recoveredFailures, lastFailureNote)
+
+    private fun clearHealth() { recoveredFailures = 0; lastFailureNote = null }
+
     fun reset(): StatusView {
         savedBeforePermission = null
+        clearHealth()
         view = ready(clock())
         return view
     }
 
-    fun taskStarted(): StatusView = force(StatusView(StatusKind.WORKING, WORKING_FALLBACK, null, P_WORKING, true, clock()))
+    fun taskStarted(): StatusView {
+        clearHealth()
+        return force(StatusView(StatusKind.WORKING, WORKING_FALLBACK, null, P_WORKING, true, clock()))
+    }
 
     /**
      * A blocking user interaction (tool-permission approval, or — with a different [prompt], e.g.
@@ -80,7 +100,7 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
     fun apply(event: AgentActivityEvent): StatusView {
         val now = clock()
         return when (event) {
-            is TaskStarted -> force(StatusView(StatusKind.WORKING, WORKING_FALLBACK, null, P_WORKING, true, now))
+            is TaskStarted -> { clearHealth(); force(StatusView(StatusKind.WORKING, WORKING_FALLBACK, null, P_WORKING, true, now)) }
             is TaskCompleted -> {
                 savedBeforePermission = null
                 val kind = if (event.isError) StatusKind.WARNING else StatusKind.SUCCESS
@@ -114,7 +134,15 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
                 if (event.success) offer(outcome(StatusKind.SUCCESS, "Build succeeded", event.summary, now))
                 else offer(outcome(StatusKind.ERROR, "Build failed", event.summary, now))
             }
-            is ErrorObserved -> offer(outcome(StatusKind.ERROR, "Error", short(event.message, 60), now))
+            is ErrorObserved -> {
+                // A single command's non-zero exit is a *recoverable* signal, not the run's verdict:
+                // the agent typically fixes it and keeps going. Record it to the health layer and show
+                // it only at tool priority (non-sticky), so ongoing work supersedes it instead of the
+                // whole status staying red until the turn ends. The turn's real verdict is TaskCompleted.
+                recoveredFailures += 1
+                lastFailureNote = short(event.message, 60)
+                offer(recoverable(StatusKind.ERROR, "Error", short(event.message, 60), now))
+            }
             is WarningObserved -> offer(tool(StatusKind.WARNING, "Warning", short(event.message, 60), now))
             is WebActivity -> offer(tool(StatusKind.RUNNING, "Fetching " + short(event.label, 40), null, now))
             is ToolInvoked -> offer(tool(StatusKind.WORKING, "Using " + event.summary, null, now))
@@ -134,6 +162,13 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
 
     private fun outcome(kind: StatusKind, primary: String, secondary: String?, at: Instant) =
         StatusView(kind, primary, secondary, P_OUTCOME, animated = false, at = at)
+
+    /**
+     * A recoverable failure: shown at tool priority so a later real operation replaces it, but above
+     * streamed/generic status so a trailing "Thinking" can't bury it before the user sees it.
+     */
+    private fun recoverable(kind: StatusKind, primary: String, secondary: String?, at: Instant) =
+        StatusView(kind, primary, secondary, P_TOOL, animated = false, at = at)
 
     /** Accepts the candidate only if it is at least as important (>= priority) as the current view. */
     private fun offer(candidate: StatusView): StatusView {
