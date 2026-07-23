@@ -51,34 +51,80 @@ class ComposerModel {
     fun removeAttachment(relativePath: String): Boolean = attachmentsSet.remove(relativePath)
     fun clearAttachments() = attachmentsSet.clear()
 
+    // ---- pasted images ----
+
+    private val imagesList = mutableListOf<PendingImage>()
+    private var nextImageOrdinal = 1
+
+    /** Encoded clipboard images riding the next message, in paste order. */
+    val images: List<PendingImage> get() = imagesList.toList()
+    val hasImages: Boolean get() = imagesList.isNotEmpty()
+
+    /**
+     * Accepts a pasted image, or refuses with a typed reason — [ImageAttachmentPolicy] words the
+     * refusal so the user is told *why* nothing appeared, never left with a silent no-op paste.
+     * Ordinals are monotonic per conversation: removing "Image 1" never renames "Image 2".
+     */
+    fun addImage(encoded: EncodedImage): ImageAttachmentPolicy.AddImageResult {
+        if (imagesList.size >= ImageAttachmentPolicy.MAX_IMAGES) {
+            return ImageAttachmentPolicy.AddImageResult.REJECTED_LIMIT
+        }
+        if (encoded.bytes.size > ImageAttachmentPolicy.HARD_MAX_BYTES) {
+            return ImageAttachmentPolicy.AddImageResult.REJECTED_TOO_LARGE
+        }
+        val ordinal = nextImageOrdinal++
+        imagesList += PendingImage(id = "img-$ordinal", ordinal = ordinal, image = encoded)
+        return ImageAttachmentPolicy.AddImageResult.ADDED
+    }
+
+    fun removeImage(id: String): Boolean = imagesList.removeAll { it.id == id }
+    fun clearImages() = imagesList.clear()
+
+    /**
+     * Takes the pending images for a message leaving *now* — reads then clears, so an image pasted
+     * after this instant belongs to the next message, never accidentally to this one.
+     */
+    fun takeImages(): List<PendingImage> = imagesList.toList().also { imagesList.clear() }
+
     /** What submitting the composer did — the caller renders each outcome differently. */
     enum class Submit { SENT, QUEUED, IGNORED_BLANK }
 
-    private val queue = ArrayDeque<String>()
+    /**
+     * A message parked behind a running turn. Its images were captured at Enter-time: a pasted
+     * screenshot is *content*, frozen at the moment the user submitted — unlike the Android context,
+     * which is framing and is deliberately re-gathered at send time (see [buildMessage]).
+     */
+    data class QueuedMessage(val text: String, val images: List<PendingImage> = emptyList())
+
+    private val queue = ArrayDeque<QueuedMessage>()
 
     /** Messages waiting for the current turn to finish, oldest first. */
-    val queued: List<String> get() = queue.toList()
+    val queued: List<QueuedMessage> get() = queue.toList()
     val hasQueued: Boolean get() = queue.isNotEmpty()
 
     /**
-     * Send is enabled whenever there is text: while a turn is running the message is **queued** rather
-     * than rejected. Previously this was `!running && …`, and because the input was never disabled a
-     * user could type a whole message, press Enter, and have nothing happen with no feedback at all.
+     * Send is enabled whenever there is something to send — text, a pasted image, or an attached
+     * file; "look at this" with no prose is a legitimate message. While a turn is running the
+     * message is **queued** rather than rejected. Previously this was `!running && …`, and because
+     * the input was never disabled a user could type a whole message, press Enter, and have nothing
+     * happen with no feedback at all.
      */
-    fun sendEnabled(text: String): Boolean = text.isNotBlank()
+    fun sendEnabled(text: String): Boolean = text.isNotBlank() || hasImages || hasAttachments
 
     /**
-     * Submits [text]: sent now when idle, queued when a turn is in flight. Blank input is ignored —
-     * never queued — so an accidental Enter doesn't schedule an empty turn.
+     * Submits [text]: sent now when idle, queued when a turn is in flight. Truly empty input — no
+     * text, no images, no attachments — is ignored, never queued, so an accidental Enter doesn't
+     * schedule an empty turn. Queuing captures the pending images into the entry (and clears them),
+     * so an image pasted while the entry waits belongs to the *next* message.
      */
     fun submit(text: String): Submit = when {
-        text.isBlank() -> Submit.IGNORED_BLANK
-        running -> { queue.addLast(text); Submit.QUEUED }
+        text.isBlank() && !hasImages && !hasAttachments -> Submit.IGNORED_BLANK
+        running -> { queue.addLast(QueuedMessage(text, takeImages())); Submit.QUEUED }
         else -> Submit.SENT
     }
 
     /** Pops the next queued message, or null when nothing is waiting. */
-    fun takeQueued(): String? = queue.removeFirstOrNull()
+    fun takeQueued(): QueuedMessage? = queue.removeFirstOrNull()
 
     fun clearQueue() = queue.clear()
 

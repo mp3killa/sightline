@@ -21,6 +21,8 @@ import javax.swing.JPanel
 class ContextChip(
     val value: String,
     label: String,
+    /** Optional leading icon — e.g. a thumbnail for a pasted-image chip. */
+    icon: javax.swing.Icon? = null,
     onRemove: (String) -> Unit,
 ) : JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(1))) {
 
@@ -31,6 +33,10 @@ class ContextChip(
         text.font = UIUtil.getLabelFont().deriveFont(Font.PLAIN, JBUI.scaleFontSize(11f).toFloat())
         text.foreground = ClaudeUiTokens.textPrimary()
         text.toolTipText = value
+        if (icon != null) {
+            text.icon = icon
+            text.iconTextGap = JBUI.scale(5)
+        }
         add(text, BorderLayout.CENTER)
         val remove = IconActionButton(
             ClaudeIcons.close.withSize(12).withColor { ClaudeUiTokens.textSecondary() },

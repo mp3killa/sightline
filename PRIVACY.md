@@ -24,6 +24,10 @@ that stream:
 
 - **Your message**, as typed.
 - **Files you attach**, as `@path` references the CLI then reads.
+- **Images you paste**, as base64 blocks in the message itself. Sightline downscales and re-encodes
+  the clipboard image entirely in memory — it is never written to disk — and the chip above the
+  composer (with its × to remove) is the control over whether it goes at all. A pasted image is
+  message content: it travels to Anthropic exactly as your text does.
 - **The Android context block**, when the feature is on and the chips are enabled — module, build
   variant, applicationId, SDK levels, the connected device, and the open file's project-relative path.
   Every chip is removable before you send, and removing one genuinely removes that fact from the

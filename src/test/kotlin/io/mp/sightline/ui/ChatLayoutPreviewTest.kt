@@ -12,6 +12,7 @@ import io.mp.sightline.android.FactTier
 import io.mp.sightline.android.ModuleContext
 import io.mp.sightline.settings.ClaudeSettings
 import io.mp.sightline.ui.components.ContextChip
+import io.mp.sightline.ui.state.PendingImage
 import io.mp.sightline.ui.state.ResponsiveLayout
 import io.mp.sightline.ui.state.WorkspaceMode
 import java.awt.Component
@@ -127,6 +128,23 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
         toolResult("t3", "Applied")
         assistantText("The split now only appears when there is genuinely room for it.")
         feed("""{"type":"result","result":"done","duration_ms":51600,"num_turns":13,"total_cost_usd":0.404,"is_error":false}""")
+        // A pasted-screenshot turn, so the preview shows the thumbnail row in the user bubble.
+        p.addUserMessageForPreview("Here's how the panel looks after that change:", listOf(previewScreenshot()))
+        assistantText("The transcript column now stays readable at every width — that matches the fix.")
+    }
+
+    /** A small synthetic "screenshot" run through the production encoder, as a real paste would be. */
+    private fun previewScreenshot(): PendingImage {
+        val img = BufferedImage(640, 400, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.paint = java.awt.GradientPaint(0f, 0f, java.awt.Color(0x1E1F22), 640f, 400f, java.awt.Color(0x2B2D30))
+        g.fillRect(0, 0, 640, 400)
+        g.color = java.awt.Color(0x3574F0)
+        g.fillRoundRect(24, 320, 160, 48, 12, 12)
+        g.color = java.awt.Color.WHITE
+        g.drawString("Sightline — sample screenshot", 24, 40)
+        g.dispose()
+        return PendingImage("img-1", 1, ImageAttachmentEncoder.encode(img)!!)
     }
 
     private fun quote(s: String): String = com.google.gson.JsonPrimitive(s).toString()

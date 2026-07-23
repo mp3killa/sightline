@@ -68,9 +68,9 @@ class ClaudeSession(
         get() = lastSessionId != null
 
     @Synchronized
-    fun sendUserMessage(text: String) {
+    fun sendUserMessage(text: String, images: List<UserMessageJson.ImageBlock> = emptyList()) {
         if (!isRunning) startProcess()
-        writeLine("""{"type":"user","message":{"role":"user","content":"${jsonEscape(text)}"}}""")
+        writeLine(UserMessageJson.userLine(text, images))
     }
 
     @Synchronized
@@ -336,19 +336,5 @@ class ClaudeSession(
         return sb.toString()
     }
 
-    private fun jsonEscape(s: String): String {
-        val sb = StringBuilder(s.length + 16)
-        for (c in s) {
-            when (c) {
-                '\\' -> sb.append("\\\\")
-                '"' -> sb.append("\\\"")
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                // Control chars (backspace, form-feed, etc.) become valid \uXXXX escapes below.
-                else -> if (c < ' ') sb.append("\\u%04x".format(c.code)) else sb.append(c)
-            }
-        }
-        return sb.toString()
-    }
+    private fun jsonEscape(s: String): String = UserMessageJson.escape(s)
 }

@@ -36,11 +36,15 @@ stdin and reads its stdout. It has no backend, no proxy, and no network egress o
 
 ## What Sightline puts on that stdin
 
-Exactly four things, all of them yours:
+Exactly five things, all of them yours:
 
 1. **Your typed message.**
 2. **Attachments**, as `@project/relative/path` — the CLI reads the file, Sightline doesn't send contents.
-3. **The Android context block**, when enabled. Rendered by `AndroidContextFormatter.promptBlock` from
+3. **Pasted images**, as base64 `image` blocks on the same JSON line. Before sending, the image is
+   downscaled to at most 2576px on its long edge and re-encoded (PNG, or JPEG when photographically
+   large) **entirely in memory** — nothing is written to disk, and the full-size bytes are released
+   once the message leaves. The chip and the transcript thumbnail show exactly what was sent.
+4. **The Android context block**, when enabled. Rendered by `AndroidContextFormatter.promptBlock` from
    the chips that are switched on:
 
    ```
@@ -56,7 +60,7 @@ Exactly four things, all of them yours:
 
    Paths are **project-relative**. Removing a chip removes its lines — the chips are the control, not a
    description of one.
-4. **What you explicitly asked for**: a logcat capture (redacted), a diagnostic, a command's output.
+5. **What you explicitly asked for**: a logcat capture (redacted), a diagnostic, a command's output.
 
 ## What the CLI adds, which Sightline does not control
 

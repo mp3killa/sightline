@@ -15,6 +15,9 @@ import io.mp.sightline.ui.components.ContextChip
 import io.mp.sightline.ui.components.IconActionButton
 import io.mp.sightline.ui.components.WrapLayout
 import io.mp.sightline.ui.state.ComposerModel
+import io.mp.sightline.ui.state.ImageAttachmentPolicy
+import io.mp.sightline.ui.state.PasteRouting
+import io.mp.sightline.ui.state.PendingImage
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -23,27 +26,39 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Image
 import java.awt.RenderingHints
+import java.awt.datatransfer.Clipboard
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
+import java.awt.event.InputEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.io.File
 import javax.swing.Icon
+import javax.swing.ImageIcon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
+import javax.swing.TransferHandler
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
 /**
  * The bottom composer: a growing 2-row input (Enter sends, Shift+Enter newlines), removable
- * attached-context chips, a left action group (attach / slash actions), and a right group with a
- * concise permission-mode chip and one coordinated send/stop button. No decorative/unavailable
- * controls.
+ * attached-context chips (including pasted images, with thumbnails), a left action group (attach /
+ * slash actions), and a right group with a concise permission-mode chip and one coordinated
+ * send/stop button. No decorative/unavailable controls.
+ *
+ * Pasting an image (⌘V after a screenshot, "Copy Image" in a browser) attaches it to the next
+ * message rather than pasting mush into the text — routing decided by [PasteRouting], encoding by
+ * [ImageAttachmentEncoder] off the EDT.
  */
 class ClaudeComposerPanel(
     private val model: ComposerModel,
@@ -54,6 +69,10 @@ class ClaudeComposerPanel(
     private val onModeMenu: (Component) -> Unit,
     /** Re-resolve the Android context on demand. No-op by default so tests and previews stay simple. */
     private val onRefreshAndroidContext: () -> Unit = {},
+    /** Files pasted or dropped onto the input — the host attaches them as path chips. */
+    private val onFilesPasted: (List<File>) -> Unit = {},
+    /** A one-line notice about an attachment (a refused or unreadable paste) — the host surfaces it. */
+    private val onAttachmentNotice: (String) -> Unit = {},
 ) : JPanel(BorderLayout()) {
 
     private val box = ComposerBox()
@@ -120,6 +139,7 @@ class ClaudeComposerPanel(
             override fun focusGained(e: FocusEvent) { box.focused = true; box.repaint() }
             override fun focusLost(e: FocusEvent) { box.focused = false; box.repaint() }
         })
+        installPasteInterceptor()
         inputScroll.isOpaque = false
         inputScroll.viewport.isOpaque = false
         inputScroll.border = JBUI.Borders.empty()
@@ -244,11 +264,131 @@ class ClaudeComposerPanel(
             chipsRow.add(ContextChip(path, basename(path)) { removed ->
                 model.removeAttachment(removed)
                 refreshChips()
+                updateSendEnabled()
             })
         }
-        chipsRow.isVisible = model.hasAttachments || contextChips.isNotEmpty()
+
+        for (img in model.images) {
+            val chip = ContextChip(img.id, ImageAttachmentPolicy.chipLabel(img), icon = thumbnailIcon(img)) { removed ->
+                model.removeImage(removed)
+                refreshChips()
+                updateSendEnabled()
+            }
+            chip.toolTipText = ImageAttachmentPolicy.tooltip(img)
+            chip.getAccessibleContext().accessibleName = A11yNames.composerImage(img.ordinal)
+            chipsRow.add(chip)
+        }
+
+        chipsRow.isVisible = model.hasAttachments || model.hasImages || contextChips.isNotEmpty()
         chipsRow.revalidate(); chipsRow.repaint()
         revalidate(); repaint()
+    }
+
+    // ---- clipboard images ----
+
+    /**
+     * Routes what lands in the input: files → path chips, an image → an image attachment, text →
+     * the ordinary paste. The precedence (and why Excel cells must paste as text while a screenshot
+     * attaches) lives in [PasteRouting]; this wrapper only maps clipboard flavors to booleans — and
+     * forwards the export half (copy/cut, drag-out) untouched to the original handler, so
+     * intercepting paste never costs copy.
+     */
+    private fun installPasteInterceptor() {
+        val original = input.transferHandler
+        input.transferHandler = object : TransferHandler() {
+            override fun canImport(support: TransferSupport): Boolean =
+                support.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
+                    support.isDataFlavorSupported(DataFlavor.imageFlavor) ||
+                    (original?.canImport(support) ?: false)
+
+            override fun importData(support: TransferSupport): Boolean {
+                val t = support.transferable
+                val hasText = support.isDataFlavorSupported(DataFlavor.stringFlavor)
+                return when (PasteRouting.route(
+                    hasFiles = support.isDataFlavorSupported(DataFlavor.javaFileListFlavor),
+                    hasText = hasText,
+                    textIsBlank = hasText && (readString(t)?.isBlank() ?: true),
+                    hasImage = support.isDataFlavorSupported(DataFlavor.imageFlavor),
+                )) {
+                    PasteRouting.Route.FILES -> {
+                        val files = readFiles(t)
+                        if (files.isEmpty()) false else { onFilesPasted(files); true }
+                    }
+                    PasteRouting.Route.IMAGE -> {
+                        val image = readImage(t) ?: return false
+                        attachClipboardImage(image)
+                        true
+                    }
+                    PasteRouting.Route.TEXT, PasteRouting.Route.DELEGATE ->
+                        original?.importData(support) ?: false
+                }
+            }
+
+            // Legacy entry point some paste paths still use — funnel into the TransferSupport one.
+            override fun importData(comp: JComponent, t: Transferable): Boolean =
+                importData(TransferSupport(comp, t))
+
+            override fun getSourceActions(c: JComponent): Int = original?.getSourceActions(c) ?: NONE
+            override fun exportToClipboard(comp: JComponent, clip: Clipboard, action: Int) {
+                original?.exportToClipboard(comp, clip, action)
+            }
+            override fun exportAsDrag(comp: JComponent, e: InputEvent, action: Int) {
+                original?.exportAsDrag(comp, e, action)
+            }
+        }
+    }
+
+    private fun readString(t: Transferable): String? = try {
+        t.getTransferData(DataFlavor.stringFlavor) as? String
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun readFiles(t: Transferable): List<File> = try {
+        (t.getTransferData(DataFlavor.javaFileListFlavor) as? List<*>).orEmpty().filterIsInstance<File>()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun readImage(t: Transferable): Image? = try {
+        t.getTransferData(DataFlavor.imageFlavor) as? Image
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Encodes off the EDT — scaling and compressing a retina screenshot takes real milliseconds —
+     * then hops back to add the chip. A refused or unreadable paste is *said*, via
+     * [onAttachmentNotice], never silently swallowed.
+     */
+    private fun attachClipboardImage(image: Image) {
+        Thread({
+            val encoded = ImageAttachmentEncoder.encode(image)
+            SwingUtilities.invokeLater {
+                if (encoded == null) {
+                    onAttachmentNotice("Image not attached: the clipboard image could not be read.")
+                    return@invokeLater
+                }
+                when (model.addImage(encoded)) {
+                    ImageAttachmentPolicy.AddImageResult.ADDED -> {
+                        refreshChips()
+                        updateSendEnabled()
+                    }
+                    ImageAttachmentPolicy.AddImageResult.REJECTED_LIMIT ->
+                        onAttachmentNotice(ImageAttachmentPolicy.limitMessage())
+                    ImageAttachmentPolicy.AddImageResult.REJECTED_TOO_LARGE ->
+                        onAttachmentNotice(ImageAttachmentPolicy.tooLargeMessage(encoded.bytes.size))
+                }
+            }
+        }, "sightline-image-encode").apply { isDaemon = true }.start()
+    }
+
+    /** A 16px-tall rendition of the encoder's thumbnail, so the chip shows *which* image it is. */
+    private fun thumbnailIcon(img: PendingImage): Icon? {
+        val thumb = img.image.thumbnail ?: return null
+        val h = JBUI.scale(16)
+        val w = ((thumb.width * h.toDouble()) / thumb.height).toInt().coerceAtLeast(1)
+        return ImageIcon(thumb.getScaledInstance(w, h, Image.SCALE_SMOOTH))
     }
 
     // ---- internals ----
@@ -263,6 +403,8 @@ class ClaudeComposerPanel(
             ComposerModel.Submit.IGNORED_BLANK -> return
             ComposerModel.Submit.QUEUED -> {
                 input.text = ""
+                // The queued entry captured the pending images — their chips leave with it.
+                refreshChips()
                 refreshQueueLabel()
                 onTextChanged()
             }
@@ -277,8 +419,8 @@ class ClaudeComposerPanel(
         refreshQueueLabel()
     }
 
-    /** Drains one queued message, if any — called by the host when a turn finishes. */
-    fun takeQueuedMessage(): String? = model.takeQueued()?.also { refreshQueueLabel() }
+    /** Drains one queued message (text + its captured images) — called by the host when a turn finishes. */
+    fun takeQueuedMessage(): ComposerModel.QueuedMessage? = model.takeQueued()?.also { refreshQueueLabel() }
 
     private fun onTextChanged() {
         updateSendEnabled()

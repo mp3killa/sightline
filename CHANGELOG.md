@@ -21,7 +21,11 @@ and the version was reset to reflect that. Sightline is **source-available** sof
   edits keep card weight.
 - File edits render as a diff — unified or side-by-side by available width — before they apply.
 - Structured `AskUserQuestion` support: radio, checkbox and free-text, rather than raw JSON.
-- Messages sent mid-turn are queued rather than silently dropped.
+- Paste an image (⌘V after a screenshot, "Copy Image" in a browser) to attach it to the message —
+  shown as a removable thumbnail chip, downscaled and encoded in memory, sent as a base64 image block
+  alongside your text, and never written to disk. Pasted *files* attach as `@path` chips.
+- Messages sent mid-turn are queued rather than silently dropped; a message queued with images keeps
+  exactly the images it was sent with.
 - When the CLI exits unexpectedly, its own error text is shown alongside the exit code, rather than
   leaving a bare number and the IDE log as the only way to find out why.
 

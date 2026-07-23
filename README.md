@@ -26,6 +26,10 @@ stock Android Studio runtime.
 - **Tool results** attached under the call that produced them (truncated when long, red on error).
 - **Interactive per‑tool approval** — inline Allow / Always allow / Deny cards over the CLI control
   protocol, plus **AskUserQuestion** rendered as a real form (radio / checkbox / free‑text "Other").
+- **Paste images as context** — ⌘V a screenshot (or "Copy Image" from a browser) into the composer
+  and it attaches as a removable thumbnail chip, downscaled and encoded **in memory** (never written
+  to disk), then sent alongside your text so you can ask about exactly what you're seeing. Pasting a
+  copied *file* attaches it as an `@path` chip instead.
 - **Native IDE integration** via the `ide` MCP server: Claude sees your selection and open editors,
   gets scoped diagnostics, and edits open in **Android Studio's own diff viewer** to accept or reject.
 - The **Agent Activity Map** — a live force‑directed graph of what Claude is *observably* touching

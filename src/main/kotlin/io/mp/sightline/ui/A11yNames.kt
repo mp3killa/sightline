@@ -20,6 +20,9 @@ object A11yNames {
     /** The "Other…" free-text control for a question. */
     fun questionOther(questionIndex: Int) = "sightline.question.other.$questionIndex"
     const val COMPOSER_SEND = "sightline.composer.send"
+
+    /** A pasted-image chip in the composer, addressed by its stable ordinal ("Image 3"). */
+    fun composerImage(ordinal: Int) = "sightline.composer.image.$ordinal"
     const val WORKSPACE_CHAT = "sightline.workspace.chat"
     const val WORKSPACE_ACTIVITY = "sightline.workspace.activity"
     const val TOOL_WINDOW_ROOT = "sightline.toolWindow.root"

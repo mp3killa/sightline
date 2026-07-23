@@ -72,6 +72,7 @@ import io.mp.sightline.interaction.QuestionFormState
 import io.mp.sightline.interaction.UserQuestionOption
 import io.mp.sightline.interaction.UserQuestionRequest
 import io.mp.sightline.process.ClaudeSession
+import io.mp.sightline.process.UserMessageJson
 import io.mp.sightline.android.AndroidContextFormatter
 import io.mp.sightline.android.StackTraceResolver
 import io.mp.sightline.ide.android.AndroidContextResolver
@@ -86,9 +87,12 @@ import io.mp.sightline.ui.markdown.FileRefDetector
 import io.mp.sightline.ui.markdown.MarkdownDocParser
 import io.mp.sightline.ui.markdown.MdBlock
 import io.mp.sightline.ui.markdown.StreamingMarkdown
+import io.mp.sightline.ui.components.WrapLayout
 import io.mp.sightline.ui.state.CompletionSummary
 import io.mp.sightline.ui.state.ComposerModel
+import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.LayoutProfile
+import io.mp.sightline.ui.state.PendingImage
 import io.mp.sightline.ui.state.LineDiff
 import io.mp.sightline.ui.state.PermissionModes
 import io.mp.sightline.ui.state.ResponsiveLayout
@@ -123,7 +127,9 @@ import java.awt.event.FocusEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.time.Instant
+import java.util.Base64
 import javax.swing.BorderFactory
+import javax.swing.ImageIcon
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
@@ -423,6 +429,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             onSlash = { anchor -> showSlashMenu(anchor) },
             onModeMenu = { anchor -> showModesPopup(anchor) },
             onRefreshAndroidContext = { refreshAndroidContext(force = true) },
+            onFilesPasted = { files -> attachPastedFiles(files) },
+            // A refused paste must be said somewhere the user will see it, not swallowed.
+            onAttachmentNotice = { notice -> showEmptyState(false); addInfo(notice, err = false); scrollToBottomSoon() },
         )
         installAndroidContext()
         statusStrip = ClaudeStatusStrip(this)
@@ -672,11 +681,25 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         addRow(r)
     }
 
-    private fun addUserBubble(text: String, attachments: List<String>) {
+    private fun addUserBubble(text: String, attachments: List<String>, images: List<PendingImage> = emptyList()) {
         val bubble = Bubble()
         bubble.border = JBUI.Borders.empty(9, 12)
         val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
-        col.add(fullWidth(plainArea(text)))
+        if (text.isNotEmpty()) col.add(fullWidth(plainArea(text)))
+        if (images.isNotEmpty()) {
+            // Thumbnails only: the full bytes went to the CLI and are released with the pending set;
+            // what the transcript keeps is the small pre-scaled render.
+            val row = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4)))
+            row.isOpaque = false
+            for (img in images) {
+                val thumb = img.image.thumbnail
+                val label = if (thumb != null) JBLabel(ImageIcon(thumb)) else JBLabel("Image ${img.ordinal}")
+                label.border = BorderFactory.createLineBorder(ClaudeUiTokens.border())
+                label.toolTipText = ImageAttachmentPolicy.tooltip(img)
+                row.add(label)
+            }
+            col.add(fullWidth(row))
+        }
         if (attachments.isNotEmpty()) {
             val ctx = plainArea("Context: " + attachments.joinToString(", ") { basename(it) })
             ctx.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
@@ -858,32 +881,58 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     // ---------- compose actions ----------
 
-    private fun doSend(rawText: String) {
+    /**
+     * Sends a message: the composer's live text + pending images, or — on the queue-drain path — a
+     * [queuedImages] set captured when the user pressed Enter mid-turn (a paste made *while* that
+     * entry waited belongs to the next message, so the live pending set is left alone there).
+     */
+    private fun doSend(rawText: String, queuedImages: List<PendingImage>? = null) {
         if (running) return
         val text = rawText.trim()
-        if (text.isEmpty()) return
+        // Pending images make a blank body sendable: "look at this" needs no prose.
+        val images = queuedImages ?: composerModel.images
+        if (text.isEmpty() && images.isEmpty()) return
         // Before the first message ever leaves, not as a banner beside it: the only useful moment to
         // say "this can read your files and run commands" is before it does. Declining cancels the
-        // send — dismissing a disclosure is not consent.
+        // send — dismissing a disclosure is not consent, and the images stay pending.
         if (!FirstRunDialog.ensureAcknowledged(project)) return
+        if (queuedImages == null) composerModel.clearImages() // `images` holds the snapshot leaving now
         val attachments = composerModel.attachments
         val message = composerModel.buildMessage(rawText)
         finalizeCurrent(); inAssistant = false; curTurn = null
         following = true // sending a message re-follows so the user always sees their own turn + the reply
-        addUserBubble(text, attachments)
+        addUserBubble(text, attachments, images)
         transcriptPresenter.onUserMessage(); showEmptyState(false)
-        feed(interpreter.taskStarted(text))
+        feed(interpreter.taskStarted(text.ifEmpty { imagesTaskLabel(images.size) }))
         statusModel.taskStarted(); refreshStatus()
-        session.sendUserMessage(message)
+        session.sendUserMessage(message, images.map { it.toWireBlock() })
         composer.clearInput(); composerModel.clearAttachments(); composer.refreshChips()
         setRunning(true)
     }
 
+    /** Activity-map task label for an image-only message, which has no prose to label it with. */
+    private fun imagesTaskLabel(count: Int) = if (count == 1) "Sent an image" else "Sent $count images"
+
+    /** Base64 for the wire — the standard encoder, which emits no line breaks. */
+    private fun PendingImage.toWireBlock() = UserMessageJson.ImageBlock(
+        mediaType = image.mediaType,
+        base64Data = Base64.getEncoder().encodeToString(image.bytes),
+    )
+
     private fun attachFile() {
         val descriptor = FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor()
         val file = FileChooser.chooseFile(descriptor, project, null) ?: return
+        addPathAttachment(file.path)
+    }
+
+    /** Files pasted or dropped onto the composer input — attached exactly like the picker's choice. */
+    private fun attachPastedFiles(files: List<java.io.File>) {
+        for (f in files) addPathAttachment(f.absolutePath.replace('\\', '/'))
+    }
+
+    private fun addPathAttachment(path: String) {
         val base = project.basePath
-        val rel = if (base != null && file.path.startsWith(base)) file.path.substring(base.length).trimStart('/') else file.path
+        val rel = if (base != null && path.startsWith(base)) path.substring(base.length).trimStart('/') else path
         composerModel.addAttachment(rel)
         composer.refreshChips()
     }
@@ -1122,9 +1171,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     /** Test-only companion to [renderProtocolLineForPreview]: the user half of a turn. */
     @TestOnly
-    internal fun addUserMessageForPreview(text: String) {
+    internal fun addUserMessageForPreview(text: String, images: List<PendingImage> = emptyList()) {
         showEmptyState(false)
-        addUserBubble(text, emptyList())
+        addUserBubble(text, emptyList(), images)
     }
 
     /**
@@ -1750,7 +1799,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun drainQueuedMessage() {
         if (running) return
         val next = composer.takeQueuedMessage() ?: return
-        doSend(next)
+        doSend(next.text, next.images)
     }
 
     /** Push normalised activity events into both the map and the status model. */

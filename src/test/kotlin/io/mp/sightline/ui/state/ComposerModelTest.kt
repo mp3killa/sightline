@@ -76,7 +76,7 @@ class ComposerModelTest {
         m.running = true
         assertEquals(ComposerModel.Submit.QUEUED, m.submit("next thing"))
         assertTrue(m.hasQueued)
-        assertEquals(listOf("next thing"), m.queued)
+        assertEquals(listOf("next thing"), m.queued.map { it.text })
     }
 
     @Test fun blankInputIsNeverQueued() {
@@ -90,8 +90,8 @@ class ComposerModelTest {
         val m = ComposerModel()
         m.running = true
         m.submit("first"); m.submit("second")
-        assertEquals("first", m.takeQueued())
-        assertEquals("second", m.takeQueued())
+        assertEquals("first", m.takeQueued()?.text)
+        assertEquals("second", m.takeQueued()?.text)
         assertNull(m.takeQueued())
     }
 
@@ -186,7 +186,7 @@ class ComposerModelTest {
         device = "Pixel 8" // the emulator finished booting while the message waited
         m.running = false
         val drained = m.takeQueued()!!
-        assertEquals("Device: Pixel 8\n\nrun the app", m.buildMessage(drained))
+        assertEquals("Device: Pixel 8\n\nrun the app", m.buildMessage(drained.text))
     }
 
     @Test fun aBlankBodyStillSendsItsContextAndAttachments() {
@@ -194,5 +194,83 @@ class ComposerModelTest {
         m.androidContextBlock = { "CTX" }
         m.addAttachment("app/Main.kt")
         assertEquals("CTX\n\n@app/Main.kt", m.buildMessage("   "))
+    }
+
+    // ---- pasted images ----
+
+    private fun encoded(bytes: Int = 100) =
+        EncodedImage(ImageAttachmentPolicy.MEDIA_PNG, ByteArray(bytes), 100, 50)
+
+    /** "Look at this" needs no prose: an image (or an attached file) alone is a sendable message. */
+    @Test fun imageOrAttachmentAloneEnablesSend() {
+        val m = ComposerModel()
+        assertFalse(m.sendEnabled(""))
+        m.addImage(encoded())
+        assertTrue(m.sendEnabled(""))
+
+        val n = ComposerModel()
+        n.addAttachment("a/B.kt")
+        assertTrue("the documented blank-body-still-sends contract, now enforced", n.sendEnabled(""))
+    }
+
+    @Test fun blankSubmitWithAnImageSendsRatherThanBeingIgnored() {
+        val m = ComposerModel()
+        m.addImage(encoded())
+        assertEquals(ComposerModel.Submit.SENT, m.submit("   "))
+    }
+
+    /**
+     * Images are content, frozen at Enter-time — unlike the Android context, which is framing and is
+     * re-gathered at send time. A paste made while the entry waits belongs to the *next* message.
+     */
+    @Test fun queueCapturesImagesAtEnterTimeAndClearsThePendingSet() {
+        val m = ComposerModel()
+        m.running = true
+        m.addImage(encoded())
+        assertEquals(ComposerModel.Submit.QUEUED, m.submit("first"))
+        assertFalse("captured into the entry, no longer pending", m.hasImages)
+
+        m.addImage(encoded()) // pasted while "first" waits
+        assertEquals(ComposerModel.Submit.QUEUED, m.submit("second"))
+
+        assertEquals(1, m.takeQueued()!!.images.size)
+        val second = m.takeQueued()!!
+        assertEquals(1, second.images.size)
+        assertEquals("the later paste rode the later message", 2, second.images[0].ordinal)
+    }
+
+    @Test fun imageLimitIsEnforcedWithATypedRefusal() {
+        val m = ComposerModel()
+        repeat(ImageAttachmentPolicy.MAX_IMAGES) {
+            assertEquals(ImageAttachmentPolicy.AddImageResult.ADDED, m.addImage(encoded()))
+        }
+        assertEquals(ImageAttachmentPolicy.AddImageResult.REJECTED_LIMIT, m.addImage(encoded()))
+        assertEquals(ImageAttachmentPolicy.MAX_IMAGES, m.images.size)
+    }
+
+    @Test fun oversizedImagesAreRefusedNotSilentlyDropped() {
+        val m = ComposerModel()
+        assertEquals(
+            ImageAttachmentPolicy.AddImageResult.REJECTED_TOO_LARGE,
+            m.addImage(encoded(bytes = ImageAttachmentPolicy.HARD_MAX_BYTES + 1)),
+        )
+        assertFalse(m.hasImages)
+    }
+
+    /** Removing "Image 1" must never rename "Image 2" — a chip that renames itself reads as a different attachment. */
+    @Test fun ordinalsAreStableAcrossRemoval() {
+        val m = ComposerModel()
+        m.addImage(encoded()); m.addImage(encoded())
+        assertTrue(m.removeImage("img-1"))
+        m.addImage(encoded())
+        assertEquals(listOf(2, 3), m.images.map { it.ordinal })
+    }
+
+    @Test fun takeImagesReadsThenClears() {
+        val m = ComposerModel()
+        m.addImage(encoded())
+        assertEquals(1, m.takeImages().size)
+        assertFalse(m.hasImages)
+        assertTrue(m.takeImages().isEmpty())
     }
 }
