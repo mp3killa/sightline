@@ -375,6 +375,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         project,
         onLink = { openMarkdownLink(it) },
         onReveal = { href -> revealMarkdownLink(href) },
+        renderMermaid = ClaudeSettings.getInstance().state.renderMermaid,
     )
     private val turns = ArrayList<AssistantTurn>()
 

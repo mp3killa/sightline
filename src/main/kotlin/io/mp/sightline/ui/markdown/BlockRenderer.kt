@@ -10,6 +10,8 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.sightline.theme.ClaudeUiTokens
+import io.mp.sightline.ui.markdown.mermaid.MermaidParse
+import io.mp.sightline.ui.markdown.mermaid.MermaidParser
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -53,6 +55,8 @@ import javax.swing.text.StyledDocument
  */
 class BlockRenderer(
     private val project: Project? = null,
+    /** When false, ```mermaid renders as a code block instead of a native diagram (the setting is off). */
+    private val renderMermaid: Boolean = true,
     private val onLink: (String) -> Unit = { runCatching { BrowserUtil.browse(it) } },
     /**
      * Optional "Reveal in Project" for a `file:` reference, offered on right-click. Null means the
@@ -68,6 +72,7 @@ class BlockRenderer(
         is MdParagraph -> paragraph(b.inlines)
         is MdList -> list(b, depth = 0)
         is MdCodeBlock -> codeBlock(b)
+        is MdMermaid -> mermaid(b)
         is MdQuote -> quote(b.blocks)
         is MdTable -> table(b)
         is MdCallout -> callout(b) // populated in Phase 2; render as a tinted quote until then
@@ -178,6 +183,84 @@ class BlockRenderer(
     }
 
     // ---- code ----
+
+    /**
+     * A ```mermaid fence: a native diagram when it's a flowchart/state diagram we can draw, or the source
+     * as a code block otherwise (unsupported type, or a parse that yielded nothing). The diagram card
+     * carries a **Source** toggle (swap to the raw mermaid) and **Copy**.
+     */
+    private fun mermaid(m: MdMermaid): JComponent {
+        if (!renderMermaid) return codeBlock(MdCodeBlock("mermaid", m.code))
+        return when (val parsed = MermaidParser.parse(m.code)) {
+            is MermaidParse.Rendered -> mermaidDiagram(m.code, parsed.diagram)
+            else -> codeBlock(MdCodeBlock("mermaid", m.code))
+        }
+    }
+
+    private fun mermaidDiagram(code: String, diagram: io.mp.sightline.ui.markdown.mermaid.MermaidDiagram): JComponent {
+        val wrap = MdColumn()
+        wrap.isOpaque = true
+        wrap.background = ClaudeUiTokens.subtleSurface()
+        wrap.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(ClaudeUiTokens.subtleBorder(), 1, true),
+            JBUI.Borders.empty(4, 8),
+        )
+
+        val header = JPanel(BorderLayout())
+        header.isOpaque = false
+        val label = JBLabel("mermaid")
+        label.foreground = ClaudeUiTokens.textSecondary()
+        label.font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        header.add(label, BorderLayout.WEST)
+
+        val center = JPanel(BorderLayout())
+        center.isOpaque = false
+        val diagramScroll = hScroll(MermaidView.component(diagram))
+        center.add(diagramScroll, BorderLayout.CENTER)
+
+        var showingSource = false
+        val source = smallButton("Source")
+        source.addActionListener {
+            showingSource = !showingSource
+            center.removeAll()
+            center.add(if (showingSource) hScroll(codePane(MdCodeBlock("mermaid", code))) else diagramScroll, BorderLayout.CENTER)
+            source.text = if (showingSource) "Diagram" else "Source"
+            center.revalidate(); center.repaint()
+        }
+        val copy = smallButton("Copy")
+        copy.addActionListener {
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(code), null)
+            copy.text = "Copied"
+            javax.swing.Timer(1200) { copy.text = "Copy" }.apply { isRepeats = false }.start()
+        }
+        val actions = JPanel()
+        actions.layout = BoxLayout(actions, BoxLayout.X_AXIS)
+        actions.isOpaque = false
+        actions.add(source); actions.add(Box.createHorizontalStrut(JBUI.scale(4))); actions.add(copy)
+        header.add(actions, BorderLayout.EAST)
+
+        wrap.add(header, BorderLayout.NORTH)
+        wrap.add(center, BorderLayout.CENTER)
+        return boxed(wrap, top = 4, bottom = 6)
+    }
+
+    private fun smallButton(text: String): JButton = JButton(text).apply {
+        font = baseFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        isFocusable = true
+        margin = Insets(0, 6, 0, 6)
+    }
+
+    /** Wraps content so long/wide diagrams and code scroll horizontally instead of re-flowing. */
+    private fun hScroll(content: JComponent): JBScrollPane {
+        val noWrap = JPanel(BorderLayout())
+        noWrap.isOpaque = false
+        noWrap.add(content, BorderLayout.WEST)
+        return JBScrollPane(noWrap, JBScrollPane.VERTICAL_SCROLLBAR_NEVER, JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED).apply {
+            isOpaque = false
+            viewport.isOpaque = false
+            border = JBUI.Borders.empty()
+        }
+    }
 
     private fun codeBlock(c: MdCodeBlock): JComponent {
         val wrap = MdColumn()

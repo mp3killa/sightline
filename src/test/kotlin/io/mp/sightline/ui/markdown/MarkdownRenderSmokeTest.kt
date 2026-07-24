@@ -1,9 +1,16 @@
 package io.mp.sightline.ui.markdown
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.Container
+import java.awt.image.BufferedImage
+import java.io.File
+import javax.imageio.ImageIO
 import javax.swing.JButton
+import javax.swing.JComponent
+import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextPane
 
@@ -155,6 +162,59 @@ class MarkdownRenderSmokeTest : BasePlatformTestCase() {
         // Copy hands over block.code, so the rendered pane must hold exactly that — colouring adds
         // attributes, never characters.
         assertEquals("colouring must never alter the text Copy yields", block.code, pane.text)
+    }
+
+    /**
+     * A supported ```mermaid renders as a native diagram (with a Source toggle); an unsupported type
+     * falls back to a plain code block. Writes `build/mermaid-*.png` so the drawing can be eyeballed —
+     * the only visual channel without a live IDE.
+     */
+    fun testRendersMermaidNativelyAndFallsBackForUnsupported() {
+        val flow = "```mermaid\n" +
+            "graph TD\n" +
+            "  A[Start] --> B{Is it valid?}\n" +
+            "  B -->|yes| C[Process order]\n" +
+            "  B -->|no| D[Reject]\n" +
+            "  C --> E[[Persist to DB]]\n" +
+            "  E --> F((Done))\n```"
+        val state = "```mermaid\n" +
+            "stateDiagram-v2\n" +
+            "  [*] --> Idle\n" +
+            "  Idle --> Loading : fetch\n" +
+            "  Loading --> Ready : ok\n" +
+            "  Loading --> Error : fail\n" +
+            "  Error --> Idle : retry\n" +
+            "  Ready --> [*]\n```"
+        val sequence = "```mermaid\nsequenceDiagram\n  Alice->>Bob: Hello\n```"
+
+        val flowComp = BlockRenderer(project).render(MarkdownDocParser.parse(flow)).single()
+        val stateComp = BlockRenderer(project).render(MarkdownDocParser.parse(state)).single()
+        val seqComp = BlockRenderer(project).render(MarkdownDocParser.parse(sequence)).single()
+
+        assertTrue("flowchart has a real height", flowComp.preferredSize.height > 0)
+        assertTrue("state diagram has a real height", stateComp.preferredSize.height > 0)
+
+        fun buttons(c: Component) = descendants(c).filterIsInstance<JButton>().map { it.text }.toSet()
+        assertTrue("a native diagram offers a Source toggle", buttons(flowComp).contains("Source"))
+        assertFalse("an unsupported type falls back to a code block, no Source toggle", buttons(seqComp).contains("Source"))
+
+        val dir = File("build").apply { mkdirs() }
+        writePng(flowComp, dir.resolve("mermaid-flowchart.png"))
+        writePng(stateComp, dir.resolve("mermaid-state.png"))
+    }
+
+    private fun writePng(comp: JComponent, out: File) {
+        val panel = JPanel(BorderLayout())
+        panel.background = Color(0x2B, 0x2D, 0x30)
+        panel.add(comp, BorderLayout.NORTH)
+        val w = 760; val h = 560
+        panel.setSize(w, h)
+        fun walk(x: Component) { if (x is Container) { x.doLayout(); x.components.forEach { walk(it) } } }
+        walk(panel); walk(panel)
+        val img = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        try { g.color = panel.background; g.fillRect(0, 0, w, h); panel.printAll(g) } finally { g.dispose() }
+        ImageIO.write(img, "png", out)
     }
 
     fun testWideTableGetsAHorizontalScroller() {

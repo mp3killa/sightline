@@ -27,6 +27,15 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Show thinking blocks and tool-call cards in the transcript (off = compact/summary view). */
         var showDetails by property(false)
 
+        /** Render ```mermaid flowchart/state diagrams as native Swing diagrams (else show them as code). */
+        var renderMermaid by property(true)
+
+        /**
+         * Tell Claude, via an appended system-prompt line, that this panel renders mermaid natively so it
+         * proactively uses diagrams where they illustrate better. Only sent when [renderMermaid] is on.
+         */
+        var mermaidTellClaude by property(true)
+
         /** Prompt for approval before each tool that needs it (uses the CLI control protocol). */
         var interactiveApproval by property(true)
 

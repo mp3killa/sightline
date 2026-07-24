@@ -10,6 +10,16 @@ class MarkdownDocParserTest {
     private fun parse(s: String) = MarkdownDocParser.parse(s)
     private fun para(s: String) = parse(s).single() as MdParagraph
 
+    @Test fun mermaidFenceBecomesItsOwnBlockNotACodeBlock() {
+        val b = parse("```mermaid\ngraph TD\n  A --> B\n```").single()
+        assertTrue("expected MdMermaid, got ${b::class.simpleName}", b is MdMermaid)
+        assertTrue((b as MdMermaid).code.contains("A --> B"))
+    }
+
+    @Test fun nonMermaidFenceStaysACodeBlock() {
+        assertTrue(parse("```kotlin\nval x = 1\n```").single() is MdCodeBlock)
+    }
+
     @Test fun headingsDropTheHashMarkers() {
         val h = parse("### Hello `code`").single() as MdHeading
         assertEquals(3, h.level)

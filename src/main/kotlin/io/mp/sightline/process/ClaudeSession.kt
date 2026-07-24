@@ -23,6 +23,18 @@ class ClaudeSession(
     private val onLine: (String) -> Unit,
 ) {
     private companion object {
+        /**
+         * Appended to the system prompt when native mermaid rendering is on, so Claude proactively uses
+         * diagrams. Scoped to what actually renders here (flowcharts + state diagrams) — see BlockRenderer.
+         */
+        const val MERMAID_SYSTEM_HINT =
+            "This IDE panel renders ```mermaid flowcharts (graph/flowchart) and state diagrams " +
+                "(stateDiagram-v2) as native diagrams. Prefer a mermaid flowchart or state diagram when it " +
+                "illustrates something better than prose or a list — process flows, decision trees, state " +
+                "machines, pipelines, and high-level architecture/component relationships. Keep node labels " +
+                "short. Other mermaid types (sequence, class, ER, gantt, pie) are shown as code here, so only " +
+                "use them when the reader specifically needs that notation."
+
         /** Enough stderr to explain an exit, capped so a chatty CLI can't grow the buffer unbounded. */
         const val MAX_STDERR_LINES = 20
 
@@ -119,6 +131,10 @@ class ClaudeSession(
             cmd.addParameters("--resume", lastSessionId!!)
             resumeNext = false
         }
+        // Tell the model this panel renders mermaid natively, so it reaches for a diagram where one
+        // illustrates better. Worded to match what actually renders (flowcharts/state diagrams) — over-
+        // promising would make Claude emit sequence diagrams that then show as plain code.
+        if (s.renderMermaid && s.mermaidTellClaude) cmd.addParameters("--append-system-prompt", MERMAID_SYSTEM_HINT)
         ArgTokenizer.tokenize(s.extraArgs ?: "").takeIf { it.isNotEmpty() }?.let { cmd.addParameters(it) }
         project.basePath?.let { cmd.setWorkDirectory(it) }
         cmd.charset = StandardCharsets.UTF_8

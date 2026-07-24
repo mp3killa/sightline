@@ -68,6 +68,18 @@ class ClaudeSettingsConfigurable : Configurable {
                     .bindSelected({ state.showDetails }, { state.showDetails = it })
             }
             row {
+                checkBox("Render mermaid flowchart & state diagrams as native diagrams")
+                    .bindSelected({ state.renderMermaid }, { state.renderMermaid = it })
+                    .comment("Other mermaid types are shown as code (no browser is available to render them). Applies to new messages.")
+            }
+            indent {
+                row {
+                    checkBox("Tell Claude this panel renders mermaid, so it uses diagrams where they help")
+                        .bindSelected({ state.mermaidTellClaude }, { state.mermaidTellClaude = it })
+                        .comment("Appends a short note to the system prompt each session. Takes effect on the next launch.")
+                }
+            }
+            row {
                 checkBox("Ask for approval before running tools (inline Allow / Deny)")
                     .bindSelected({ state.interactiveApproval }, { state.interactiveApproval = it })
                     .comment("Uses the CLI permission protocol. Combine with a permission mode: Manual prompts for everything, Auto-accept edits only prompts for commands, Bypass never prompts.")

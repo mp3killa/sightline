@@ -12,6 +12,9 @@ data class MdHeading(val level: Int, val inlines: List<MdInline>) : MdBlock
 data class MdParagraph(val inlines: List<MdInline>) : MdBlock
 data class MdList(val ordered: Boolean, val start: Int, val items: List<MdListItem>) : MdBlock
 data class MdCodeBlock(val language: String?, val code: String) : MdBlock
+/** A ```mermaid fence. The plugin renders the flowchart/state subset as a native diagram (no browser
+ *  exists in this JBR — see CLAUDE.md), and falls back to a code block for everything else. */
+data class MdMermaid(val code: String) : MdBlock
 data class MdQuote(val blocks: List<MdBlock>) : MdBlock
 data class MdTable(
     val header: List<List<MdInline>>,

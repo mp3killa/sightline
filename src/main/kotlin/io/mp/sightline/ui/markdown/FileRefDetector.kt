@@ -45,7 +45,7 @@ object FileRefDetector {
             b.rows.map { row -> row.map { inlines(it, resolves) } },
             b.alignments,
         )
-        is MdCodeBlock, MdThematicBreak -> b
+        is MdCodeBlock, is MdMermaid, MdThematicBreak -> b
     }
 
     private fun inlines(inlines: List<MdInline>, resolves: (String) -> Boolean): List<MdInline> = inlines.flatMap { inl ->

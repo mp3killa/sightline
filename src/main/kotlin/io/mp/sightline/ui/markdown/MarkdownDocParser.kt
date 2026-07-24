@@ -98,7 +98,7 @@ object MarkdownDocParser {
         return MdListItem(blocks, task)
     }
 
-    private fun codeFence(node: ASTNode, text: String): MdCodeBlock {
+    private fun codeFence(node: ASTNode, text: String): MdBlock {
         val lang = node.children.firstOrNull { it.type.name == "FENCE_LANG" }
             ?.getTextInNode(text)?.toString()?.trim()?.ifBlank { null }
         val firstEol = node.children.firstOrNull { it.type.name == "EOL" }
@@ -111,6 +111,9 @@ object MarkdownDocParser {
             // Single-line / unterminated fence: strip the opening fence line only.
             node.getTextInNode(text).toString().substringAfter('\n', "").removeSuffix("\n").removeSuffix("```").trimEnd()
         }
+        // A ```mermaid fence becomes its own block so the renderer can draw a diagram (falling back to a
+        // code block itself when the diagram type isn't one we draw).
+        if (CodeLanguages.normalize(lang) == "mermaid") return MdMermaid(code)
         return MdCodeBlock(lang, code)
     }
 
