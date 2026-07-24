@@ -299,7 +299,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             layoutTree(p.component, w, h)
 
             val labels = descendants(p.component).filterIsInstance<javax.swing.JLabel>().map { it.text.orEmpty() }
-            assertTrue("the queue must be disclosed, got: $labels", labels.any { it.contains("queued") })
+            assertTrue("the queue must be disclosed, got: $labels", labels.any { it.contains("queued", ignoreCase = true) })
 
             val out = File("build").apply { mkdirs() }.resolve("chat-gallery-queued.png")
             render(p.component, w, h, out)

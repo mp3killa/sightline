@@ -90,11 +90,15 @@ class ClaudeComposerPanel(
         onRefresh = { onRefreshAndroidContext() },
     )
 
-    /** "N messages queued" — visible only while messages are parked behind a running turn. */
-    private val queueLabel = JBLabel("").apply {
-        foreground = ClaudeUiTokens.textSecondary()
-        font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
-        border = JBUI.Borders.empty(0, 2, 2, 2)
+    /**
+     * Parked messages, one editable card each — visible while a turn is in flight. A count label was
+     * "too easy to miss" (per the review) and offered no way back: each card shows the message text and
+     * an **Edit** (pull it back into the composer) and **Cancel** (drop it) affordance.
+     */
+    private val queuedPanel = JPanel().apply {
+        layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+        isOpaque = false
+        border = JBUI.Borders.empty(0, 0, 3, 0)
         isVisible = false
     }
     private val input = JBTextArea(2, 20)
@@ -115,7 +119,7 @@ class ClaudeComposerPanel(
         chipsRow.isVisible = false
         val north = JPanel(BorderLayout()); north.isOpaque = false
         north.add(contextStrip, BorderLayout.NORTH)
-        north.add(chipsRow, BorderLayout.CENTER); north.add(queueLabel, BorderLayout.SOUTH)
+        north.add(chipsRow, BorderLayout.CENTER); north.add(queuedPanel, BorderLayout.SOUTH)
         box.add(north, BorderLayout.NORTH)
 
         input.isOpaque = false
@@ -136,8 +140,8 @@ class ClaudeComposerPanel(
             override fun changedUpdate(e: DocumentEvent) = onTextChanged()
         })
         input.addFocusListener(object : FocusAdapter() {
-            override fun focusGained(e: FocusEvent) { box.focused = true; box.repaint() }
-            override fun focusLost(e: FocusEvent) { box.focused = false; box.repaint() }
+            override fun focusGained(e: FocusEvent) { box.focused = true; box.repaint(); adjustHeight() }
+            override fun focusLost(e: FocusEvent) { box.focused = false; box.repaint(); adjustHeight() }
         })
         installPasteInterceptor()
         inputScroll.isOpaque = false
@@ -211,15 +215,96 @@ class ClaudeComposerPanel(
         input.emptyText.text = model.placeholder()
         updateSendEnabled()
         refreshQueueLabel()
+        adjustHeight() // collapse to one row when a run starts (or restore when it ends)
         sendButton.repaint()
     }
 
-    /** Shows "N messages queued" while a turn is in flight; hidden when nothing is waiting. */
+    /** Rebuilds the queued-message cards; the panel hides itself when nothing is waiting. */
     fun refreshQueueLabel() {
-        val text = model.queueLabel()
-        queueLabel.text = text
-        queueLabel.isVisible = text.isNotEmpty()
+        queuedPanel.removeAll()
+        val msgs = model.queued
+        queuedPanel.isVisible = msgs.isNotEmpty()
+        for ((i, msg) in msgs.withIndex()) {
+            queuedPanel.add(buildQueuedCard(i, msg))
+            queuedPanel.add(javax.swing.Box.createVerticalStrut(JBUI.scale(3)))
+        }
+        queuedPanel.revalidate()
         revalidate(); repaint()
+    }
+
+    private fun buildQueuedCard(index: Int, msg: ComposerModel.QueuedMessage): JComponent {
+        val row = QueuedRow()
+        row.layout = BorderLayout(JBUI.scale(8), 0)
+        row.border = JBUI.Borders.empty(3, 9)
+        row.alignmentX = Component.LEFT_ALIGNMENT
+
+        val label = JBLabel(queuedText(msg))
+        label.foreground = ClaudeUiTokens.textSecondary()
+        label.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        label.toolTipText = msg.text.trim().ifBlank { null }
+        row.add(label, BorderLayout.CENTER)
+
+        val actions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(10), 0)); actions.isOpaque = false
+        actions.add(linkAction("Edit") { editQueued(index) })
+        actions.add(linkAction("Cancel") { cancelQueued(index) })
+        row.add(actions, BorderLayout.EAST)
+        return row
+    }
+
+    /** "Queued: <text>", or a description of an image-only message; truncated to stay one line. */
+    private fun queuedText(msg: ComposerModel.QueuedMessage): String {
+        val t = msg.text.trim().replace("\n", " ")
+        val body = when {
+            t.isNotEmpty() -> if (t.length > 60) t.take(59) + "…" else t
+            msg.images.isNotEmpty() -> "${msg.images.size} image" + if (msg.images.size == 1) "" else "s"
+            else -> "(empty)"
+        }
+        return "Queued: $body"
+    }
+
+    /** Pulls a queued message back into the composer for revision (text + its captured images). */
+    private fun editQueued(index: Int) {
+        val msg = model.removeQueuedAt(index) ?: return
+        val existing = input.text
+        input.text = if (existing.isBlank()) msg.text else existing.trimEnd() + "\n" + msg.text
+        model.restoreImages(msg.images)
+        refreshChips(); refreshQueueLabel(); updateSendEnabled(); adjustHeight()
+        input.requestFocusInWindow()
+    }
+
+    private fun cancelQueued(index: Int) {
+        model.removeQueuedAt(index) ?: return
+        refreshQueueLabel()
+    }
+
+    /** A small clickable text action ("Edit" / "Cancel") that accents on hover. */
+    private fun linkAction(text: String, action: () -> Unit): JBLabel {
+        val l = JBLabel(text)
+        l.foreground = ClaudeUiTokens.textSecondary()
+        l.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        l.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        l.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) = action()
+            override fun mouseEntered(e: java.awt.event.MouseEvent) { l.foreground = ClaudeUiTokens.accent() }
+            override fun mouseExited(e: java.awt.event.MouseEvent) { l.foreground = ClaudeUiTokens.textSecondary() }
+        })
+        return l
+    }
+
+    /** A subtle rounded surface behind one queued-message card. */
+    private inner class QueuedRow : JPanel() {
+        init { isOpaque = false }
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = ClaudeUiTokens.radiusMd()
+            g2.color = ClaudeUiTokens.subtleSurface()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = ClaudeUiTokens.border()
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
     }
 
     fun setMode(shortName: String, dangerous: Boolean) {
@@ -431,11 +516,20 @@ class ClaudeComposerPanel(
         sendButton.isEnabled = model.running || model.sendEnabled(input.text)
     }
 
+    /**
+     * While the agent is working and the field is empty and unfocused, the composer collapses to a
+     * single row to give the transcript/graph the space — expanding again the moment it is focused or
+     * gains text. A light touch on purpose: the field stays present (queuing a follow-up must remain
+     * one click away), it just stops reserving two idle rows mid-run.
+     */
+    private fun effectiveMinRows(): Int =
+        if (model.running && !box.focused && input.text.isBlank()) 1 else minRows
+
     private fun adjustHeight() {
         val fm = input.getFontMetrics(input.font)
         val rowH = fm.height
         val content = input.preferredSize.height
-        val minH = rowH * minRows
+        val minH = rowH * effectiveMinRows()
         val maxH = rowH * maxRows
         val target = content.coerceIn(minH, maxH)
         inputScroll.preferredSize = Dimension(JBUI.scale(10), target + JBUI.scale(6))

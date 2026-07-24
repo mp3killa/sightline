@@ -13,6 +13,9 @@ build/
 # OS
 .DS_Store
 
+# Local screen recordings / scratch media used for review — not repo content
+*.mov
+
 # Sightline's own opt-in Android cache, if this repo is ever opened with the plugin
 .sightline/
 

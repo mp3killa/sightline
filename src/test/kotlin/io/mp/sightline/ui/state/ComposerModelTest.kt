@@ -120,6 +120,32 @@ class ComposerModelTest {
         assertEquals("2 messages queued", m.queueLabel())
     }
 
+    @Test fun removeQueuedAtDropsTheRightMessage() {
+        val m = ComposerModel()
+        m.running = true
+        m.submit("first"); m.submit("second"); m.submit("third")
+        val removed = m.removeQueuedAt(1)
+        assertEquals("second", removed?.text)
+        assertEquals(listOf("first", "third"), m.queued.map { it.text })
+    }
+
+    @Test fun removeQueuedAtOutOfRangeIsNull() {
+        val m = ComposerModel()
+        m.running = true
+        m.submit("only")
+        assertNull(m.removeQueuedAt(5))
+        assertEquals(1, m.queued.size)
+    }
+
+    @Test fun restoreImagesRefillsPendingUpToTheCap() {
+        val m = ComposerModel()
+        val imgs = (1..ImageAttachmentPolicy.MAX_IMAGES + 1).map {
+            PendingImage("img-$it", it, EncodedImage(ImageAttachmentPolicy.MEDIA_PNG, byteArrayOf(it.toByte()), 1, 1))
+        }
+        m.restoreImages(imgs)
+        assertEquals(ImageAttachmentPolicy.MAX_IMAGES, m.images.size)
+    }
+
     // ---- Android context injection (docs/ANDROID.md M1) ----
 
     @Test fun noAndroidContextByDefaultSoNothingChangesForANonAndroidProject() {

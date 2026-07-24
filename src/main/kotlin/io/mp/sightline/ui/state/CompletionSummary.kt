@@ -11,8 +11,15 @@ import java.util.Locale
 object CompletionSummary {
 
     fun footer(costUsd: Double?, durationMs: Double?, numTurns: Int?, isError: Boolean): String {
+        val head = if (isError) "Stopped" else "Completed"
+        val m = meta(costUsd, durationMs, numTurns)
+        return if (m.isEmpty()) head else "$head · $m"
+    }
+
+    /** Just the run-metadata tail — `51.6s · 13 turns · $0.404` — without the state word. Empty when
+     *  none is present. Used by the structured completion card, which draws its own state headline. */
+    fun meta(costUsd: Double?, durationMs: Double?, numTurns: Int?): String {
         val parts = ArrayList<String>()
-        parts.add(if (isError) "Stopped" else "Completed")
         durationMs?.takeIf { it > 0 }?.let { parts.add(duration(it)) }
         numTurns?.takeIf { it > 0 }?.let { parts.add("$it turn" + if (it == 1) "" else "s") }
         costUsd?.takeIf { it > 0 }?.let { parts.add("$" + cost(it)) }

@@ -88,7 +88,7 @@ import io.mp.sightline.ui.markdown.MarkdownDocParser
 import io.mp.sightline.ui.markdown.MdBlock
 import io.mp.sightline.ui.markdown.StreamingMarkdown
 import io.mp.sightline.ui.components.WrapLayout
-import io.mp.sightline.ui.state.CompletionSummary
+import io.mp.sightline.ui.state.CompletionCard
 import io.mp.sightline.ui.state.ComposerModel
 import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.LayoutProfile
@@ -1458,9 +1458,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onResult(o: JsonObject) {
         finalizeCurrent(); inAssistant = false; setRunning(false)
         val isErr = o.has("is_error") && o.get("is_error").let { it.isJsonPrimitive && it.asBoolean }
-        // Run metadata lives in a subtle turn footer, not the status strip — cost/duration/turns.
-        curTurn?.addFooter(
-            CompletionSummary.footer(o.dblOrNull("total_cost_usd"), o.dblOrNull("duration_ms"), o.intOrNull("num_turns"), isErr),
+        // Run metadata lives in a structured, secondary completion card — not the status strip. It also
+        // surfaces recovered command failures (the health layer) as end-of-turn warnings.
+        curTurn?.addCompletionFooter(
+            o.dblOrNull("total_cost_usd"), o.dblOrNull("duration_ms"), o.intOrNull("num_turns"),
+            isErr, statusModel.health().recoveredFailures,
         )
         feed(interpreter.taskDone(o.str("result") ?: "", isErr))
         if (isErr) o.str("result")?.let { addInfo(it, true) }
@@ -2139,15 +2141,59 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
 
-        /** A subtle run-metadata footer ("Completed · 51.6s · 13 turns · $0.404") — secondary, never the answer. */
-        fun addFooter(text: String) {
-            val footer = JBLabel(text)
-            footer.foreground = mutedFg()
-            footer.font = footer.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
-            footer.border = JBUI.Borders.emptyTop(4)
-            footer.alignmentX = Component.LEFT_ALIGNMENT
-            body.add(fullWidth(footer))
+        /**
+         * A structured completion card: a colour-keyed terminal **state** (Completed / Completed with
+         * warnings / Stopped), the run metadata, and any warnings the turn actually observed. Replaces
+         * the old single grey line so the outcome is glanceable rather than buried at the end of prose —
+         * while staying secondary (it never competes with the answer) and stating only observed facts,
+         * never a fabricated "implemented X, Y" narrative. See [CompletionCard].
+         */
+        fun addCompletionFooter(costUsd: Double?, durationMs: Double?, numTurns: Int?, isError: Boolean, recoveredFailures: Int) {
+            val view = CompletionCard.of(summary, costUsd, durationMs, numTurns, isError, recoveredFailures)
+            val stateColor = when (view.state) {
+                CompletionCard.State.COMPLETED -> ClaudeUiTokens.success()
+                CompletionCard.State.COMPLETED_WITH_WARNINGS -> ClaudeUiTokens.warning()
+                CompletionCard.State.STOPPED -> ClaudeUiTokens.error()
+            }
+            val card = JPanel(BorderLayout()); card.isOpaque = false
+            card.border = JBUI.Borders.emptyTop(6); card.alignmentX = Component.LEFT_ALIGNMENT
+
+            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); head.isOpaque = false
+            head.add(JBLabel(completionDot(stateColor)))
+            val headline = JBLabel(view.headline)
+            headline.foreground = stateColor
+            headline.font = headline.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11.5f).toFloat())
+            head.add(headline)
+            card.add(head, BorderLayout.WEST)
+
+            if (view.meta.isNotBlank()) {
+                val meta = JBLabel(view.meta)
+                meta.foreground = mutedFg()
+                meta.font = meta.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+                card.add(meta, BorderLayout.EAST)
+            }
+            if (view.warnings.isNotEmpty()) {
+                val warn = JBLabel(view.warnings.joinToString("  ·  "))
+                warn.foreground = ClaudeUiTokens.warning()
+                warn.font = warn.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+                warn.border = JBUI.Borders.emptyTop(2)
+                card.add(warn, BorderLayout.SOUTH)
+            }
+            body.add(fullWidth(card))
             relayout()
+        }
+
+        /** A small filled state dot for the completion card. */
+        private fun completionDot(color: Color): javax.swing.Icon = object : javax.swing.Icon {
+            override fun getIconWidth() = JBUI.scale(8)
+            override fun getIconHeight() = JBUI.scale(8)
+            override fun paintIcon(c: Component?, g: java.awt.Graphics, x: Int, y: Int) {
+                val g2 = g.create() as java.awt.Graphics2D
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = color
+                g2.fillOval(x, y, JBUI.scale(8), JBUI.scale(8))
+                g2.dispose()
+            }
         }
         private fun refreshVisibility() {
             isVisible = showDetails || textCount > 0

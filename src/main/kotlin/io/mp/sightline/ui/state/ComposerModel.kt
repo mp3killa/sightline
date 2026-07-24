@@ -126,7 +126,21 @@ class ComposerModel {
     /** Pops the next queued message, or null when nothing is waiting. */
     fun takeQueued(): QueuedMessage? = queue.removeFirstOrNull()
 
+    /** Removes and returns the queued message at [index] (a specific card's Cancel/Edit), or null. */
+    fun removeQueuedAt(index: Int): QueuedMessage? = if (index in queue.indices) queue.removeAt(index) else null
+
     fun clearQueue() = queue.clear()
+
+    /**
+     * Puts a queued message's captured images back into the pending set — used by a card's **Edit**,
+     * which pulls the message back into the composer for revision. Honours the per-message cap.
+     */
+    fun restoreImages(imgs: List<PendingImage>) {
+        for (img in imgs) {
+            if (imagesList.size >= ImageAttachmentPolicy.MAX_IMAGES) break
+            imagesList.add(img)
+        }
+    }
 
     /** Placeholder text: says what Enter will actually do right now. */
     fun placeholder(): String =
