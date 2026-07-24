@@ -4,6 +4,37 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0-beta — 2026-07-24
+
+Still beta. This release acts on an external UX review and adds native diagram rendering.
+
+### Activity map
+- **Graph modes.** A mode picker selects a lens over the graph — Everything, Changes, Problems, Data
+  flow, Navigation, Test coverage — showing the relevant nodes *and edges* rather than filtering nodes
+  alone.
+- **Shapes, not just colour.** Nodes are drawn by type — files as pages, commands as terminals, tests
+  as hexagons, warnings as triangles, errors as diamonds — so the map reads without relying on colour,
+  and edges now carry directional arrowheads. A compact, toggleable legend key sits in the corner.
+
+### Status and completion
+- A recovered command failure (a single non-zero exit the agent then works around) no longer turns the
+  whole run red and keeps it red while work continues. It is a separate **health** signal now — a
+  non-sticky note and a tally — leaving the status line free to show the current operation.
+- The turn's end is a structured **completion card**: a clear terminal state (Completed / Completed
+  with warnings / Stopped) with the run metadata and any observed warnings, in place of one grey line.
+
+### Composer
+- A message queued behind a running turn shows as an editable **card** — with **Edit** (pull it back
+  into the composer) and **Cancel** — instead of an easy-to-miss count.
+- While the agent is working and the input is empty, the composer collapses to a single row and
+  restores on focus, giving the transcript more room without hiding the field.
+
+### Diagrams
+- ` ```mermaid ` **flowcharts and state diagrams render as native diagrams** — shapes for decisions and
+  states, directional and styled edges, start/final pseudostates — with a Source toggle and Copy. Other
+  mermaid types fall back to a code block. Optional: Sightline can tell Claude it renders mermaid so it
+  reaches for a diagram where one illustrates better (both on by default, in Settings).
+
 ## 0.1.0-beta — 2026-07-20
 
 First public release. Beta: the interfaces described here may change before 1.0.
