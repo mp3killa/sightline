@@ -15,6 +15,11 @@ Still beta.
   like "Use Conventional Commits" — are configurable in Settings → Tools → Sightline → *Commit messages*.
   It runs as a one-shot, tool-free CLI call (no session, no repo access beyond the diff it's given), and a
   failure is reported as a balloon rather than silently doing nothing.
+- **Honours your project's stated commit style.** If the project's own docs describe a commit convention
+  — a "Commit messages" section in CONTRIBUTING, a `.gitmessage` template, a commitlint config, or the
+  same in CLAUDE.md / AGENTS.md — the draft follows it automatically, without your having to repeat it.
+- The button **disables while a draft is generating** and re-enables once the message lands, so a second
+  click can't race the first.
 
 ## 0.2.0-beta — 2026-07-24
 

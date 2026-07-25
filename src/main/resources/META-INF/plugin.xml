@@ -54,8 +54,10 @@
         <ul>
             <li><b>Generate commit messages.</b> A new button in the commit dialog's message toolbar reads
             the diff of the changes you're committing and drafts a message into the field — using a fast,
-            low-effort model by default. The model and optional style guidance (e.g. "Use Conventional
-            Commits") are configurable in Settings &#8594; Tools &#8594; Sightline.</li>
+            low-effort model by default. It follows a commit style your project already states (a
+            "Commit messages" section in CONTRIBUTING, a <code>.gitmessage</code> template, a commitlint
+            config, or CLAUDE.md / AGENTS.md), and disables while it drafts. The model and optional style
+            guidance are configurable in Settings &#8594; Tools &#8594; Sightline.</li>
         </ul>
 
         <p><b>0.2.0-beta</b></p>

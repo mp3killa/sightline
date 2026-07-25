@@ -23,7 +23,11 @@ object CommitMessageGenerator {
         data class Err(val reason: String) : Result
     }
 
-    fun generate(basePath: String?, diff: String): Result {
+    /**
+     * @param projectStyle commit-message guidance found in the project's own docs ([CommitStyleScanner]),
+     *   or "" — combined with the user's settings guidance so a stated house style is honoured.
+     */
+    fun generate(basePath: String?, diff: String, projectStyle: String = ""): Result {
         if (diff.isBlank()) return Result.Err("No changes to describe.")
         val s = ClaudeSettings.getInstance().state
         val exe = try {
@@ -32,7 +36,12 @@ object CommitMessageGenerator {
             return Result.Err("Couldn't find the claude CLI — set its path in Settings → Tools → Sightline.")
         }
         val model = (s.commitMessageModel ?: "").trim().ifEmpty { "haiku" }
-        val prompt = CommitMessagePrompt.build(diff, s.commitMessageInstructions ?: "")
+        val guidance = buildList {
+            (s.commitMessageInstructions ?: "").trim().takeIf { it.isNotEmpty() }?.let { add(it) }
+            projectStyle.trim().takeIf { it.isNotEmpty() }
+                ?.let { add("This project states its own commit-message style below — follow it:\n$it") }
+        }.joinToString("\n\n")
+        val prompt = CommitMessagePrompt.build(diff, guidance)
 
         val cmd = GeneralCommandLine(exe, "-p", prompt, "--model", model, "--output-format", "text")
         basePath?.let { cmd.setWorkDirectory(it) }
