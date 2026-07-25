@@ -79,6 +79,18 @@ class ClaudeSettingsConfigurable : Configurable {
                         .comment("Appends a short note to the system prompt each session. Takes effect on the next launch.")
                 }
             }
+            group("Commit messages") {
+                row("Model:") {
+                    textField()
+                        .bindText({ state.commitMessageModel ?: "haiku" }, { state.commitMessageModel = it })
+                        .comment("Used by <b>Generate Commit Message</b> in the commit dialog. A fast model like <b>haiku</b> is a good default; accepts a CLI alias or a full model id.")
+                }
+                row("Style guidance:") {
+                    textField()
+                        .bindText({ state.commitMessageInstructions ?: "" }, { state.commitMessageInstructions = it })
+                        .comment("Optional — appended to the prompt, e.g. \"Use Conventional Commits\".")
+                }
+            }
             row {
                 checkBox("Ask for approval before running tools (inline Allow / Deny)")
                     .bindSelected({ state.interactiveApproval }, { state.interactiveApproval = it })

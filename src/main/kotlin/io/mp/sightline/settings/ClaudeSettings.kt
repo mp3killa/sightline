@@ -36,6 +36,13 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
          */
         var mermaidTellClaude by property(true)
 
+        /** Model for the one-shot "Generate commit message" action — a fast, low-effort model by default;
+         *  accepts a CLI alias ("haiku") or a full model id. */
+        var commitMessageModel by string("haiku")
+
+        /** Optional style guidance appended to the commit-message prompt (e.g. "Use Conventional Commits"). */
+        var commitMessageInstructions by string("")
+
         /** Prompt for approval before each tool that needs it (uses the CLI control protocol). */
         var interactiveApproval by property(true)
 

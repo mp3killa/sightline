@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.2.0-beta"
+version = "0.3.0-beta"
 
 // The Marketplace channel is derived from the version, never chosen by hand. A pre-release suffix
 // publishes to its own channel, which users opt into by adding a repository URL; only a bare version

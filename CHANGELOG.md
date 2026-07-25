@@ -4,6 +4,18 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0-beta — 2026-07-24
+
+Still beta.
+
+### Commit messages
+- **Generate a commit message from your changes.** A new button in the commit tool window's message
+  toolbar reads the diff of the changes you're committing and drafts a message into the field. It runs a
+  **fast, low-effort model by default** for a near-instant draft; the model — and optional style guidance
+  like "Use Conventional Commits" — are configurable in Settings → Tools → Sightline → *Commit messages*.
+  It runs as a one-shot, tool-free CLI call (no session, no repo access beyond the diff it's given), and a
+  failure is reported as a balloon rather than silently doing nothing.
+
 ## 0.2.0-beta — 2026-07-24
 
 Still beta. This release acts on an external UX review and adds native diagram rendering.

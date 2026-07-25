@@ -50,21 +50,36 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.1.0-beta</b> — first public release.</p>
+        <p><b>0.3.0-beta</b></p>
         <ul>
-            <li><b>Chat panel</b> — streaming replies, extended thinking, Markdown with syntax-highlighted
-            code, collapsible tool cards, and edit diffs you review before they apply.</li>
-            <li><b>Permission control</b> — five modes, inline Allow / Allow-always / Deny, a path guard
-            that refuses credential locations outright, and a device gate that always confirms anything
-            destroying app data.</li>
-            <li><b>Agent Activity Map</b> — a live graph of what Claude is <i>observably</i> touching,
-            with the evidence for every relationship it draws.</li>
-            <li><b>Android control centre</b> — build-variant and device context supplied automatically,
-            typed Gradle failure diagnosis, crash-to-source resolution, targeted test selection, redacted
-            logcat, screen inspection, Compose and manifest analysis.</li>
-            <li><b>No telemetry</b>, and no conversation persistence.</li>
+            <li><b>Generate commit messages.</b> A new button in the commit dialog's message toolbar reads
+            the diff of the changes you're committing and drafts a message into the field — using a fast,
+            low-effort model by default. The model and optional style guidance (e.g. "Use Conventional
+            Commits") are configurable in Settings &#8594; Tools &#8594; Sightline.</li>
         </ul>
-        <p>This is a beta. Please report problems on the public issue tracker.</p>
+
+        <p><b>0.2.0-beta</b></p>
+        <ul>
+            <li><b>Mermaid diagrams render natively.</b> <code>```mermaid</code> flowcharts and state
+            diagrams draw as real diagrams in the transcript — shapes for decisions and states, directional
+            edges, start/final markers — with a Source toggle and Copy. Other diagram types fall back to a
+            code block. Claude is told the panel supports them, so it reaches for a diagram where one
+            illustrates better.</li>
+            <li><b>A clearer, calmer Activity Map.</b> A mode picker (Everything, Changes, Problems, Data
+            flow, Navigation, Test coverage) selects the nodes <i>and edges</i> that matter; nodes are drawn
+            by type as distinct shapes (files, commands, tests, warnings, errors) so the graph reads without
+            relying on colour; edges carry direction arrows; and a compact legend key sits in the corner.</li>
+            <li><b>Trustworthy run status.</b> A single recovered command failure no longer turns the whole
+            run red while work continues — it's shown as a separate health note. Each turn ends with a
+            structured completion card (Completed / Completed with warnings / Stopped) and any observed
+            warnings, instead of one grey line.</li>
+            <li><b>Better composer.</b> A message queued behind a running turn is an editable card (Edit /
+            Cancel), not an easy-to-miss count; and the composer collapses to a single row while Claude
+            works, restoring the moment you click it.</li>
+        </ul>
+
+        <p>Upgrading from 0.1.0-beta gains all of the above. Still a beta — please report problems on the
+        public issue tracker.</p>
     ]]></change-notes>
 
     <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST
@@ -101,5 +116,18 @@
                                  id="io.mp.sightline.settings"
                                  displayName="Sightline"
                                  instance="io.mp.sightline.settings.ClaudeSettingsConfigurable"/>
+        <notificationGroup id="Sightline" displayType="BALLOON"/>
     </extensions>
+
+    <actions>
+        <!-- "Generate commit message" in the commit tool window's message toolbar. Drafts a message from
+             the changes being committed using a fast model. -->
+        <action id="io.mp.sightline.GenerateCommitMessage"
+                class="io.mp.sightline.vcs.GenerateCommitMessageAction"
+                text="Generate Commit Message (Sightline)"
+                description="Draft a commit message from the selected changes using Claude"
+                icon="/icons/sightline.svg">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
 </idea-plugin>
