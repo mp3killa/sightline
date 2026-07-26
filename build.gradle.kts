@@ -147,8 +147,13 @@ intellijPlatform {
             // listing real reach (installable on 253+, which includes AS 2026.1). The code avoids 261-only
             // APIs — `verifyPlugin` (below) confirms the 261-compiled artifact is clean against 253.
             sinceBuild = "253"
-            // untilBuild is intentionally omitted: it is ignored on platform 243+,
-            // so the plugin stays compatible with future Android Studio builds.
+            // MUST explicitly clear untilBuild. In IntelliJ Platform Gradle Plugin 2.x, leaving it unset
+            // does NOT mean "no upper bound" — patchPluginXml then defaults it to `<build-branch>.*` of the
+            // platform this was COMPILED against. The release CI compiles against 253 (AI 2025.3.1.1), so
+            // that default stamped `until-build=253.*` into the shipped descriptor and the Marketplace
+            // marked the plugin incompatible with build 261 (AS 2026.1). `provider { null }` removes the
+            // attribute entirely, so it stays installable on 253 and every future build.
+            untilBuild = provider { null }
         }
     }
 
