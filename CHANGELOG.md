@@ -4,6 +4,14 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1-beta — 2026-07-26
+
+Compatibility fix.
+
+- **Installs on Android Studio 2026.1 (build 261) again.** The previous build stamped an upper build
+  limit into its descriptor and the Marketplace marked it incompatible with 261. The upper limit is
+  removed, so Sightline installs on build 253 and every later build.
+
 ## 0.3.0-beta — 2026-07-24
 
 Still beta.

@@ -50,6 +50,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.3.1-beta</b></p>
+        <ul>
+            <li>Compatibility fix: installs on Android Studio 2026.1 (build 261) and later again — a stray
+            upper build-limit in the previous artifact's descriptor has been removed.</li>
+        </ul>
+
         <p><b>0.3.0-beta</b></p>
         <ul>
             <li><b>Generate commit messages.</b> A new button in the commit dialog's message toolbar reads

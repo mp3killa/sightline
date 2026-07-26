@@ -170,6 +170,21 @@ verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things 
 - **`version` lives only in `build.gradle.kts`.** `plugin.xml` carries no `<version>` — `patchPluginXml`
   writes it in. Two copies could disagree and the descriptor would silently win.
 
+**Release hygiene — do these together, every time, or a publish gets friction.** A release is not just a
+code change; treat the version, the notes, and the descriptor as one unit:
+- **Bump `version` for every published artifact — the Marketplace refuses to re-upload an existing
+  version number.** Follow ordinary semver on the pre-release: patch (`0.3.0-beta` → `0.3.1-beta`) for a
+  fix, minor (`0.3.x` → `0.4.0-beta`) for a feature. Never try to replace an already-uploaded number;
+  bump instead. (This is exactly what made the build-261 fix need `0.3.1-beta`.)
+- **Update BOTH the `<change-notes>` in `plugin.xml` (this is the Marketplace "What's new") and
+  `CHANGELOG.md` in the same commit as the bump.** `patchPluginXml` writes only the version, never the
+  notes, so stale `<change-notes>` ship verbatim. Keeping them current in the bump commit is what makes a
+  publish a drag-and-drop, not an archaeology exercise.
+- **The descriptor's compatibility range is load-bearing:** `sinceBuild = "253"` and
+  `untilBuild = provider { null }` (the explicit clear — omitting it makes IPGP 2.x default
+  `until-build` to the *build* platform's branch, which is what marked the plugin incompatible with
+  build 261). Don't "tidy" that line away.
+
 **The first Marketplace upload cannot be automated** — JetBrains has no API for creating a *new*
 listing. The pipeline publishes subsequent versions only.
 
