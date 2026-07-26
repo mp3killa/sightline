@@ -167,7 +167,7 @@ intellijPlatform {
     // form hit the same wrong group, so the task fails before the verifier starts. The script downloads
     // from the correct coordinate and runs the same verifier CLI directly.
     //
-    // Last run 2026-07-20 against IC-253.28294.334: **Compatible** — 0 compatibility problems.
+    // Last run 2026-07-26 (0.3.1-beta) against IC-253.28294.334: **Compatible** — 0 compatibility problems.
     // The 10 remaining findings are all `ToolWindowFactory` interface members that Kotlin materialises
     // for any implementor (isApplicable, isDoNotActivateOnStart, getIcon, getAnchor, manage); they are
     // informational and not avoidable without abandoning the interface.

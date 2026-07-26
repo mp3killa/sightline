@@ -215,8 +215,10 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
   under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
   Both `select { }` and `ide(...)` hit the same wrong group. The script fetches the correct coordinate
-  and runs the same verifier CLI. **Last run: `io.mp.sightline:0.1.0-beta` vs `IC-253.28294.334` —
-  Compatible, 0 problems.** Re-run before every release.
+  and runs the same verifier CLI. **Last run (2026-07-26): `io.mp.sightline:0.3.1-beta` vs
+  `IC-253.28294.334` — Compatible, 0 compatibility problems** (only the 10 informational
+  `ToolWindowFactory` deprecated/experimental usages; nothing from mermaid or the commit-message diff
+  APIs). Re-run before every release.
 - **A NUL byte makes a source file invisible to `grep`.** Two files here had one (a mangled `' '` char
   literal), so `file` reported them as `data`, grep skipped them, and a package-wide rename silently
   missed both — surfacing only as unresolved references at compile time. If a text tool seems to be
