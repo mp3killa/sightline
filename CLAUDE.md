@@ -184,6 +184,11 @@ code change; treat the version, the notes, and the descriptor as one unit:
   `untilBuild = provider { null }` (the explicit clear — omitting it makes IPGP 2.x default
   `until-build` to the *build* platform's branch, which is what marked the plugin incompatible with
   build 261). Don't "tidy" that line away.
+- **Re-run `tools/verify-plugin.sh` against the new version before every upload**, and record the result
+  (version vs IDE build, Compatible / N problems) in the *Build gotchas* note below. The verifier catches
+  internal/experimental-API usage — a common Marketplace rejection — and the surface keeps growing
+  (mermaid, the commit-message action uses `com.intellij.openapi.diff.impl.patch.*`), so a clean run on
+  `0.1.0-beta` does not vouch for a later one. A publish that skips this can be rejected *after* upload.
 
 **The first Marketplace upload cannot be automated** — JetBrains has no API for creating a *new*
 listing. The pipeline publishes subsequent versions only.
