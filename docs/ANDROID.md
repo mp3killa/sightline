@@ -198,10 +198,10 @@ Three integration seams, all already present and all cheap:
 | Chip row | `ui/ClaudeComposerPanel.kt:53,78-80,195-206` | exists; currently attachments-only and hardwired removable |
 | MCP tools | `ide/IdeServer.kt:235` `toolsList()` / `:256` `callTool()` | add `android.*` to the existing `ide` server — do **not** add a second MCP server; `--mcp-config` at `process/ClaudeSession.kt:98-104` is a single hardcoded inline JSON string |
 
-Note on prompt injection: `buildMessage` is also re-entered when the queue drains
-(`ui/ClaudePanel.kt:1561-1565`), so a queued message picks up facts **at drain time, not queue time**.
-That is the right call — the device may have changed while the message waited — but it must be
-deliberate and tested, not incidental.
+Note on prompt injection: every delivery path re-enters `buildMessage` at the moment the message
+actually leaves — a mid-turn **interjection** and a drained queue entry alike (`ClaudePanel.doSend`) —
+so the facts are the ones true at send time, not at Enter time. That is the right call — the device may
+have changed while the message waited — but it must be deliberate and tested, not incidental.
 
 ---
 

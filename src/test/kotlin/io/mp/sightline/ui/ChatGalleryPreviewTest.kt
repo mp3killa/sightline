@@ -308,6 +308,73 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         } finally { JBColor.setDark(false) }
     }
 
+    /**
+     * A follow-up submitted mid-turn is **folded into the running turn**, not parked until it ends: the
+     * bubble joins the transcript captioned as having gone out mid-run, and the turn keeps running — no
+     * new task, no queue card, nothing waiting. Renders `chat-gallery-interjected.png`.
+     *
+     * The disclosure is asserted as well as drawn. A message that reaches the agent mid-run reads oddly
+     * in a transcript without it (an answer that suddenly changes direction, out of nowhere), and the
+     * caption is the only thing that explains the order.
+     */
+    fun testInterjectsAMidTurnMessageIntoTheRunningTurn() {
+        if (!applyTheme(dark = false)) return
+        try {
+            val settings = ClaudeSettings.getInstance().state
+            settings.showDetails = true
+            settings.showActivityMap = false
+            settings.activityViewMode = "chat"
+            // The send path gates on the first-run disclosure; acknowledging it keeps this headless.
+            // Restored below — it is a safety gate, and leaking an acknowledgement into another test
+            // could hide a regression in the very thing that gate exists for.
+            settings.firstRunAcknowledged = true
+            val p = ClaudePanel(project, testRootDisposable)
+            seed(p)
+            p.interjectMessageForPreview("Actually — check the tests before you go further.")
+            // What the agent says next must land in a new turn *below* the interjection, not appended to
+            // the turn above it — the transcript's only claim is the order things happened in.
+            p.renderProtocolLineForPreview(
+                """{"type":"assistant","message":{"content":[{"type":"text","text":"Understood — running the tests first."}]}}"""
+            )
+            val w = 900; val h = 1750
+            p.component.preferredSize = Dimension(w, h)
+            layoutTree(p.component, w, h)
+
+            val text = descendants(p.component).filterIsInstance<javax.swing.text.JTextComponent>()
+                .map { it.text.orEmpty() }
+            assertTrue(
+                "the interjected message must appear in the transcript",
+                text.any { it.contains("check the tests before you go further") },
+            )
+            assertTrue(
+                "and be captioned as having gone out mid-run, got: $text",
+                text.any { it.contains("Sent while Claude was working") },
+            )
+            val labels = descendants(p.component).filterIsInstance<javax.swing.JLabel>().map { it.text.orEmpty() }
+            assertFalse(
+                "nothing may be left queued — the message is already in flight, got: $labels",
+                labels.any { it.contains("Queued:", ignoreCase = true) },
+            )
+            assertTrue("the turn must still be running", p.isRunningForTest())
+
+            val bubbleAt = text.indexOfFirst { it.contains("check the tests before you go further") }
+            val replyAt = text.indexOfFirst { it.contains("running the tests first") }
+            assertTrue("the continuation must render, got: $text", replyAt >= 0)
+            assertTrue(
+                "output after an interjection belongs below it, not folded into the turn above",
+                replyAt > bubbleAt,
+            )
+
+            val out = File("build").apply { mkdirs() }.resolve("chat-gallery-interjected.png")
+            render(p.component, w, h, out)
+            println("[chat-gallery] wrote ${'$'}{out.absolutePath}")
+            assertTrue(out.length() > 5000)
+        } finally {
+            JBColor.setDark(false)
+            ClaudeSettings.getInstance().state.firstRunAcknowledged = false
+        }
+    }
+
     /** Hover actions must exist but stay hidden until hover/focus, or the default view gets cluttered. */
     fun testHoverActionsExistButStartHidden() {
         val settings = ClaudeSettings.getInstance().state

@@ -50,6 +50,21 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.4.0-beta</b></p>
+        <ul>
+            <li><b>A message you send while Claude is working now reaches the work in progress.</b> Pressing
+            Enter mid-turn used to park the message until the turn was over — by which time the agent had
+            usually finished going the way you were trying to redirect it. It is now delivered into the
+            running session and folded into the current turn at the agent's next step, so "also update the
+            tests" or "stop, wrong file" arrives while it still matters. The message is marked
+            <i>Sent while Claude was working</i>, and what the agent says next appears below it, so the
+            transcript still reads in the order things happened.</li>
+            <li>Queuing remains for the one case where nothing can receive a message — a Stop in flight, or
+            a session that has exited — and those messages still go out with the next turn. If the session
+            ends in the instant between the check and the send, your text stays in the composer and you're
+            told, rather than a message that looks sent reaching nobody.</li>
+        </ul>
+
         <p><b>0.3.1-beta</b></p>
         <ul>
             <li>Compatibility fix: installs on Android Studio 2026.1 (build 261) and later again — a stray

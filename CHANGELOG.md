@@ -4,6 +4,21 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0-beta — 2026-07-26
+
+Mid-turn follow-ups.
+
+- **A message sent while Claude is working now reaches the work in progress.** Pressing Enter mid-turn
+  used to park the message until the turn was over, by which time the agent had usually finished going
+  the way you were trying to redirect it. It is now written straight into the running session, and the
+  CLI folds it into the current turn at the agent's next step — so "also update the tests" or "stop, wrong
+  file" arrives while it still matters. The bubble is captioned *"Sent while Claude was working"* so the
+  transcript still reads in the order things happened.
+- Queuing remains for the one case where nothing can receive a message — a Stop in flight, or a session
+  that has exited — and those messages still go out with the next turn. If the session dies in the instant
+  between the check and the write, the text stays in the composer and you're told, rather than a message
+  that appears sent reaching nobody.
+
 ## 0.3.1-beta — 2026-07-26
 
 Compatibility fix.

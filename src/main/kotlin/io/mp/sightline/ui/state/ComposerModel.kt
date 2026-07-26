@@ -87,7 +87,7 @@ class ComposerModel {
     fun takeImages(): List<PendingImage> = imagesList.toList().also { imagesList.clear() }
 
     /** What submitting the composer did — the caller renders each outcome differently. */
-    enum class Submit { SENT, QUEUED, IGNORED_BLANK }
+    enum class Submit { SENT, INTERJECTED, QUEUED, IGNORED_BLANK }
 
     /**
      * A message parked behind a running turn. Its images were captured at Enter-time: a pasted
@@ -103,24 +103,48 @@ class ComposerModel {
     val hasQueued: Boolean get() = queue.isNotEmpty()
 
     /**
+     * Whether a live session can take a message **right now** — the host wires this to "a CLI process is
+     * alive and has not been asked to stop".
+     *
+     * When it can, a message submitted mid-turn is *interjected*: the CLI's streaming input folds it into
+     * the work already in progress, so "also update the tests" reaches the agent while it is still on the
+     * task instead of arriving as a fresh turn after it has moved on. When it can't — a Stop in flight, or
+     * a process that has exited before the panel observed the exit — the message parks in [queued] and
+     * goes out with the next turn, because writing to a stdin nobody is reading loses it silently.
+     *
+     * Defaults to the conservative answer: with no host wired, nothing is assumed to be listening.
+     */
+    var canInterject: () -> Boolean = { false }
+
+    /**
      * Send is enabled whenever there is something to send — text, a pasted image, or an attached
      * file; "look at this" with no prose is a legitimate message. While a turn is running the
-     * message is **queued** rather than rejected. Previously this was `!running && …`, and because
-     * the input was never disabled a user could type a whole message, press Enter, and have nothing
-     * happen with no feedback at all.
+     * message is **interjected or queued** rather than rejected. Previously this was `!running && …`, and
+     * because the input was never disabled a user could type a whole message, press Enter, and have
+     * nothing happen with no feedback at all.
      */
     fun sendEnabled(text: String): Boolean = text.isNotBlank() || hasImages || hasAttachments
 
     /**
-     * Submits [text]: sent now when idle, queued when a turn is in flight. Truly empty input — no
-     * text, no images, no attachments — is ignored, never queued, so an accidental Enter doesn't
-     * schedule an empty turn. Queuing captures the pending images into the entry (and clears them),
-     * so an image pasted while the entry waits belongs to the *next* message.
+     * Submits [text]: sent now when idle, **interjected into the running turn** when one is in flight and
+     * the session can take it ([canInterject]), and only parked in the queue when it can't. Truly empty
+     * input — no text, no images, no attachments — is ignored in every case, so an accidental Enter
+     * doesn't schedule an empty turn.
+     *
+     * Mid-turn used to mean *queued until the turn ended*, on the reasoning that two turns' output would
+     * interleave unreadably. That reasoning doesn't apply to the delivery the CLI actually offers: a user
+     * message written to its streaming stdin is folded into the work in progress at the agent's next step,
+     * producing one continuous turn rather than two overlapping ones — and a follow-up's whole value is
+     * usually that it lands *before* the agent finishes going the wrong way.
+     *
+     * Queuing captures the pending images into the entry (and clears them), so an image pasted while the
+     * entry waits belongs to the *next* message.
      */
     fun submit(text: String): Submit = when {
         text.isBlank() && !hasImages && !hasAttachments -> Submit.IGNORED_BLANK
-        running -> { queue.addLast(QueuedMessage(text, takeImages())); Submit.QUEUED }
-        else -> Submit.SENT
+        !running -> Submit.SENT
+        canInterject() -> Submit.INTERJECTED
+        else -> { queue.addLast(QueuedMessage(text, takeImages())); Submit.QUEUED }
     }
 
     /** Pops the next queued message, or null when nothing is waiting. */
@@ -142,9 +166,12 @@ class ComposerModel {
         }
     }
 
-    /** Placeholder text: says what Enter will actually do right now. */
-    fun placeholder(): String =
-        if (running) "Queue another message…" else "Ask Claude about this project…"
+    /** Placeholder text: says what Enter will actually do right now — send, fold in, or park. */
+    fun placeholder(): String = when {
+        !running -> "Ask Claude about this project…"
+        canInterject() -> "Add to what Claude is doing…"
+        else -> "Queue for the next turn…"
+    }
 
     /** "1 message queued" / "3 messages queued"; empty when nothing is waiting. */
     fun queueLabel(): String = when (queue.size) {

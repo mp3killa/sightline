@@ -13,9 +13,9 @@ class ComposerModelTest {
      * Send depends on there being text, and **not** on being idle.
      *
      * This deliberately replaces the old `!running && …` rule: while a turn is in flight the message is
-     * queued (see the queueing tests below) rather than rejected. Under the old rule the input was
-     * still editable, so a user could type a whole message, press Enter, and get no response and no
-     * explanation.
+     * interjected into it (or queued when nothing is listening — see the tests below) rather than
+     * rejected. Under the old rule the input was still editable, so a user could type a whole message,
+     * press Enter, and get no response and no explanation.
      */
     @Test fun sendDisabledOnlyWhenThereIsNoText() {
         val c = ComposerModel()
@@ -23,7 +23,7 @@ class ComposerModelTest {
         assertFalse(c.sendEnabled("   "))
         assertTrue(c.sendEnabled("hi"))
         c.running = true
-        assertTrue("running no longer blocks submission — it queues", c.sendEnabled("hi"))
+        assertTrue("running no longer blocks submission — it interjects or queues", c.sendEnabled("hi"))
         assertFalse(c.sendEnabled(""))
     }
 
@@ -62,7 +62,7 @@ class ComposerModelTest {
         assertEquals("hi", c.buildMessage("hi"))
     }
 
-    // ---- queueing while a turn is running (M7) ----
+    // ---- mid-turn submit: interjection first, queueing as the fallback ----
 
     @Test fun idleSubmitSendsImmediately() {
         val m = ComposerModel()
@@ -70,13 +70,61 @@ class ComposerModelTest {
         assertFalse(m.hasQueued)
     }
 
-    /** The old behaviour: type a message, press Enter, nothing happens, no feedback. */
-    @Test fun submitWhileRunningQueuesInsteadOfSilentlyDoingNothing() {
+    /**
+     * The point of a follow-up is that it lands *while* the agent is still on the task. With a live
+     * session it is interjected — folded into the running turn by the CLI's streaming input — not parked
+     * until the turn is over and the agent has moved on.
+     */
+    @Test fun submitWhileRunningInterjectsIntoTheLiveTurn() {
         val m = ComposerModel()
         m.running = true
+        m.canInterject = { true }
+        assertEquals(ComposerModel.Submit.INTERJECTED, m.submit("also update the tests"))
+        assertFalse("an interjected message is in flight, not waiting", m.hasQueued)
+        assertEquals("", m.queueLabel())
+    }
+
+    /**
+     * An interjection leaves the pending images alone: the host reads and clears them as it sends. If the
+     * model consumed them here too they would be attached twice — once to the wire, once to a queue entry
+     * nobody drains.
+     */
+    @Test fun interjectionLeavesPendingImagesForTheHostToSend() {
+        val m = ComposerModel()
+        m.running = true
+        m.canInterject = { true }
+        m.addImage(EncodedImage(ImageAttachmentPolicy.MEDIA_PNG, ByteArray(100), 100, 50))
+        assertEquals(ComposerModel.Submit.INTERJECTED, m.submit("look at this"))
+        assertEquals(1, m.images.size)
+    }
+
+    /**
+     * The fallback, and the reason [ComposerModel.canInterject] exists: during a Stop (or after an exit
+     * the panel hasn't observed) there is no process reading stdin, so a write would lose the message
+     * silently. It parks and goes out with the next turn instead.
+     */
+    @Test fun submitWhileRunningQueuesWhenNothingIsListening() {
+        val m = ComposerModel()
+        m.running = true
+        m.canInterject = { false }
         assertEquals(ComposerModel.Submit.QUEUED, m.submit("next thing"))
         assertTrue(m.hasQueued)
         assertEquals(listOf("next thing"), m.queued.map { it.text })
+    }
+
+    /** With no host wired, nothing is assumed to be listening — the conservative default. */
+    @Test fun unwiredModelFallsBackToQueueing() {
+        val m = ComposerModel()
+        m.running = true
+        assertEquals(ComposerModel.Submit.QUEUED, m.submit("next thing"))
+    }
+
+    @Test fun blankInputIsNeverInterjectedEither() {
+        val m = ComposerModel()
+        m.running = true
+        m.canInterject = { true }
+        assertEquals(ComposerModel.Submit.IGNORED_BLANK, m.submit("   "))
+        assertFalse(m.hasQueued)
     }
 
     @Test fun blankInputIsNeverQueued() {
@@ -102,12 +150,18 @@ class ComposerModelTest {
         assertFalse(m.sendEnabled("  "))
     }
 
-    /** The placeholder must say what Enter will actually do right now. */
-    @Test fun placeholderReflectsQueueingState() {
+    /**
+     * The placeholder must say what Enter will actually do right now — and the three outcomes are
+     * genuinely different promises, so one wording cannot cover them.
+     */
+    @Test fun placeholderReflectsWhatEnterWillDo() {
         val m = ComposerModel()
         assertTrue(m.placeholder().contains("Ask Claude"))
         m.running = true
-        assertTrue(m.placeholder().contains("Queue another"))
+        m.canInterject = { true }
+        assertTrue("mid-turn with a live session: it folds in", m.placeholder().contains("Add to what Claude is doing"))
+        m.canInterject = { false }
+        assertTrue("nothing listening: it waits for the next turn", m.placeholder().contains("Queue for the next turn"))
     }
 
     @Test fun queueLabelIsPluralisedAndEmptyWhenIdle() {

@@ -182,6 +182,14 @@ private const val PRIME_PROMPT =
 private const val SIM_REQ_PREFIX = "sim-question-"
 
 /**
+ * Caption under a user bubble that went out mid-run. It states **when the message was sent**, which is
+ * the part this panel actually knows: the CLI folds a streamed-in user message into the work in progress
+ * at the agent's next step, and if the turn happens to end in that same instant it is answered as the
+ * next turn. "Claude will read this now" would be a claim about the other side of the pipe.
+ */
+private const val INTERJECTED_NOTE = "Sent while Claude was working"
+
+/**
  * Bottom gutter the transcript reserves for the "Jump to latest" overlay (unscaled; [JBUI] scales it
  * alongside the button's own scaled font). The button floats over the transcript so that showing and
  * hiding it never shifts the text being read — but without room to scroll into, that same overlay sits
@@ -335,6 +343,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     // render state
     private var running = false
+
+    /**
+     * A Stop has been asked for but the exit hasn't been observed yet. During that window the CLI is
+     * being torn down, so a mid-turn message must queue rather than be written into a dying stdin —
+     * see [canInterject].
+     */
+    private var stopping = false
     private var inAssistant = false
     private var sawStream = false
     private var curTurn: AssistantTurn? = null
@@ -421,6 +436,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         mapSplitter.setHonorComponentsMinimumSize(false)
         installCenter()
         root.add(centerHost, BorderLayout.CENTER)
+
+        // Whether Enter mid-turn folds into the running turn or parks for the next one. The model owns
+        // the decision but can't see a process, so the host supplies the answer.
+        composerModel.canInterject = { canInterject() }
 
         composer = ClaudeComposerPanel(
             model = composerModel,
@@ -682,7 +701,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         addRow(r)
     }
 
-    private fun addUserBubble(text: String, attachments: List<String>, images: List<PendingImage> = emptyList()) {
+    /**
+     * A user turn. [interjected] captions the bubble as having gone out mid-run — worded as *when it was
+     * sent*, not as a promise about what the agent does with it: the CLI folds it in at its next step,
+     * and a turn that happens to end in that instant answers it as the following turn instead.
+     */
+    private fun addUserBubble(
+        text: String,
+        attachments: List<String>,
+        images: List<PendingImage> = emptyList(),
+        interjected: Boolean = false,
+    ) {
         val bubble = Bubble()
         bubble.border = JBUI.Borders.empty(9, 12)
         val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
@@ -706,6 +735,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             ctx.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
             ctx.foreground = mutedFg()
             col.add(fullWidth(ctx))
+        }
+        if (interjected) {
+            val note = plainArea(INTERJECTED_NOTE)
+            note.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+            note.foreground = mutedFg()
+            col.add(fullWidth(note))
         }
         bubble.add(col, BorderLayout.CENTER)
         addRow(bubble)
@@ -886,9 +921,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * Sends a message: the composer's live text + pending images, or — on the queue-drain path — a
      * [queuedImages] set captured when the user pressed Enter mid-turn (a paste made *while* that
      * entry waited belongs to the next message, so the live pending set is left alone there).
+     *
+     * When a turn is already running this is an **interjection**: the message goes down the same stdin
+     * and the CLI folds it into the work in progress at the agent's next step, rather than waiting for
+     * the turn to end. The differences from a fresh turn are all about not overwriting a run that is
+     * still going — no new activity task, no status/health reset, and no new turn container for output
+     * that is still landing in the current one.
      */
     private fun doSend(rawText: String, queuedImages: List<PendingImage>? = null) {
-        if (running) return
+        // Mid-turn only reaches here as an interjection: ComposerModel.submit parks the message instead
+        // whenever canInterject() says nothing is listening (a Stop in flight, an unobserved exit).
+        val interjecting = running
+        if (interjecting && !canInterject()) return
         val text = rawText.trim()
         // Pending images make a blank body sendable: "look at this" needs no prose.
         val images = queuedImages ?: composerModel.images
@@ -897,19 +941,61 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // say "this can read your files and run commands" is before it does. Declining cancels the
         // send — dismissing a disclosure is not consent, and the images stay pending.
         if (!FirstRunDialog.ensureAcknowledged(project)) return
-        if (queuedImages == null) composerModel.clearImages() // `images` holds the snapshot leaving now
         val attachments = composerModel.attachments
         val message = composerModel.buildMessage(rawText)
-        finalizeCurrent(); inAssistant = false; curTurn = null
+        val wire = images.map { it.toWireBlock() }
+        // The interjection write comes first, before anything is consumed. A process can die at any
+        // moment, including between canInterject() above and this line, and the write refuses to start a
+        // replacement — so on failure the text is still in the composer and the user can be told, rather
+        // than watching their message become a bubble that never reached anyone.
+        if (interjecting && !writeInterjection(message, wire)) {
+            addInfo("Claude stopped before that message was sent — it's still in the composer.", false)
+            return
+        }
+        if (queuedImages == null) composerModel.clearImages() // `images` holds the snapshot leaving now
+        if (interjecting) {
+            // Deliberately *not* finalizeCurrent(): a block still streaming belongs to the turn above
+            // this bubble — that text really was written before the interjection, and cutting it off
+            // would drop deltas still arriving. Clearing `inAssistant` alone is enough to make the
+            // agent's *next* output open a fresh turn below the bubble, in the order things happened.
+            inAssistant = false
+        } else {
+            finalizeCurrent(); inAssistant = false; curTurn = null
+        }
         following = true // sending a message re-follows so the user always sees their own turn + the reply
-        addUserBubble(text, attachments, images)
+        addUserBubble(text, attachments, images, interjected = interjecting)
         transcriptPresenter.onUserMessage(); showEmptyState(false)
-        feed(interpreter.taskStarted(text.ifEmpty { imagesTaskLabel(images.size) }))
-        statusModel.taskStarted(); refreshStatus()
-        session.sendUserMessage(message, images.map { it.toWireBlock() })
+        if (interjecting) {
+            // A focus-card verb, not taskStarted(): the running task continues, and restarting it would
+            // reset the activity task and clear the health tally the completion card still has to report.
+            feed(interpreter.status("Following up"))
+        } else {
+            feed(interpreter.taskStarted(text.ifEmpty { imagesTaskLabel(images.size) }))
+            statusModel.taskStarted(); refreshStatus()
+        }
+        // The interjection was already written above; a fresh turn is what starts the run.
+        if (!interjecting) session.sendUserMessage(message, wire)
         composer.clearInput(); composerModel.clearAttachments(); composer.refreshChips()
-        setRunning(true)
+        if (!interjecting) setRunning(true)
     }
+
+    /**
+     * Stands in for a live CLI process in the headless previews, which have none behind [session] and
+     * would otherwise only ever exercise the queue fallback. False in production, where both answers
+     * below come from the real process.
+     */
+    private var assumeLiveSessionForTest = false
+
+    /**
+     * Whether a mid-turn message can be folded into the running turn right now. It needs a live process
+     * that has not been asked to stop: after a Stop the CLI is being torn down, and after an exit the
+     * next write would land in a pipe nobody reads, so those messages queue instead.
+     */
+    private fun canInterject(): Boolean = (assumeLiveSessionForTest || session.isRunning) && !stopping
+
+    /** The interjection write itself; false means no live process took it. */
+    private fun writeInterjection(message: String, wire: List<UserMessageJson.ImageBlock>): Boolean =
+        assumeLiveSessionForTest || session.interjectUserMessage(message, wire)
 
     /** Activity-map task label for an image-only message, which has no prose to label it with. */
     private fun imagesTaskLabel(count: Int) = if (count == 1) "Sent an image" else "Sent $count images"
@@ -956,7 +1042,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun stopRequest() {
         if (!running) return
+        stopping = true
         session.stop()
+        // The composer's placeholder promises what Enter does; while stopping that changes from folding
+        // into the run to queuing for the next turn, so it has to be re-read here.
+        composer.refreshPlaceholder()
         header.setSessionState(StatusKind.WORKING, "Stopping")
     }
 
@@ -1259,6 +1349,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /**
      * Test-only: puts the panel in the running state and parks [message] behind the in-flight turn,
      * so the queued-composer state can be previewed and asserted without a live CLI session.
+     *
+     * This is the fallback path — a stop in flight or a dead process — which is what a test gets for
+     * free, since [canInterject] finds no live session. [interjectMessageForPreview] drives the other.
      */
     @TestOnly
     internal fun queueMessageForPreview(message: String) {
@@ -1268,6 +1361,24 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         composer.setRunning(true)
         composer.queueForTest(message)
     }
+
+    /**
+     * Test-only: submits [message] mid-turn with a session that *can* take it, so the interjection path
+     * (bubble captioned into the running turn, no new task, still running) is assertable headlessly.
+     * No CLI is behind it, so the write itself is a no-op — everything this exercises is panel-side.
+     */
+    @TestOnly
+    internal fun interjectMessageForPreview(message: String) {
+        running = true
+        composer.setRunning(true)
+        assumeLiveSessionForTest = true
+        composer.refreshPlaceholder()
+        doSend(message)
+    }
+
+    /** Test-only: whether a turn is in flight — an interjection must not end the run it joined. */
+    @TestOnly
+    internal fun isRunningForTest(): Boolean = running
 
     private fun handleEvent(line: String) {
         val o = try {
@@ -1787,17 +1898,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun setRunning(v: Boolean) {
         running = v
+        // Either boundary ends a stop window: a new process is listening again, or the old one is gone
+        // and the next message will start one.
+        stopping = false
         SwingUtilities.invokeLater {
             composer.setRunning(v)
             refreshStatus()
-            // A turn just ended — send whatever the user queued while it was in flight.
+            // A turn just ended — send whatever couldn't be folded into it (a message submitted during a
+            // Stop, or after the process had exited).
             if (!v) drainQueuedMessage()
         }
     }
 
     /**
-     * Sends one queued message per completed turn. One at a time deliberately: each queued message is
-     * a full turn, and firing them all at once would interleave their output unreadably.
+     * Sends one queued message per completed turn. The queue is now only the fallback for messages that
+     * couldn't be interjected into a live turn (see [canInterject]) — one at a time still, because each
+     * of those is a full turn of its own and firing them together would interleave their output.
      */
     private fun drainQueuedMessage() {
         if (running) return

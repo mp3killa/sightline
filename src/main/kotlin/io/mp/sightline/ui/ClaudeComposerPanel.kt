@@ -479,8 +479,9 @@ class ClaudeComposerPanel(
     // ---- internals ----
 
     /**
-     * Enter/Send: hands the text to the host when idle, or parks it behind the running turn. Either
-     * way the input is cleared and the user gets feedback — the one thing the old code never did.
+     * Enter/Send: hands the text to the host when idle **or mid-turn** (the host folds an interjection
+     * into the running turn), and parks it only when nothing is listening. Either way the input is
+     * cleared and the user gets feedback — the one thing the old code never did.
      */
     private fun trySend() {
         val text = input.text
@@ -493,11 +494,16 @@ class ClaudeComposerPanel(
                 refreshQueueLabel()
                 onTextChanged()
             }
-            ComposerModel.Submit.SENT -> onSend(text)
+            // Same host call for both: the host knows whether a turn is running and delivers
+            // accordingly. Splitting it here would put that decision in two places.
+            ComposerModel.Submit.SENT, ComposerModel.Submit.INTERJECTED -> onSend(text)
         }
     }
 
-    /** Test-only: queue a message directly, as if the user had pressed Enter mid-turn. */
+    /** Re-reads the placeholder — the host calls this when interject-ability changes (e.g. a Stop). */
+    fun refreshPlaceholder() { input.emptyText.text = model.placeholder() }
+
+    /** Test-only: submit a message directly, as if the user had pressed Enter mid-turn. */
     @org.jetbrains.annotations.TestOnly
     internal fun queueForTest(message: String) {
         model.submit(message)

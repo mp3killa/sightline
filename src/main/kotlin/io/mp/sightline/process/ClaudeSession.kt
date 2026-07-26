@@ -85,6 +85,23 @@ class ClaudeSession(
         writeLine(UserMessageJson.userLine(text, images))
     }
 
+    /**
+     * Writes a user message into the **already running** process — the CLI's streaming input folds it
+     * into the turn in progress at the agent's next step, which is how a mid-turn follow-up reaches the
+     * work it is about instead of the turn after it.
+     *
+     * Returns false, having done nothing, when no process is running. Deliberately *not*
+     * [sendUserMessage]: that starts one, and starting a fresh process to carry an interjection would
+     * both lose the conversation the message was a follow-up to and leave the panel thinking a turn it
+     * never launched is running. The caller decides what to tell the user.
+     */
+    @Synchronized
+    fun interjectUserMessage(text: String, images: List<UserMessageJson.ImageBlock> = emptyList()): Boolean {
+        if (!isRunning) return false
+        writeLine(UserMessageJson.userLine(text, images))
+        return true
+    }
+
     @Synchronized
     private fun writeLine(json: String) {
         val h = handler ?: return
