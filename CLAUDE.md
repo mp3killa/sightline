@@ -159,11 +159,12 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 **CI / releasing — see [docs/RELEASING.md](docs/RELEASING.md).** `.github/workflows/build.yml` tests +
 verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things about it are load-bearing:
-- The platform target is **switchable** (`-PplatformType=AI -PplatformVersion=2025.3.1.1`) because a
+- The platform target is **switchable** (`-PplatformType=AI -PplatformVersion=2026.1.2.10`) because a
   runner has no local Android Studio. It must be **AI, not IC**: the compile classpath needs
   `org.jetbrains.android`, and **IC does not bundle it** (it ships the unrelated `android-gradle-dsl`).
-  2025.3.1.1 is build 253 — the `sinceBuild` floor — so CI compiles against the oldest platform the
-  listing claims, and a newer-API slip fails the build instead of a user's IDE.
+  2026.1.2.10 is Android Studio **Quail 2**, platform build 261.25134.95 — the `sinceBuild` floor — so CI
+  compiles against the oldest platform the listing claims, and a newer-API slip fails the build instead
+  of a user's IDE.
 - The Marketplace **channel is derived from the version suffix**, never chosen: `-beta` → the opt-in
   beta channel, a bare version → **stable, everyone**. Shipping stable is a deliberate edit to `version`,
   not a workflow input, because the interactive safety paths are still human-untested.
@@ -180,10 +181,11 @@ code change; treat the version, the notes, and the descriptor as one unit:
   `CHANGELOG.md` in the same commit as the bump.** `patchPluginXml` writes only the version, never the
   notes, so stale `<change-notes>` ship verbatim. Keeping them current in the bump commit is what makes a
   publish a drag-and-drop, not an archaeology exercise.
-- **The descriptor's compatibility range is load-bearing:** `sinceBuild = "253"` and
+- **The descriptor's compatibility range is load-bearing:** `sinceBuild = "261.25134"` and
   `untilBuild = provider { null }` (the explicit clear — omitting it makes IPGP 2.x default
-  `until-build` to the *build* platform's branch, which is what marked the plugin incompatible with
-  build 261). Don't "tidy" that line away.
+  `until-build` to the *build* platform's branch, which once marked the plugin incompatible with
+  build 261). Don't "tidy" that line away. The floor is **two components on purpose**: plain `"261"`
+  would also admit Quail 1 (261.23567), which is not supported.
 - **Re-run `tools/verify-plugin.sh` against the new version before every upload**, and record the result
   (version vs IDE build, Compatible / N problems) in the *Build gotchas* note below. The verifier catches
   internal/experimental-API usage — a common Marketplace rejection — and the surface keeps growing
@@ -214,11 +216,17 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
   `Java-WebSocket` (the ide server; `exclude group: "org.slf4j"` — platform provides slf4j).
 - **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
   under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
-  Both `select { }` and `ide(...)` hit the same wrong group. The script fetches the correct coordinate
-  and runs the same verifier CLI. **Last run (2026-07-26): `io.mp.sightline:0.4.0-beta` vs
-  `IC-253.28294.334` — Compatible, 0 compatibility problems** (only the same 10 informational
-  `ToolWindowFactory` usages — 4 deprecated, 6 experimental; nothing from mermaid, the commit-message
-  diff APIs, or the mid-turn interjection path). Re-run before every release.
+  Both `select { }` and `ide(...)` hit the same wrong group. The script downloads the IDE itself and runs
+  the same verifier CLI. **Last run (2026-07-27): `io.mp.sightline:0.5.0-beta` vs `AI-261.25134.95`
+  (Quail 2) — Compatible, 0 compatibility problems** (10 informational `ToolWindowFactory` usages —
+  4 deprecated, 6 experimental). Re-run before every release.
+- **Verify against Android Studio, not IntelliJ IDEA — the verifier only tells you about the IDE you
+  point it at.** This script targeted IC-253 until 2026-07-27 and reported "Compatible, 0 problems" for
+  0.4.0-beta, while the Marketplace's own report — run against AS 261 — flagged three deprecated
+  `ReadAction.compute` calls. Neither was wrong: `compute` is deprecated in 261 and not in 253. Since
+  the floor is now an AS build, the script uses the **local Android Studio when it is at or above the
+  floor** and otherwise downloads Quail 2 (checksum-verified). A local install *below* the floor is
+  refused rather than quietly used, because a pass against an excluded IDE means nothing.
 - **A NUL byte makes a source file invisible to `grep`.** Two files here had one (a mangled `' '` char
   literal), so `file` reported them as `data`, grep skipped them, and a package-wide rename silently
   missed both — surfacing only as unresolved references at compile time. If a text tool seems to be
@@ -244,8 +252,8 @@ These outlived the backlog items that recorded them. They are constraints on fut
   the store means extending that policy, not working around it.
 - **Android capability is CLI-first; Android Studio is optional.** (Decided 2026-07-20, docs/ANDROID.md
   §1.1.) The spine runs on stable contracts — `adb`, the `emulator` binary, `gradlew`, and parsing AGP's
-  own build output — so everything Android keeps working in a plain IntelliJ IDEA and the `sinceBuild=253`
-  Marketplace reach survives. `org.jetbrains.android` is an **optional** `<depends>` whose only
+  own build output — so everything Android keeps working in a plain IntelliJ IDEA (2026.1+, which is the
+  same platform build as the Quail 2 floor). `org.jetbrains.android` is an **optional** `<depends>` whose only
   implementation lives in `ide/android/studio/`, registered from `META-INF/sightline-android.xml`; that
   file is the isolation boundary, and the class never loads where its `com.android.tools.idea.*` imports
   can't resolve. Those imports are internal API the Plugin Verifier flags and Android Studio breaks

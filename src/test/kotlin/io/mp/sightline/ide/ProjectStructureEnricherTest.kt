@@ -17,7 +17,7 @@ class ProjectStructureEnricherTest : BasePlatformTestCase() {
 
     private fun enrich(vf: VirtualFile): List<AgentActivityEvent> {
         val enricher = ProjectStructureEnricher(project, testRootDisposable)
-        return ReadAction.compute<List<AgentActivityEvent>, RuntimeException> { enricher.computeFor(vf) }
+        return ReadAction.computeBlocking<List<AgentActivityEvent>, RuntimeException> { enricher.computeFor(vf) }
     }
 
     fun testExtendsAndImplementsResolveToProjectFiles() {
@@ -77,7 +77,7 @@ class ProjectStructureEnricherTest : BasePlatformTestCase() {
         val svc = myFixture.addFileToProject("com/example/UserService.java", "package com.example; public class UserService {}")
         myFixture.addFileToProject("com/example/Caller.java", "package com.example; public class Caller { UserService s; }")
         val enricher = ProjectStructureEnricher(project, testRootDisposable)
-        val rels = ReadAction.compute<List<AgentActivityEvent>, RuntimeException> { enricher.findUsages(svc.virtualFile) }
+        val rels = ReadAction.computeBlocking<List<AgentActivityEvent>, RuntimeException> { enricher.findUsages(svc.virtualFile) }
             .filterIsInstance<StructuralRelation>()
         assertTrue(
             "UserService used by Caller",

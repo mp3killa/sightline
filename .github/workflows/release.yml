@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2025.3.1.1"
+  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2026.1.2.10"
 
 jobs:
   release:
@@ -90,18 +90,18 @@ jobs:
       - name: Build the plugin
         run: ./gradlew $JDK_ARG buildPlugin $PLATFORM_ARGS
 
-      # Only the extracted IDE and the verifier jar — not the 620 MB zip, which is redundant once
+      # Only the extracted IDE and the verifier jar — not the 1.5 GB tarball, which is redundant once
       # extracted and would roughly double the cache entry. `verify-plugin.sh` looks for `build.txt` to
-      # decide whether to download, so a hit skips both the download and the unzip. No `restore-keys`:
-      # the key pins exact IDE and verifier versions, and a fuzzy restore would verify against a
-      # different IDE than this job claims to check.
+      # decide whether to download, so a hit skips both the download and the extraction. No
+      # `restore-keys`: the key pins exact IDE and verifier versions, and a fuzzy restore would verify
+      # against a different IDE than this job claims to check.
       - name: Cache the verifier IDE
         uses: actions/cache@v6
         with:
           path: |
-            /home/runner/.cache/sightline-verify/ideaIC-2025.3
+            /home/runner/.cache/sightline-verify/android-studio-2026.1.2.10
             /home/runner/.cache/sightline-verify/verifier-cli-1.388.jar
-          key: verifier-ide-2025.3-cli-1.388
+          key: verifier-ide-as-2026.1.2.10-cli-1.388
 
       # A Marketplace review runs the verifier too. Failing here costs a re-tag; failing there costs a
       # rejected submission, so it gates the publish rather than following it.

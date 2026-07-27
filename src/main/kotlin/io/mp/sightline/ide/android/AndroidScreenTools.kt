@@ -147,7 +147,7 @@ class AndroidScreenTools(private val project: Project) {
         val file = File(base, relative)
         val source = runCatching {
             // Prefer the in-memory document so unsaved edits are analysed, not the last-saved text.
-            ReadAction.compute<String?, RuntimeException> {
+            ReadAction.computeBlocking<String?, RuntimeException> {
                 LocalFileSystem.getInstance().findFileByIoFile(file)
                     ?.let { vf -> com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf)?.text }
             } ?: file.takeIf { it.isFile }?.readText(Charsets.UTF_8)

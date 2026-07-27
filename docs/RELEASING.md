@@ -29,7 +29,7 @@ multi-GB download, and `runIde` launches that same build. A CI runner has no IDE
 target is switchable:
 
 ```bash
-./gradlew build -PplatformType=AI -PplatformVersion=2025.3.1.1
+./gradlew build -PplatformType=AI -PplatformVersion=2026.1.2.10
 ```
 
 Passing both properties selects a downloadable platform; passing neither uses the local install.
@@ -41,9 +41,13 @@ An IC target fails to resolve before compiling. (This does not weaken the CLI-fi
 [ANDROID.md](ANDROID.md) §1.1: that is about what the plugin *needs at runtime*, and the optional
 `<depends>` still degrades correctly. It is only the build that needs the classes present.)
 
-`2025.3.1.1` is build **253**, which is also the `sinceBuild` floor. CI therefore compiles against the
-oldest platform the listing claims to support, so an accidental use of a newer API fails the build
-rather than shipping and failing on a user's IDE.
+`2026.1.2.10` is **Android Studio Quail 2**, platform build `261.25134.95`, which is also the
+`sinceBuild` floor. CI therefore compiles against the oldest platform the listing claims to support, so
+an accidental use of a newer API fails the build rather than shipping and failing on a user's IDE.
+
+The floor moved from 253 to Quail 2 on 2026-07-27 (see CHANGELOG 0.5.0-beta). `tools/verify-plugin.sh`
+verifies against **Android Studio** for the same reason: an IDE below the floor can only tell you about
+a platform the listing excludes, which is how three deprecated calls once passed as "0 problems".
 
 ## The channel is derived, never chosen
 
@@ -112,7 +116,7 @@ been exercised by a human. A green pipeline is not evidence that they work.
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ./gradlew test                                   # against the local Android Studio
-./gradlew test -PplatformType=AI -PplatformVersion=2025.3.1.1   # as CI does
+./gradlew test -PplatformType=AI -PplatformVersion=2026.1.2.10  # as CI does
 ./gradlew buildPlugin                            # -> build/distributions/sightline-<version>.zip
 tools/verify-plugin.sh                           # the Plugin Verifier; must say Compatible
 ./gradlew -q printVersion printReleaseChannel    # what a release would publish, and where

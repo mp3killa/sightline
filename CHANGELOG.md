@@ -4,6 +4,25 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0-beta — 2026-07-27
+
+Supported platform narrowed to Android Studio Quail 2 and later.
+
+- **Requires Android Studio Quail 2 (2026.1.2) or later.** The previous floor was IntelliJ platform 253
+  (2025.3), chosen for reach. Reach was costing correctness: 253 has no `ReadAction.computeBlocking`, so
+  the plugin had to keep calling `ReadAction.compute`, which is deprecated on every build people actually
+  run — the Marketplace's own report against Android Studio 261 flagged all three uses. Supporting one
+  platform properly beats claiming two and being deprecated on the current one.
+- **No deprecated platform API left.** The three `ReadAction.compute` calls now use `computeBlocking`.
+  The remaining verifier findings are `ToolWindowFactory` interface members that Kotlin materialises for
+  any implementor — informational, and not avoidable without abandoning the interface.
+- This is a floor, not a product restriction: IntelliJ IDEA 2026.1+ is the same platform build and can
+  still install Sightline, with the Android features degrading as they always have. Android Studio
+  remains an upgrade, never a prerequisite.
+- The pre-release verifier now runs against **Android Studio** at that floor rather than IntelliJ IDEA
+  Community 2025.3. Verifying against an IDE the plugin no longer claims is not a weaker check — it is a
+  check of the wrong thing, and it is why the deprecations above shipped reported as "0 problems".
+
 ## 0.4.0-beta — 2026-07-26
 
 Mid-turn follow-ups.

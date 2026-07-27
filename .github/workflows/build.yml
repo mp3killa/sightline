@@ -19,9 +19,10 @@ env:
   # Why Android Studio and not IntelliJ IDEA Community: the build needs `org.jetbrains.android` on the
   # compile classpath for `ide/android/studio/StudioFactProvider`. **IC does not bundle it** — it ships
   # `android-gradle-dsl`, which is a different plugin — so an IC target cannot compile this project.
-  # 2025.3.1.1 is build 253, which is also the `sinceBuild` floor, so CI compiles against the oldest
-  # platform the listing claims to support rather than against a newer one that would hide a break.
-  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2025.3.1.1"
+  # 2026.1.2.10 is Android Studio Quail 2, platform build 261.25134.95 — the `sinceBuild` floor — so CI
+  # compiles against the oldest platform the listing claims to support rather than against a newer one
+  # that would hide a break.
+  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2026.1.2.10"
 
 jobs:
   build:
@@ -112,10 +113,10 @@ jobs:
           name: sightline-plugin
           path: build/distributions
 
-      # The verifier needs a ~620 MB IDE zip which expands to well over a gigabyte. Only the
-      # *extracted* IDE and the verifier jar are cached — not the zip, which is redundant once
+      # The verifier needs a ~1.5 GB Android Studio tarball which expands to more than that. Only the
+      # *extracted* IDE and the verifier jar are cached — not the tarball, which is redundant once
       # extracted and would roughly double the entry. `verify-plugin.sh` decides whether to download by
-      # looking for `build.txt` in the extracted directory, so a hit skips the download and the unzip.
+      # looking for `build.txt` in the extracted directory, so a hit skips the download and the extract.
       #
       # No `restore-keys` on purpose. The key pins the exact IDE and verifier versions; a fuzzy restore
       # would silently verify against a different IDE than the one this job claims to check.
@@ -123,9 +124,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: |
-            /home/runner/.cache/sightline-verify/ideaIC-2025.3
+            /home/runner/.cache/sightline-verify/android-studio-2026.1.2.10
             /home/runner/.cache/sightline-verify/verifier-cli-1.388.jar
-          key: verifier-ide-2025.3-cli-1.388
+          key: verifier-ide-as-2026.1.2.10-cli-1.388
 
       # NOT `./gradlew verifyPlugin` — that task cannot resolve an IDE under IntelliJ Platform Gradle
       # Plugin 2.6.0 (it looks under group `idea` rather than `com.jetbrains.intellij.idea`). The

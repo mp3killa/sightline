@@ -63,7 +63,7 @@ CI builds without a local Android Studio by selecting a downloadable platform â€
 runs, if you want to reproduce it:
 
 ```bash
-./gradlew test buildPlugin -PplatformType=AI -PplatformVersion=2025.3.1.1
+./gradlew test buildPlugin -PplatformType=AI -PplatformVersion=2026.1.2.10
 ```
 
 Releasing is documented in [docs/RELEASING.md](docs/RELEASING.md).

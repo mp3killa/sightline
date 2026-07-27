@@ -901,7 +901,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val path = ref.substringBefore(':').substringBefore("#")
         val name = path.substringAfterLast('/').ifBlank { return null }
         return try {
-            ReadAction.compute<VirtualFile?, RuntimeException> {
+            ReadAction.computeBlocking<VirtualFile?, RuntimeException> {
                 val idx = ProjectFileIndex.getInstance(project)
                 val matches = FilenameIndex.getVirtualFilesByName(name, GlobalSearchScope.projectScope(project))
                     .filter { idx.isInContent(it) }

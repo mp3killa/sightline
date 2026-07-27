@@ -44,9 +44,11 @@ enrichment that degrades to UNKNOWN, never to a guess.
 
 Rationale: `com.android.tools.idea.*` is internal API. It is present in the local install (logcat,
 avdmanager, deviceprovisioner, adblib, layoutinspector, the Gradle model — all verified), but it is
-flagged by the Plugin Verifier, unstable across AS releases, and absent from IntelliJ IDEA Community —
-which is the platform the `sinceBuild = 253` floor was chosen for. Hard-depending would trade the
-listing's reach and a stable build for facts that are, as it turns out, mostly available elsewhere.
+flagged by the Plugin Verifier, unstable across AS releases, and absent from IntelliJ IDEA Community.
+Hard-depending would trade a stable build, and the ability to run anywhere but Android Studio, for facts
+that are, as it turns out, mostly available elsewhere. (The `sinceBuild` floor moved to Android Studio
+Quail 2 on 2026-07-27, which does not change this: the floor is a *platform build*, IDEA 2026.1+ shares
+it, and Android Studio stays an upgrade rather than a prerequisite.)
 
 Mechanics:
 

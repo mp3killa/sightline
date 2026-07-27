@@ -50,6 +50,17 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.5.0-beta</b></p>
+        <ul>
+            <li><b>Now requires Android Studio Quail 2 (2026.1.2) or later.</b> The previous compatibility
+            floor was the 2025.3 platform, kept for reach — but that older platform lacks API the current
+            one requires, which left Sightline calling methods Android Studio has since deprecated.
+            Supporting the current platform properly is worth more than claiming an older one. IntelliJ
+            IDEA 2026.1+ is the same platform build and can still install it.</li>
+            <li>No deprecated platform API remains in the plugin, and the pre-release verification now runs
+            against Android Studio at that floor rather than against IntelliJ IDEA.</li>
+        </ul>
+
         <p><b>0.4.0-beta</b></p>
         <ul>
             <li><b>A message you send while Claude is working now reaches the work in progress.</b> Pressing

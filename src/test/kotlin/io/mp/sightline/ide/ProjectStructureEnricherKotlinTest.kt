@@ -17,7 +17,7 @@ class ProjectStructureEnricherKotlinTest : BasePlatformTestCase() {
 
     private fun enrich(vf: VirtualFile): List<AgentActivityEvent> {
         val enricher = ProjectStructureEnricher(project, testRootDisposable)
-        return ReadAction.compute<List<AgentActivityEvent>, RuntimeException> { enricher.computeFor(vf) }
+        return ReadAction.computeBlocking<List<AgentActivityEvent>, RuntimeException> { enricher.computeFor(vf) }
     }
 
     fun testKotlinHierarchyAndImportsResolveToProjectFiles() {

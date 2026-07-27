@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.4.0-beta"
+version = "0.5.0-beta"
 
 // The Marketplace channel is derived from the version, never chosen by hand. A pre-release suffix
 // publishes to its own channel, which users opt into by adding a repository URL; only a bare version
@@ -142,44 +142,58 @@ intellijPlatform {
         version = project.version.toString()
 
         ideaVersion {
-            // Floor = the latest *released* IntelliJ platform (2025.3 / build 253) rather than the local
-            // Android Studio's preview build 261: 253 is downloadable for the Plugin Verifier and gives the
-            // listing real reach (installable on 253+, which includes AS 2026.1). The code avoids 261-only
-            // APIs — `verifyPlugin` (below) confirms the 261-compiled artifact is clean against 253.
-            sinceBuild = "253"
+            // Floor = **Android Studio Quail 2 (2026.1.2), platform build 261.25134** — the supported
+            // target, decided 2026-07-27. Two components on purpose: plain "261" would also admit Quail 1
+            // (261.23567), which is not supported and does not have the APIs below.
+            //
+            // Raised from 253. That floor existed for reach, and reach cost correctness: 253 has no
+            // `ReadAction.computeBlocking`, so the artifact had to keep calling `ReadAction.compute`,
+            // which 261 deprecates — the Marketplace's own report against AI-261 flagged all three uses.
+            // Supporting one platform properly beats claiming two and being deprecated on the one people
+            // actually run.
+            //
+            // This is a *floor*, not a product restriction: IntelliJ IDEA 2026.1+ is also build 261 and can
+            // still install it, with the Android features degrading as designed (docs/ANDROID.md §1.1).
+            // Android Studio remains an upgrade, never a prerequisite.
+            sinceBuild = "261.25134"
             // MUST explicitly clear untilBuild. In IntelliJ Platform Gradle Plugin 2.x, leaving it unset
             // does NOT mean "no upper bound" — patchPluginXml then defaults it to `<build-branch>.*` of the
-            // platform this was COMPILED against. The release CI compiles against 253 (AI 2025.3.1.1), so
-            // that default stamped `until-build=253.*` into the shipped descriptor and the Marketplace
-            // marked the plugin incompatible with build 261 (AS 2026.1). `provider { null }` removes the
-            // attribute entirely, so it stays installable on 253 and every future build.
+            // platform this was COMPILED against. That default once stamped `until-build=253.*` into the
+            // shipped descriptor and the Marketplace marked the plugin incompatible with build 261.
+            // `provider { null }` removes the attribute entirely, so it stays installable on the floor and
+            // every future build — Quail 3 and 4 included, without a re-release.
             untilBuild = provider { null }
         }
     }
 
     // Marketplace gate: the IntelliJ Plugin Verifier (internal/experimental API usage — a common
-    // rejection cause — and binary compatibility), against the released 253 floor.
+    // rejection cause — and binary compatibility), against the Quail 2 floor.
     //
     // >>> RUN `tools/verify-plugin.sh`, NOT `./gradlew verifyPlugin`. <<<
     //
     // IPGP 2.6.0 resolves the IDE under `idea:ideaIC:<v>` (group "idea"), which does not exist; the ZIP
     // lives at `com.jetbrains.intellij.idea:ideaIC:<v>`. Both `select { }` and the explicit `ide(...)`
     // form hit the same wrong group, so the task fails before the verifier starts. The script downloads
-    // from the correct coordinate and runs the same verifier CLI directly.
+    // the IDE itself and runs the same verifier CLI directly.
     //
-    // Last run 2026-07-26 (0.3.1-beta) against IC-253.28294.334: **Compatible** — 0 compatibility problems.
-    // The 10 remaining findings are all `ToolWindowFactory` interface members that Kotlin materialises
-    // for any implementor (isApplicable, isDoNotActivateOnStart, getIcon, getAnchor, manage); they are
-    // informational and not avoidable without abandoning the interface.
+    // **Verify against Android Studio, not IDEA.** The floor is an AS build, and the Marketplace's own
+    // report runs against AS — verifying against IC-253 is what let three `ReadAction.compute` uses ship
+    // as "clean" when they are deprecated on every IDE the plugin now claims.
+    //
+    // Last run 2026-07-27 (0.5.0-beta) against AI-261.25134.95 (Quail 2): **Compatible** — 0 compatibility
+    // problems, 4 deprecated + 6 experimental. All 10 are `ToolWindowFactory` interface members that
+    // Kotlin materialises as bridges in any implementor (isApplicable, isDoNotActivateOnStart, getIcon,
+    // getAnchor, manage) — they are not in our source and would only disappear by writing the factory in
+    // Java. The three `ReadAction.compute` deprecations that the Marketplace found in 0.4.0-beta are gone.
     //
     // The config below is kept correct so it starts working the moment the Gradle plugin is fixed.
     pluginVerification {
         ides {
             select {
-                types = listOf(IntelliJPlatformType.IntellijIdeaCommunity)
+                types = listOf(IntelliJPlatformType.AndroidStudio)
                 channels = listOf(ProductRelease.Channel.RELEASE)
-                sinceBuild = "253"
-                untilBuild = "253.*"
+                sinceBuild = "261.25134"
+                untilBuild = "261.*"
             }
         }
     }

@@ -291,10 +291,10 @@ class AndroidContextResolver(private val project: Project) {
     // ---- editor ----
 
     private fun readEditorContext(base: File): EditorContext? = try {
-        ReadAction.compute<EditorContext?, RuntimeException> {
-            val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@compute null
-            val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return@compute null
-            val relative = relativize(file.path, base.path) ?: return@compute null
+        ReadAction.computeBlocking<EditorContext?, RuntimeException> {
+            val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@computeBlocking null
+            val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return@computeBlocking null
+            val relative = relativize(file.path, base.path) ?: return@computeBlocking null
             val selection = editor.selectionModel.takeIf { it.hasSelection() }?.let { sel ->
                 val start = editor.offsetToLogicalPosition(sel.selectionStart).line + 1
                 val end = editor.offsetToLogicalPosition(sel.selectionEnd).line + 1
