@@ -24,7 +24,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2026.1.2.10"
+  # The platform is fetched by `tools/fetch-android-studio.sh` and passed as `-PlocalIde`, not selected
+  # with `-PplatformType=AI -PplatformVersion=…`: Google names the Quail downloads after the release
+  # codename while the Gradle plugin builds that URL from the version, so no Quail build resolves by
+  # coordinate. `PLATFORM_ARGS` is set in the provisioning step below, before the first Gradle call.
+  AS_CACHE_DIR: /home/runner/.cache/sightline-verify
 
 jobs:
   release:
@@ -55,6 +59,18 @@ jobs:
       # GitHub does not shell-expand `env:` values.
       - name: Point Gradle at the runner's JDK
         run: echo "JDK_ARG=-Dorg.gradle.java.home=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      # Before the first Gradle call: every step below passes $PLATFORM_ARGS, including the tag/version
+      # check. Cached across runs — the download is 1.5 GB — and shared with the verify step, so the
+      # release compiles against and verifies against one and the same IDE.
+      - name: Cache Android Studio
+        uses: actions/cache@v6
+        with:
+          path: /home/runner/.cache/sightline-verify/android-studio-2026.1.2.10
+          key: android-studio-2026.1.2.10
+
+      - name: Provision Android Studio
+        run: echo "PLATFORM_ARGS=-PlocalIde=$(tools/fetch-android-studio.sh)" >> "$GITHUB_ENV"
 
       # The tag and the version in build.gradle.kts are two places the same fact is written, so they
       # are checked against each other before anything is published. Publishing a version the source

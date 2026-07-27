@@ -19,10 +19,16 @@ env:
   # Why Android Studio and not IntelliJ IDEA Community: the build needs `org.jetbrains.android` on the
   # compile classpath for `ide/android/studio/StudioFactProvider`. **IC does not bundle it** — it ships
   # `android-gradle-dsl`, which is a different plugin — so an IC target cannot compile this project.
-  # 2026.1.2.10 is Android Studio Quail 2, platform build 261.25134.95 — the `sinceBuild` floor — so CI
-  # compiles against the oldest platform the listing claims to support rather than against a newer one
-  # that would hide a break.
-  PLATFORM_ARGS: "-PplatformType=AI -PplatformVersion=2026.1.2.10"
+  #
+  # It is fetched by `tools/fetch-android-studio.sh` and passed as `-PlocalIde`, NOT selected with
+  # `-PplatformType=AI -PplatformVersion=…`: Google names the Quail downloads after the release codename
+  # (`android-studio-quail2-linux.tar.gz`) while the Gradle plugin builds that URL from the version, so
+  # no Quail build resolves by coordinate. The script's header has the detail.
+  #
+  # The fetched IDE is Android Studio Quail 2, platform build 261.25134.95 — the `sinceBuild` floor — so
+  # CI compiles against the oldest platform the listing claims to support rather than a newer one that
+  # would hide a break, and the verify job checks the artifact against that same IDE.
+  AS_CACHE_DIR: /home/runner/.cache/sightline-verify
 
 jobs:
   build:
@@ -52,6 +58,17 @@ jobs:
       # GitHub does not shell-expand `env:` values.
       - name: Point Gradle at the runner's JDK
         run: echo "JDK_ARG=-Dorg.gradle.java.home=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      # Cached across runs — the download is 1.5 GB. Keyed on the exact version, with no `restore-keys`:
+      # a fuzzy restore would compile against a different IDE than this job claims to.
+      - name: Cache Android Studio
+        uses: actions/cache@v6
+        with:
+          path: /home/runner/.cache/sightline-verify/android-studio-2026.1.2.10
+          key: android-studio-2026.1.2.10
+
+      - name: Provision Android Studio
+        run: echo "PLATFORM_ARGS=-PlocalIde=$(tools/fetch-android-studio.sh)" >> "$GITHUB_ENV"
 
       - name: Test
         run: ./gradlew $JDK_ARG test $PLATFORM_ARGS
@@ -129,8 +146,8 @@ jobs:
           key: verifier-ide-as-2026.1.2.10-cli-1.388
 
       # NOT `./gradlew verifyPlugin` — that task cannot resolve an IDE under IntelliJ Platform Gradle
-      # Plugin 2.6.0 (it looks under group `idea` rather than `com.jetbrains.intellij.idea`). The
-      # script fetches the correct coordinate and runs the same verifier CLI. See its header.
+      # Plugin 2.6.0 (it looks under group `idea` rather than `com.jetbrains.intellij.idea`). The script
+      # fetches Android Studio itself and runs the same verifier CLI. See its header.
       - name: Verify against the sinceBuild floor
         env:
           VERIFY_WORK_DIR: /home/runner/.cache/sightline-verify

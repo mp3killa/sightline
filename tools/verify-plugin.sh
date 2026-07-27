@@ -10,9 +10,9 @@
 # `select { }` and the explicit `ide(...)` forms hit the same wrong group, so the Gradle task cannot
 # resolve an IDE to verify against and fails before the verifier ever starts.
 #
-# This script skips Gradle's resolution entirely: it downloads the IDE ZIP from the correct coordinate
-# and runs the Plugin Verifier CLI directly. Same verifier, same checks, same report as the Marketplace
-# runs — just fetched by hand.
+# This script skips Gradle's resolution entirely: it gets an IDE (a local Android Studio, or one fetched
+# by tools/fetch-android-studio.sh) and runs the Plugin Verifier CLI directly. Same verifier, same
+# checks, same report as the Marketplace runs — just fetched by hand.
 #
 # Delete this and go back to `./gradlew verifyPlugin` once the Gradle plugin fixes the coordinate.
 #
@@ -29,8 +29,10 @@
 #   IDE_HOME=/path/to/ide tools/verify-plugin.sh   # verify against a specific IDE install
 #   FORCE_DOWNLOAD=1 tools/verify-plugin.sh        # ignore the local install
 #
-#   # CI has no Android Studio installed, so the platform target must reach the build too:
-#   GRADLE_ARGS="-PplatformType=AI -PplatformVersion=2026.1.2.10" tools/verify-plugin.sh
+#   # CI has no Android Studio installed, so the build needs to be pointed at the fetched one. Note
+#   # `-PlocalIde` and NOT `-PplatformType=AI -PplatformVersion=...`: the Gradle plugin cannot resolve a
+#   # Quail build by coordinate — see tools/fetch-android-studio.sh for why.
+#   GRADLE_ARGS="-PlocalIde=$(tools/fetch-android-studio.sh)" tools/verify-plugin.sh
 #
 #   SKIP_BUILD=1 tools/verify-plugin.sh    # verify an artifact a previous step already built
 #
@@ -41,10 +43,7 @@ set -euo pipefail
 # string; AS_PLATFORM_BUILD is the platform build it carries, which is what `sinceBuild` is written in.
 AS_VERSION="${AS_VERSION:-2026.1.2.10}"          # Android Studio Quail 2 | 2026.1.2 (Release)
 AS_PLATFORM_BUILD="${AS_PLATFORM_BUILD:-261.25134}"
-# Published alongside the download on the Android Studio releases feed. Checked, not trusted: this
-# fetches 1.5 GB over plain HTTP redirects into something that then gets executed as a classpath.
-AS_SHA256="${AS_SHA256:-64445a54092e7056c6eb7f1a89ad116d0feec2ef5f965b8e594d62abdb58590f}"
-AS_URL="${AS_URL:-https://edgedl.me.gvt1.com/android/studio/ide-zips/$AS_VERSION/android-studio-quail2-linux.tar.gz}"
+# The download URL and its checksum live in tools/fetch-android-studio.sh, which CI also uses.
 VERIFIER_VERSION="${VERIFIER_VERSION:-1.388}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,8 +62,6 @@ if [[ ! -x "$JAVA" ]]; then
 fi
 
 VERIFIER_JAR="$WORK/verifier-cli-$VERIFIER_VERSION.jar"
-IDE_ARCHIVE="$WORK/android-studio-$AS_VERSION.tar.gz"
-IDE_DIR="$WORK/android-studio-$AS_VERSION"
 
 # The build number of an IDE install, from wherever that install keeps build.txt. A macOS .app puts it
 # under Contents/Resources; a Linux tarball puts it at the root.
@@ -129,43 +126,9 @@ if [[ -z "$IDE_HOME" && -z "${FORCE_DOWNLOAD:-}" ]]; then
 fi
 
 if [[ -z "$IDE_HOME" ]]; then
-  # Presence of the directory is NOT proof of a usable IDE: an interrupted extraction, a temp-dir sweep,
-  # or a partially-restored CI cache all leave one behind. The verifier's own requirement is `build.txt`,
-  # and without it the failure surfaces as "IDE ... is invalid" from deep inside the verifier rather than
-  # as the incomplete extraction it actually is. Check for that file and re-extract if it is missing.
-  if [[ ! -f "$IDE_DIR/build.txt" ]]; then
-    if [[ -d "$IDE_DIR" ]]; then
-      echo "==> $IDE_DIR is present but incomplete (no build.txt) — re-extracting"
-      rm -rf "$IDE_DIR"
-    fi
-    if [[ ! -f "$IDE_ARCHIVE" ]]; then
-      echo "==> Downloading Android Studio $AS_VERSION (~1.5 GB, cached in $WORK)"
-      curl -fsSL -o "$IDE_ARCHIVE" "$AS_URL"
-    fi
-    echo "==> Checking the download against the published SHA-256"
-    actual="$(shasum -a 256 "$IDE_ARCHIVE" | cut -d' ' -f1)"
-    if [[ "$actual" != "$AS_SHA256" ]]; then
-      echo "Checksum mismatch for $IDE_ARCHIVE" >&2
-      echo "  expected $AS_SHA256" >&2
-      echo "  actual   $actual" >&2
-      rm -f "$IDE_ARCHIVE"
-      exit 1
-    fi
-    echo "==> Extracting"
-    mkdir -p "$IDE_DIR"
-    # --strip-components=1: the tarball wraps everything in an `android-studio/` directory, and the
-    # verifier wants the IDE root itself, not its parent.
-    if ! tar -xzf "$IDE_ARCHIVE" -C "$IDE_DIR" --strip-components=1; then
-      echo "Extraction failed — removing the cached archive and directory so the next run refetches." >&2
-      rm -rf "$IDE_DIR" "$IDE_ARCHIVE"
-      exit 1
-    fi
-    if [[ ! -f "$IDE_DIR/build.txt" ]]; then
-      echo "Extracted $IDE_ARCHIVE but $IDE_DIR/build.txt is still missing — not a usable IDE." >&2
-      exit 1
-    fi
-  fi
-  IDE_HOME="$IDE_DIR"
+  # One downloader, shared with CI — which needs the same IDE to *compile* against, since the Gradle
+  # plugin cannot resolve a Quail build by coordinate (see the script's header).
+  IDE_HOME="$(AS_CACHE_DIR="$WORK" "$ROOT/tools/fetch-android-studio.sh")"
 fi
 
 IDE_BUILD="$(ide_build "$IDE_HOME")"
