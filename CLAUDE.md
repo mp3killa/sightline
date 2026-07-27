@@ -167,7 +167,11 @@ verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things 
   of a user's IDE.
 - The Marketplace **channel is derived from the version suffix**, never chosen: `-beta` → the opt-in
   beta channel, a bare version → **stable, everyone**. Shipping stable is a deliberate edit to `version`,
-  not a workflow input, because the interactive safety paths are still human-untested.
+  not a workflow input. **0.5.0 (2026-07-27) is the first stable release**, gated on a human `runIde`
+  pass over the interactive approval/diff paths — a precondition to re-satisfy whenever those paths
+  change, not a box permanently ticked. A beta-channel build is invisible to the plugin browser and the
+  listing page, which both read the default channel only; that is what "not compatible with your IDE"
+  means on a listing whose stable channel is empty.
 - **`version` lives only in `build.gradle.kts`.** `plugin.xml` carries no `<version>` — `patchPluginXml`
   writes it in. Two copies could disagree and the descriptor would silently win.
 

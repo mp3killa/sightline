@@ -50,6 +50,9 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.5.0</b> — first stable release. Same build as 0.5.0-beta, promoted after a hands-on pass
+        over the interactive approval and diff paths. Everything below shipped during the beta.</p>
+
         <p><b>0.5.0-beta</b></p>
         <ul>
             <li><b>Now requires Android Studio Quail 2 (2026.1.2) or later.</b> The previous compatibility

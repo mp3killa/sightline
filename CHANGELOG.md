@@ -4,6 +4,17 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 — 2026-07-27
+
+**First release on the stable channel.** Same code as 0.5.0-beta, promoted after a human pass over the
+interactive approval and diff paths in a live IDE. Until now every release went to the opt-in beta
+channel, which the plugin browser and the listing page do not read — so the listing reported itself as
+incompatible with every IDE, having nothing published where those two look.
+
+The channel is still derived from the version and never chosen by hand: a `-beta` suffix publishes to
+beta, a bare version to stable. Shipping stable stays a deliberate edit, and a change to how approvals,
+denials or writes behave puts the next release back on beta until someone has driven it by hand again.
+
 ## 0.5.0-beta — 2026-07-27
 
 Supported platform narrowed to Android Studio Quail 2 and later.

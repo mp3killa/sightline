@@ -14,16 +14,20 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.5.0-beta"
+version = "0.5.0"
 
 // The Marketplace channel is derived from the version, never chosen by hand. A pre-release suffix
 // publishes to its own channel, which users opt into by adding a repository URL; only a bare version
 // reaches the default (stable) channel that everyone browsing the Marketplace sees.
 //
-// This is a safety property, not a convenience: Sightline runs commands and edits code, and the
-// interactive paths that stop it doing so are not yet human-tested. A release must not reach stable
-// because someone forgot a flag. To ship stable, drop the suffix from `version` above — a deliberate,
-// reviewable edit.
+// This is a safety property, not a convenience: Sightline runs commands and edits code, and a release
+// must not reach stable because someone forgot a flag. Shipping stable stays a deliberate, reviewable
+// edit to `version` above — dropping the suffix — and nothing else.
+//
+// First stable release: 0.5.0 (2026-07-27), after a human `runIde` pass over the interactive approval
+// and diff paths. That pass is the precondition; it is not permanently discharged. A change to how
+// approvals, denials or writes behave puts a release back on the beta channel until someone has driven
+// it by hand again.
 val releaseChannel: String = when {
     version.toString().contains("-eap") -> "eap"
     version.toString().contains("-alpha") -> "alpha"
