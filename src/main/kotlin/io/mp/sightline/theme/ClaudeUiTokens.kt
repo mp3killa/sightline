@@ -29,22 +29,43 @@ object ClaudeUiTokens {
      */
     fun accent(): JBColor = JBColor(Color(0x0E, 0xA5, 0x99), Color(0x2C, 0xD4, 0xC6))
 
-    // ---- surfaces ----
-    fun surface(): Color = EditorColorsManager.getInstance().globalScheme.defaultBackground
-    fun panel(): Color = UIUtil.getPanelBackground()
-    /** A card/raised surface, a touch off the base background. */
-    fun elevatedSurface(): Color = shift(surface(), dark = 14, light = -8)
-    /** A barely-there fill for chips/inputs. */
-    fun subtleSurface(): Color = shift(surface(), dark = 8, light = -5)
-    /** A stronger raised surface for overlays/inspectors. */
-    fun overlaySurface(): Color = shift(surface(), dark = 22, light = -14)
+    /**
+     * Wraps a token so it re-resolves on **every read** instead of snapshotting the theme that happened
+     * to be current when it was called.
+     *
+     * This is what makes the panel follow a theme the user switches *after* it opened. Swing stores the
+     * `Color` object a component was given (`background = …`, `foreground = …`, a border's colour), and
+     * only re-installs it from the LaF if it is a `UIResource` — an ordinary `Color` computed from
+     * `UIUtil`/`EditorColorsManager` is not, so it stays whatever it was at construction. A [JBColor]
+     * built from a supplier *is* a `Color`, so it drops into all those same call sites, but every
+     * `getRGB` delegates back here. One wrapper at the source therefore fixes every caller, including
+     * the ones not written yet — the alternative is a `refreshTheme()` on each component re-setting
+     * dozens of fields, which only stays correct until someone adds the next one.
+     *
+     * `JBColor.lazy` and not `JBColor(NotNullProducer)`: the producer constructor is deprecated, and the
+     * only other supplier constructor is protected.
+     */
+    private fun dynamic(compute: () -> Color): JBColor = JBColor.lazy(compute)
 
-    fun border(): Color = JBColor.border()
+    // ---- surfaces ----
+    fun surface(): Color = dynamic { EditorColorsManager.getInstance().globalScheme.defaultBackground }
+    fun panel(): Color = dynamic { UIUtil.getPanelBackground() }
+    /** A card/raised surface, a touch off the base background. */
+    fun elevatedSurface(): Color = dynamic { shift(rawSurface(), dark = 14, light = -8) }
+    /** A barely-there fill for chips/inputs. */
+    fun subtleSurface(): Color = dynamic { shift(rawSurface(), dark = 8, light = -5) }
+    /** A stronger raised surface for overlays/inspectors. */
+    fun overlaySurface(): Color = dynamic { shift(rawSurface(), dark = 22, light = -14) }
+
+    /** The un-wrapped base, for the derived surfaces above — they re-resolve it inside their own supplier. */
+    private fun rawSurface(): Color = EditorColorsManager.getInstance().globalScheme.defaultBackground
+
+    fun border(): Color = dynamic { JBColor.border() }
     fun subtleBorder(): Color = JBColor(Color(0x00, 0x00, 0x00, 26), Color(0xFF, 0xFF, 0xFF, 26))
 
     // ---- text ----
-    fun textPrimary(): Color = UIUtil.getLabelForeground()
-    fun textSecondary(): Color = UIUtil.getContextHelpForeground()
+    fun textPrimary(): Color = dynamic { UIUtil.getLabelForeground() }
+    fun textSecondary(): Color = dynamic { UIUtil.getContextHelpForeground() }
 
     // ---- semantic (shared with the activity graph) ----
     fun success(): JBColor = JBColor(0x1F9D57, 0x54D98A)

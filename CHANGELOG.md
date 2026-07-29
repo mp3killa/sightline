@@ -24,6 +24,10 @@ All notable changes to Sightline are recorded here. Format follows
   correctly light graph: the canvas paints a shifted variant of the panel background while the chrome
   painted the raw one, so the two disagreed. The map now derives both from the same colour and paints
   as a single surface.
+- **The panel follows a theme you switch while it is open.** Colours were resolved once, when a
+  component was built, so switching between light and dark left parts of the panel painting the theme
+  that happened to be current when the tool window opened. They are now live values that re-resolve as
+  they are read, and an editor colour-scheme change repaints the panel as a LaF change already did.
 
 ## 0.5.0 — 2026-07-27
 

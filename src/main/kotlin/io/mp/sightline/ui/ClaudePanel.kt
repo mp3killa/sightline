@@ -10,6 +10,9 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
+import com.intellij.util.IJSwingUtilities
+import com.intellij.ide.ui.LafManagerListener
+import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -471,7 +474,31 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         updateModeChip()
         installShortcuts(root)
+        installThemeListener(root)
         return root
+    }
+
+    /**
+     * Repaints the panel when the theme changes.
+     *
+     * [ClaudeUiTokens] hands out colours that re-resolve on every read, so nothing needs re-applying —
+     * but Swing only shows the new values once something asks it to paint. A LaF switch repaints the IDE
+     * for us; an **editor colour scheme** change does not necessarily reach a docked tool window, and
+     * half this panel's surfaces are derived from the editor background, so that one is subscribed too.
+     *
+     * Both topics are application-level, so they are taken on the application bus — a project connection
+     * would compile, register, and simply never fire. Scoped to this panel's lifetime.
+     */
+    private fun installThemeListener(root: JComponent) {
+        val repaint = {
+            SwingUtilities.invokeLater {
+                IJSwingUtilities.updateComponentTreeUI(root)
+                root.revalidate(); root.repaint()
+            }
+        }
+        val bus = ApplicationManager.getApplication().messageBus.connect(this)
+        bus.subscribe(LafManagerListener.TOPIC, LafManagerListener { repaint() })
+        bus.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { repaint() })
     }
 
     // ---- Android context (docs/ANDROID.md M1) ----

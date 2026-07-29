@@ -61,6 +61,9 @@
             <li><b>Light-theme fix for the Agent Activity Map.</b> Its toolbar and activity-log bar
             rendered as dark strips around a correctly light graph, because the chrome and the graph were
             deriving their background differently. The map now paints as a single surface.</li>
+            <li><b>Switching theme with the panel open now works.</b> Colours were fixed when a component
+            was built, so parts of the panel kept painting the theme that was current when the tool window
+            opened. They follow light and dark as you switch.</li>
         </ul>
 
         <p><b>0.5.0</b> — first stable release. Same build as 0.5.0-beta, promoted after a hands-on pass
