@@ -50,6 +50,19 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.6.0</b></p>
+        <ul>
+            <li><b>Switch models from the composer.</b> The <code>/</code> actions menu has a new
+            <b>Model</b> submenu — the CLI's aliases (Opus, Sonnet, Haiku, Fable), any full model id you
+            pin, and a line reporting what the CLI says it is actually running. Switching mid-conversation
+            takes effect in place, keeping the session and the conversation.</li>
+            <li><b>Wide tables render again.</b> A Markdown table whose cells were wider than the chat
+            column showed as an empty bordered box; it now scrolls horizontally instead.</li>
+            <li><b>Light-theme fix for the Agent Activity Map.</b> Its toolbar and activity-log bar
+            rendered as dark strips around a correctly light graph, because the chrome and the graph were
+            deriving their background differently. The map now paints as a single surface.</li>
+        </ul>
+
         <p><b>0.5.0</b> — first stable release. Same build as 0.5.0-beta, promoted after a hands-on pass
         over the interactive approval and diff paths. Everything below shipped during the beta.</p>
 

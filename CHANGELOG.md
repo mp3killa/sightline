@@ -4,6 +4,27 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0 — 2026-07-29
+
+### Added
+- **Switch models from the composer.** The `/` actions menu now has a **Model** submenu: the CLI's
+  aliases (Opus / Sonnet / Haiku / Fable), any full model id you pin via *Custom model…*, and a line
+  reporting what the CLI says it is actually running. Switching during a conversation takes effect
+  **in place** — the session and the conversation are both kept — and anything that can't switch that
+  way is saved for the next conversation, with the transcript saying which of the two happened.
+  Note the list is not fetched: the CLI has no command that enumerates models, and Sightline never
+  holds an API key, so it offers what is knowable rather than inventing a catalogue.
+
+### Fixed
+- **A wide table no longer renders as an empty box.** A Markdown table whose cells were wider than the
+  chat column collapsed to a bordered frame with nothing in it — the cells were laid out at a negative
+  size and painted nothing. Such a table now scrolls horizontally, as a table too wide for its column
+  always should have.
+- **The activity map's toolbar and log bar match its graph.** They rendered as dark strips around a
+  correctly light graph: the canvas paints a shifted variant of the panel background while the chrome
+  painted the raw one, so the two disagreed. The map now derives both from the same colour and paints
+  as a single surface.
+
 ## 0.5.0 — 2026-07-27
 
 **First release on the stable channel.** Same code as 0.5.0-beta, promoted after a human pass over the

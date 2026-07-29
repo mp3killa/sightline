@@ -221,7 +221,7 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
   under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
   Both `select { }` and `ide(...)` hit the same wrong group. The script downloads the IDE itself and runs
-  the same verifier CLI. **Last run (2026-07-27): `io.mp.sightline:0.5.0-beta` vs `AI-261.25134.95`
+  the same verifier CLI. **Last run (2026-07-29): `io.mp.sightline:0.6.0` vs `AI-261.25134.95`
   (Quail 2) — Compatible, 0 compatibility problems** (10 informational `ToolWindowFactory` usages —
   4 deprecated, 6 experimental). Re-run before every release.
 - **Verify against Android Studio, not IntelliJ IDEA — the verifier only tells you about the IDE you
