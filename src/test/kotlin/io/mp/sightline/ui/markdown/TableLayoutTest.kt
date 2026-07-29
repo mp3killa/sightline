@@ -34,4 +34,26 @@ class TableLayoutTest {
         // Width 0 means "no layout pass yet", not "infinitely narrow".
         assertFalse(TableLayout.needsHorizontalScroll(columnCount = 6, availableWidth = 0))
     }
+
+    /**
+     * The floor is not the whole test. A 3-column table of real prose clears the floor easily and still
+     * doesn't fit — and squeezing it does not wrap the cells, it collapses them to a negative size and
+     * paints an empty box (see WideTableReproTest). What the cells ask for has to count.
+     */
+    @Test fun tableWiderThanThePanelScrollsEvenWhenItClearsTheFloor() {
+        assertFalse("the floor alone says this fits", TableLayout.needsHorizontalScroll(3, availableWidth = 754))
+        assertTrue(
+            "but the cells want 888px, so it must scroll rather than squeeze",
+            TableLayout.needsHorizontalScroll(3, availableWidth = 754, naturalWidth = 888),
+        )
+    }
+
+    @Test fun tableNarrowerThanThePanelStillDoesNotScroll() {
+        assertFalse(TableLayout.needsHorizontalScroll(3, availableWidth = 754, naturalWidth = 400))
+    }
+
+    @Test fun unmeasuredNaturalWidthIsIgnoredRatherThanTreatedAsZeroWidth() {
+        // 0 means "nothing measured yet"; it must not read as "the table wants no space".
+        assertFalse(TableLayout.needsHorizontalScroll(2, availableWidth = 800, naturalWidth = 0))
+    }
 }

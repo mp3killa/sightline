@@ -397,7 +397,11 @@ class BlockRenderer(
             cell.add(pane, BorderLayout.CENTER)
             // A width floor per column: without it, wrapping cells let a wide table squeeze itself down to
             // a few unreadable characters per column instead of overflowing into the scroller below.
-            cell.minimumSize = Dimension(JBUI.scale(TableLayout.minColumnWidth(cols)), 0)
+            //
+            // The height is the cell's own preferred height and **never 0**, which it used to be: a zero
+            // minimum lets GridBagLayout collapse the row, and the cell's own 4px vertical padding then
+            // takes the pane's height negative, so it paints nothing.
+            cell.minimumSize = Dimension(JBUI.scale(TableLayout.minColumnWidth(cols)), cell.preferredSize.height)
             val gbc = GridBagConstraints().apply {
                 gridx = col; gridy = row; weightx = 1.0; fill = GridBagConstraints.BOTH
                 anchor = GridBagConstraints.NORTHWEST
@@ -424,8 +428,14 @@ class BlockRenderer(
         val host = object : JPanel(BorderLayout()), Scrollable {
             init { isOpaque = false; add(grid, BorderLayout.CENTER) }
 
-            private fun overflowing(): Boolean =
-                TableLayout.needsHorizontalScroll(columnCount, (parent as? JViewport)?.width ?: 0)
+            // `grid.preferredSize.width` is what the cells actually ask for once measured. Asking the floor
+            // alone said "it fits" for any table the panel could nominally hold, and the squeeze that
+            // followed collapsed the cells to nothing — see TableLayout.needsHorizontalScroll.
+            private fun overflowing(): Boolean = TableLayout.needsHorizontalScroll(
+                columnCount,
+                (parent as? JViewport)?.width ?: 0,
+                grid.preferredSize.width,
+            )
 
             override fun getPreferredSize(): Dimension {
                 val natural = super.getPreferredSize()

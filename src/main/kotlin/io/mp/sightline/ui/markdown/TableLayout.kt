@@ -23,9 +23,21 @@ object TableLayout {
         if (columnCount <= 0) 0 else columnCount * minColumnWidth(columnCount)
 
     /**
-     * True when [availableWidth] can't hold the table at its floor, so it needs a horizontal scroller.
-     * A non-positive [availableWidth] means "not laid out yet" — never claim a scroll is needed then.
+     * True when the table needs a horizontal scroller rather than being squeezed into [availableWidth].
+     *
+     * Two independent reasons, and the second is the one that matters in practice. [naturalWidth] is what
+     * the laid-out cells actually ask for; when that exceeds the space, the table **must** scroll, because
+     * the alternative is not the graceful wrap it looks like: `GridBagLayout` has no notion of reflowing
+     * text to a narrower column, so it shrinks cells toward their minimum and — once the cell padding is
+     * subtracted — hands the panes *negative* sizes. The cells then paint nothing at all and the table
+     * renders as an empty bordered box. Comparing only against the floor declared "it fits" for any table
+     * over ~3 columns of real prose, which is exactly when this happened.
+     *
+     * A non-positive [availableWidth] means "not laid out yet" — never claim a scroll is needed then. A
+     * non-positive [naturalWidth] means "nothing measured yet" and is likewise ignored.
      */
-    fun needsHorizontalScroll(columnCount: Int, availableWidth: Int): Boolean =
-        availableWidth > 0 && minTableWidth(columnCount) > availableWidth
+    fun needsHorizontalScroll(columnCount: Int, availableWidth: Int, naturalWidth: Int = 0): Boolean {
+        if (availableWidth <= 0) return false
+        return minTableWidth(columnCount) > availableWidth || naturalWidth > availableWidth
+    }
 }
