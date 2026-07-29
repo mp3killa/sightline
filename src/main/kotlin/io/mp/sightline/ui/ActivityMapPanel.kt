@@ -179,7 +179,18 @@ class ActivityMapPanel(private val project: Project, parent: Disposable) : Dispo
     // ---------- build ----------
 
     private fun build(): JComponent {
-        val root = JPanel(BorderLayout())
+        // The map is **one surface**, and it has to say so at paint time rather than at construction.
+        //
+        // Only the canvas and the dock's list paint a background of their own; the toolbar and the log
+        // bar are transparent, so whatever this root paints is what shows through in those two strips.
+        // Left to the LaF's `Panel.background` they were a different colour from the canvas — visibly so
+        // in a light IDE, where the two strips came out dark around a correctly light graph — and a
+        // colour resolved once at construction cannot follow the user to another theme either.
+        // Deriving it here, per paint, from the same [canvasBg] the canvas uses makes both impossible.
+        val root = object : JPanel(BorderLayout()) {
+            override fun getBackground(): Color = canvasBg()
+        }
+        root.isOpaque = true
         root.border = BorderFactory.createMatteBorder(1, 0, 0, 0, ClaudeUiTokens.border())
         root.add(buildHeader(), BorderLayout.NORTH)
 
