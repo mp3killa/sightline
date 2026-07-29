@@ -4,11 +4,13 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.thisLogger
@@ -41,6 +43,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.mp.sightline.ui.state.DiffLayout
 import io.mp.sightline.ui.state.DiffPresentation
 import java.awt.GridLayout
+import io.mp.sightline.ui.state.ModelCatalog
 import io.mp.sightline.ui.state.PathDisplay
 import io.mp.sightline.ui.state.ProcessingSummary
 import io.mp.sightline.activity.ActivityNode
@@ -363,6 +366,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private var target: StyledDocument? = null
     private var malformedEventCount = 0
     private var permissionModeFallbackNoted = false
+
+    /**
+     * The model the CLI last reported in `system/init` — the resolved id, not the alias that was asked
+     * for. Null until it has said, and the picker shows nothing rather than a guess in that window.
+     */
+    private var reportedModel: String? = null
 
     // After a build/test/analysis command, its structured report files are read off-EDT for richer
     // results than the console gives. tool_use_id -> (command, start millis).
@@ -1058,9 +1067,74 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(action("Catch up on project") { primeProject() })
         group.add(action("Attach file…") { attachFile() })
         androidContextAction()?.let { group.add(it) }
+        group.add(Separator.create("Model"))
+        group.add(modelMenu())
         group.add(Separator.create("Conversation"))
         group.add(action("Clear conversation") { session.newConversation() })
         popup("Actions", group, anchor)
+    }
+
+    /**
+     * The model picker. Its rows come from [ModelCatalog] — the CLI's documented aliases, whatever full
+     * ids the user has pinned, and a free-text entry — because nothing can *enumerate* models: the CLI
+     * has no list command and this plugin never holds an API key. What it can do honestly is show the
+     * model the CLI **reports** it is running, which is the trailing note.
+     */
+    private fun modelMenu(): ActionGroup {
+        val settings = ClaudeSettings.getInstance().state
+        val entries = ModelCatalog.entries(settings.model, reportedModel, settings.customModels)
+        val current = entries.firstOrNull { it.current }
+
+        val group = DefaultActionGroup("Model: ${current?.label ?: "Default"}", true)
+        for (e in entries) {
+            val mark = if (e.current) "✓ " else "   "
+            val detail = e.detail?.let { " — $it" } ?: ""
+            group.add(action("$mark${e.label}$detail") { chooseModel(e.id) })
+        }
+        group.add(Separator.create())
+        group.add(action("Custom model…") { promptForCustomModel() })
+        // What the CLI says it is actually running — an alias resolves to a dated id and only the CLI
+        // knows that mapping, so it is relayed, never derived here.
+        ModelCatalog.resolvedNote(reportedModel)?.let {
+            group.add(Separator.create())
+            group.add(action(it) { }.apply { templatePresentation.isEnabled = false })
+        }
+        return group
+    }
+
+    /**
+     * Applies a model choice. A running session switches **in place** over the control protocol — the
+     * CLI acknowledges `set_model` and re-announces `system/init` with the resolved model, so neither the
+     * process nor the conversation is lost. Anything that can't be switched that way is persisted and
+     * takes effect on the next launch, and the transcript says which of the two happened rather than
+     * leaving the user to guess whether the click did anything.
+     */
+    private fun chooseModel(id: String?) {
+        val settings = ClaudeSettings.getInstance().state
+        settings.model = id ?: ""
+        id?.let { settings.customModels = ModelCatalog.remember(settings.customModels, it).toMutableList() }
+
+        val label = ModelCatalog.label(id)
+        val switched = id != null && session.setModel(id)
+        showEmptyState(false)
+        addInfo(
+            if (switched) "Model switched to $label for this conversation."
+            else "Model set to $label — it applies to the next conversation.",
+            err = false,
+        )
+        scrollToBottomSoon()
+    }
+
+    private fun promptForCustomModel() {
+        val entered = Messages.showInputDialog(
+            project,
+            "Model id (for example claude-sonnet-5). The CLI cannot list models, so this is passed through as typed.",
+            "Custom Model",
+            null,
+            ClaudeSettings.getInstance().state.model.orEmpty(),
+            null,
+        )?.trim().orEmpty()
+        if (entered.isNotEmpty()) chooseModel(entered)
     }
 
     private fun showMoreMenu(anchor: Component) {
@@ -1445,7 +1519,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onSystem(o: JsonObject) {
         when (o.str("subtype")) {
-            "init" -> { setRunning(true); notePermissionModeFallback(o.str("permissionMode")) }
+            "init" -> {
+                setRunning(true)
+                notePermissionModeFallback(o.str("permissionMode"))
+                // The only trustworthy answer to "which model is this?": the CLI resolves an alias to a
+                // dated id and re-announces init after a set_model, so this is read on every init.
+                o.str("model")?.takeIf { it.isNotBlank() }?.let { reportedModel = it }
+            }
             "status" -> if (o.str("status") == "requesting") feed(interpreter.status("Thinking"))
         }
     }

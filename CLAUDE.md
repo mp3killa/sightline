@@ -316,6 +316,15 @@ These outlived the backlog items that recorded them. They are constraints on fut
   `androidSdkPath` (blank = auto-detect) overrides SDK discovery when a machine has several.
 - `androidPersistCache` (**default off**) → the `.sightline/` store; `androidCacheMaxEntries`
   (default 200) caps each store. This is the one disk carve-out — see **Standing decisions**.
+- `model` (default blank = the CLI's own default) + `customModels` — the **model picker** in the
+  composer's `/` actions menu. Nothing can *enumerate* models (the CLI has no list command and the plugin
+  never holds an API key — the CLI owns auth), so `ui/state/ModelCatalog` builds the list from the three
+  knowable things: the CLI's documented aliases, full ids the user pinned, and the model the CLI
+  **reports** in `system/init` — which is relayed, never derived, because only the CLI knows that
+  `sonnet` resolves to `claude-sonnet-5`. Switching a **running** session goes over the control protocol
+  (`ClaudeSession.setModel` → `set_model`, acknowledged with a success response and a re-announced
+  `system/init`), so neither the process nor the conversation is lost; anything that can't switch that
+  way is persisted for the next launch and the transcript says which of the two happened.
 - `permissionMode` (default `auto`) — set via the composer mode chip or the Settings dropdown.
   `auto` (⚡) is **model-gated** (Sonnet/Opus only; silently falls back to `default` on Haiku). The CLI
   announces the fallback only by echoing `permissionMode` back in `system/init`, so `ClaudePanel`

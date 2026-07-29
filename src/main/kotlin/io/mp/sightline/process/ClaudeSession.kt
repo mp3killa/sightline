@@ -125,6 +125,23 @@ class ClaudeSession(
         writeLine("""{"type":"control_response","response":{"subtype":"success","request_id":"${jsonEscape(requestId)}","response":{"behavior":"deny","message":"${jsonEscape(message)}"}}}""")
     }
 
+    /**
+     * Switches the model of the **running** session via the control protocol, returning false when no
+     * process is running (the caller then just persists the choice for the next launch).
+     *
+     * Verified against CLI 2.1.218: the request is acknowledged with a `success` control_response, the
+     * next turn re-announces `system/init` with the resolved model, and the conversation continues in the
+     * same process — so switching costs neither the session nor a relaunch. The alias resolution
+     * (`sonnet` → `claude-sonnet-5`) is the CLI's, which is why the panel reports the model it is *told*
+     * rather than deriving one.
+     */
+    @Synchronized
+    fun setModel(model: String): Boolean {
+        if (!isRunning) return false
+        writeLine("""{"type":"control_request","request_id":"model-${java.util.UUID.randomUUID()}","request":{"subtype":"set_model","model":"${jsonEscape(model)}"}}""")
+        return true
+    }
+
     fun respondControlError(requestId: String, error: String) {
         writeLine("""{"type":"control_response","response":{"subtype":"error","request_id":"${jsonEscape(requestId)}","error":"${jsonEscape(error)}"}}""")
     }

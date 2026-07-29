@@ -18,6 +18,13 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Model for new sessions: "" = CLI default, otherwise an alias ("opus"/"sonnet"/"haiku") or a full id. */
         var model by string("")
 
+        /**
+         * Full model ids the user pinned from the composer's model picker, most recent first. Only ids —
+         * the CLI cannot enumerate models, so a dated id someone chose once is the only way it can be
+         * offered again without them retyping it. Bounded by `ModelCatalog.MAX_CUSTOM`.
+         */
+        var customModels by list<String>()
+
         /** Permission mode: default | acceptEdits | plan | auto | bypassPermissions. */
         var permissionMode by string("auto")
 
