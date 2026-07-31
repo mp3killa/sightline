@@ -27,12 +27,18 @@ object ModelCatalog {
         val custom: Boolean = false,
     )
 
-    /** The CLI's documented aliases, in capability order. An alias always means "latest of that tier". */
-    val ALIASES: List<Pair<String, String>> = listOf(
+    /**
+     * The CLI's documented aliases, in capability order. An alias always means "latest of that tier".
+     *
+     * The description is nullable and `fable`'s is deliberately absent: Opus/Sonnet/Haiku have a
+     * documented positioning, and inventing one for a tier that doesn't would be a confident guess
+     * dressed as a fact. It previously repeated the name, which rendered as "Fable — Fable".
+     */
+    val ALIASES: List<Pair<String, String?>> = listOf(
         "opus" to "Most capable",
         "sonnet" to "Balanced",
         "haiku" to "Fastest",
-        "fable" to "Fable",
+        "fable" to null,
     )
 
     /** Display name for an alias or id: aliases are title-cased, a full id is shown verbatim. */

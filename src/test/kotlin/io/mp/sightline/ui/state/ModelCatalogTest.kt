@@ -62,6 +62,20 @@ class ModelCatalogTest {
         assertEquals("an alias is never re-listed as a custom", listOf("x"), customs)
     }
 
+    /**
+     * A row renders as "Label — detail", so a detail that merely repeats the label reads as "Fable —
+     * Fable" (spotted in a screen recording of the real menu). A tier with no documented positioning
+     * gets no description rather than an invented one.
+     */
+    @Test fun noRowDescribesItselfWithItsOwnName() {
+        for (e in ModelCatalog.entries(selected = "", customs = listOf("claude-sonnet-5"))) {
+            assertTrue(
+                "row '${e.label}' has the tautological detail '${e.detail}'",
+                !e.label.equals(e.detail, ignoreCase = true),
+            )
+        }
+    }
+
     @Test fun labelsTitleCaseAliasesAndLeaveIdsAlone() {
         assertEquals("Sonnet", ModelCatalog.label("sonnet"))
         assertEquals("claude-sonnet-5", ModelCatalog.label("claude-sonnet-5"))
