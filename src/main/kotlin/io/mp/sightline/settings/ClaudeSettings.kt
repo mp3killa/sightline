@@ -56,6 +56,18 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Run the `ide` MCP server so Claude sees the editor selection and opens diffs natively. */
         var ideIntegration by property(true)
 
+        /**
+         * Load MCP servers you add into the conversation already in progress, instead of needing a
+         * restart that would cost the conversation.
+         *
+         * On by default: a server added with `claude mcp add` is one the user typed for this project,
+         * and a session started a minute later would load it with no ceremony at all — so doing it now
+         * honours a decision already made rather than making a new one. Every sync says what it did.
+         * Servers from a project's checked-in `.mcp.json` are reported but never started either way;
+         * see [io.mp.sightline.mcp.McpScope].
+         */
+        var mcpAutoSync by property(true)
+
         /** Show the live Agent Activity Map (graph of observable tool activity) while Claude works. */
         var showActivityMap by property(true)
 

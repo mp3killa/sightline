@@ -64,6 +64,8 @@ import io.mp.sightline.activity.FileEdited
 import io.mp.sightline.activity.FileRead
 import io.mp.sightline.activity.OutputParsers
 import io.mp.sightline.health.HealthGatherer
+import io.mp.sightline.mcp.McpSyncCoordinator
+import io.mp.sightline.ide.McpConfigWatcher
 import io.mp.sightline.ide.ApprovalCoordinator
 import io.mp.sightline.ide.ApprovalDecision
 import io.mp.sightline.ide.PendingApproval
@@ -212,6 +214,23 @@ private const val JUMP_TO_LATEST_GUTTER = 46
  */
 class ClaudePanel(private val project: Project, parent: Disposable) : Disposable {
 
+    private companion object {
+        /**
+         * How often the MCP config stamp is checked while the panel is showing. Two `lastModified()`
+         * calls per tick, so this is cheap; the interval only decides how soon after `claude mcp add`
+         * the tools appear, and a couple of seconds is well inside the time it takes to type the next
+         * message.
+         */
+        const val MCP_POLL_MS = 2500
+
+        /**
+         * How long to wait for a control reply before reporting that we cannot say. Comfortably past
+         * the CLI's own 30s per-server connect timeout, so a slow-but-working server is not called a
+         * failure — this is for a reply that is never coming.
+         */
+        const val MCP_REPLY_TIMEOUT_MS = 45_000
+    }
+
     val component: JComponent
     private val session: ClaudeSession = ClaudeSession(project) { line -> onLine(line) }
     private val interpreter = ActivityInterpreter()
@@ -220,6 +239,32 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val statusModel = StatusModel()
     private val composerModel = ComposerModel()
     private val transcriptPresenter = TranscriptPresenter()
+
+    /**
+     * Live MCP sync: keeps this conversation's MCP servers in step with the ones you have declared,
+     * so `claude mcp add` does not cost the conversation. See [McpSyncCoordinator].
+     *
+     * The writes go straight to the running process and are never waited on — `mcp_set_servers` can
+     * take 30s to answer when a server hangs, which is why none of this is on the send path.
+     */
+    private val mcpSync = McpSyncCoordinator(
+        send = { line -> session.sendControlRequest(line) },
+        notice = { addInfo(it, false) },
+        newRequestId = { "sightline-mcp-${java.util.UUID.randomUUID()}" },
+    )
+
+    /**
+     * Polls the config stamp while the panel is showing. Two `File.lastModified()` calls per tick, off
+     * the EDT, and a parse only when the stamp actually moves — see [McpConfigWatcher].
+     */
+    private val mcpPollTimer = Timer(MCP_POLL_MS) { pollMcpConfig() }
+
+    /** Frees an exchange whose reply never came, so one wedged request can't disable sync for the session. */
+    private val mcpTimeoutTimer = Timer(MCP_REPLY_TIMEOUT_MS) { mcpSync.timedOut() }
+        .apply { isRepeats = false }
+
+    /** True while no turn is in flight — a sync waits for one to finish rather than interrupting it. */
+    private var mcpPollInFlight = false
 
     // proportionKey persists the user's dragged divider position across restarts; the default keeps
     // the conversation the dominant pane.
@@ -475,7 +520,28 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         updateModeChip()
         installShortcuts(root)
         installThemeListener(root)
+        installMcpConfigPolling(root)
         return root
+    }
+
+    /**
+     * Runs the MCP config poll only while the panel is actually on screen.
+     *
+     * The same discipline as the activity map's physics timer: a docked tool window spends most of its
+     * life hidden, and a background tick that costs nothing individually still has no business running
+     * for a panel nobody is looking at. Coming back into view polls immediately, so a server added
+     * while the window was collapsed is picked up on sight rather than after another interval.
+     */
+    private fun installMcpConfigPolling(root: JComponent) {
+        root.addHierarchyListener { e ->
+            if (e.changeFlags and java.awt.event.HierarchyEvent.SHOWING_CHANGED.toLong() == 0L) return@addHierarchyListener
+            if (root.isShowing) {
+                mcpPollTimer.start()
+                pollMcpConfig()
+            } else {
+                mcpPollTimer.stop()
+            }
+        }
     }
 
     /**
@@ -1498,6 +1564,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 "user" -> onUser(o)
                 "result" -> onResult(o)
                 "control_request" -> onControlRequest(o)
+                "control_response" -> onControlResponse(o)
             }
         } catch (e: Exception) {
             // A malformed approval/result event can leave the UI inconsistent — surface those; ignore
@@ -1524,7 +1591,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun onPanel(o: JsonObject) {
         when (o.str("subtype")) {
             // A new process may be a new model, so the mode-fallback notice re-arms with each launch.
-            "started" -> { setRunning(true); permissionModeFallbackNoted = false }
+            // A new process has just read every MCP config file itself, so nothing is Sightline's to
+            // manage and the config stamp is re-read from scratch rather than compared against a
+            // previous process's view.
+            "started" -> {
+                setRunning(true)
+                permissionModeFallbackNoted = false
+                mcpSync.onProcessStarted()
+                mcpTimeoutTimer.stop()
+                project.getService(McpConfigWatcher::class.java)?.invalidate()
+            }
             "cleared" -> clearAll()
             "config" -> applyConfigToUi()
             "error" -> { addInfo(o.str("text") ?: "Error", true); noteError(o.str("text") ?: "Error"); setRunning(false) }
@@ -1573,6 +1649,48 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // to `auto` — naming the wrong mode here would be the same class of error this notice exists for.
         fun name(v: String) = PermissionModes.all.firstOrNull { it.value == v }?.shortName ?: v
         addInfo("Claude is running in \"${name(reported)}\", not \"${name(requested)}\" — this model does not support that mode.", false)
+    }
+
+    /**
+     * Checks whether the MCP servers declared on disk have changed, and if so offers them to the
+     * running conversation.
+     *
+     * The stat-and-parse runs on a pooled thread and the decision comes back to the EDT, because the
+     * file is one another process rewrites constantly and reading it on the EDT for a feature nobody
+     * asked to wait for would be the wrong trade. Skipped entirely when no process is running: a fresh
+     * CLI reads these files itself, so there is nothing to sync into.
+     */
+    private fun pollMcpConfig() {
+        if (mcpPollInFlight || !session.isRunning || mcpSync.busy) return
+        // Mid-turn is not the moment: the running turn's tools are already resolved, and dropping a
+        // server while a tool call is in flight against it is a real way to break one. `running` is
+        // this panel's "a turn is in flight", not "a process exists" — those are different questions.
+        if (running) return
+        mcpPollInFlight = true
+        com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread {
+            val declared = try {
+                project.getService(McpConfigWatcher::class.java)?.pollDeclared()
+            } catch (e: Exception) {
+                thisLogger().warn("Sightline: MCP config poll failed", e)
+                null
+            }
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater({
+                mcpPollInFlight = false
+                if (declared == null || project.isDisposed) return@invokeLater
+                val autoSync = ClaudeSettings.getInstance().state.mcpAutoSync
+                if (mcpSync.offer(declared, autoSync, idle = !running)) mcpTimeoutTimer.restart()
+            }, com.intellij.openapi.application.ModalityState.any())
+        }
+    }
+
+    /**
+     * Routes a `control_response` line. Returns true when live MCP sync consumed it, in which case it
+     * is not a reply anyone else is waiting for.
+     */
+    private fun onControlResponse(o: JsonObject): Boolean {
+        val consumed = mcpSync.onControlResponse(o)
+        if (consumed && !mcpSync.busy) mcpTimeoutTimer.stop()
+        return consumed
     }
 
     private fun onStream(ev: JsonObject) {
@@ -2252,6 +2370,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * pending approvals/questions that a later panel — or the sandbox bridge — would still see.
      */
     override fun dispose() {
+        mcpPollTimer.stop()
+        mcpTimeoutTimer.stop()
         session.dispose()
         approvalCoordinator.clear()
         questionCoordinator.clear()

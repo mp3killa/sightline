@@ -142,6 +142,26 @@ class ClaudeSession(
         return true
     }
 
+    /**
+     * Writes a pre-built control request to the **running** session, returning false when there is no
+     * process to write to. Used by live MCP sync (`mcp_status` / `mcp_set_servers`).
+     *
+     * Two things about this path are deliberate. It **never starts a process** — a sync is bookkeeping
+     * about a conversation, and one that launched a CLI would create the very session it was meant to
+     * be updating. And it is **fire-and-forget**: `mcp_set_servers` does not reply until every server
+     * has connected or timed out, which is 30s for one that hangs, so nothing may wait on the reply.
+     *
+     * The line can contain an MCP server config, and those can carry a credential in `env`. It is
+     * therefore written straight to the CLI's stdin and never logged — the same reasoning that puts the
+     * `--mcp-config` payload in an owner-only file instead of on the command line.
+     */
+    @Synchronized
+    fun sendControlRequest(line: String): Boolean {
+        if (!isRunning) return false
+        writeLine(line)
+        return true
+    }
+
     fun respondControlError(requestId: String, error: String) {
         writeLine("""{"type":"control_response","response":{"subtype":"error","request_id":"${jsonEscape(requestId)}","error":"${jsonEscape(error)}"}}""")
     }

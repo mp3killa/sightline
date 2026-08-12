@@ -50,89 +50,40 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.7.0</b></p>
+        <ul>
+            <li><b>MCP servers you add show up in the conversation you already have open.</b> Run
+            <code>claude mcp add playwright …</code> while you are mid-conversation and its tools become
+            available right where you are — no restart, no lost context. Sightline reports what changed:
+            which servers were added, how many tools each brought, and the CLI's own reason if one could
+            not start.</li>
+            <li>It stays out of your way. Nothing waits on the sync, and a change noticed mid-turn is
+            applied once that turn ends. Servers from the project's checked-in <code>.mcp.json</code> are
+            reported but not started for you — that file can arrive from a <code>git pull</code> — and they
+            load with your next conversation.</li>
+            <li>Server configurations can carry credentials, so they go to the CLI and nowhere else: never
+            a log, never the transcript. Switch the whole feature off in Settings if you would rather it
+            only reported.</li>
+        </ul>
+
         <p><b>0.6.0</b></p>
         <ul>
-            <li><b>Switch models from the composer.</b> The <code>/</code> actions menu has a new
-            <b>Model</b> submenu — the CLI's aliases (Opus, Sonnet, Haiku, Fable), any full model id you
-            pin, and a line reporting what the CLI says it is actually running. Switching mid-conversation
-            takes effect in place, keeping the session and the conversation.</li>
+            <li><b>Switch models from the composer.</b> The <code>/</code> actions menu has a <b>Model</b>
+            submenu — the CLI's aliases, any full model id you pin, and a line reporting what the CLI says
+            it is actually running. Switching mid-conversation takes effect in place, keeping the session
+            and the conversation.</li>
             <li><b>Wide tables render again.</b> A Markdown table whose cells were wider than the chat
             column showed as an empty bordered box; it now scrolls horizontally instead.</li>
-            <li><b>Light-theme fix for the Agent Activity Map.</b> Its toolbar and activity-log bar
-            rendered as dark strips around a correctly light graph, because the chrome and the graph were
-            deriving their background differently. The map now paints as a single surface.</li>
-            <li><b>Switching theme with the panel open now works.</b> Colours were fixed when a component
-            was built, so parts of the panel kept painting the theme that was current when the tool window
-            opened. They follow light and dark as you switch.</li>
+            <li><b>Themes behave.</b> The Activity Map no longer renders its toolbar as dark strips around
+            a correctly light graph, and the panel follows a theme you switch while it is open.</li>
         </ul>
 
-        <p><b>0.5.0</b> — first stable release. Same build as 0.5.0-beta, promoted after a hands-on pass
-        over the interactive approval and diff paths. Everything below shipped during the beta.</p>
+        <p><b>0.5.0</b> — first stable release, and the point at which the supported platform narrowed to
+        Android Studio Quail 2 (2026.1.2) or later. IntelliJ IDEA 2026.1+ is the same platform build and
+        can still install Sightline, with the Android features degrading as they always have.</p>
 
-        <p><b>0.5.0-beta</b></p>
-        <ul>
-            <li><b>Now requires Android Studio Quail 2 (2026.1.2) or later.</b> The previous compatibility
-            floor was the 2025.3 platform, kept for reach — but that older platform lacks API the current
-            one requires, which left Sightline calling methods Android Studio has since deprecated.
-            Supporting the current platform properly is worth more than claiming an older one. IntelliJ
-            IDEA 2026.1+ is the same platform build and can still install it.</li>
-            <li>No deprecated platform API remains in the plugin, and the pre-release verification now runs
-            against Android Studio at that floor rather than against IntelliJ IDEA.</li>
-        </ul>
-
-        <p><b>0.4.0-beta</b></p>
-        <ul>
-            <li><b>A message you send while Claude is working now reaches the work in progress.</b> Pressing
-            Enter mid-turn used to park the message until the turn was over — by which time the agent had
-            usually finished going the way you were trying to redirect it. It is now delivered into the
-            running session and folded into the current turn at the agent's next step, so "also update the
-            tests" or "stop, wrong file" arrives while it still matters. The message is marked
-            <i>Sent while Claude was working</i>, and what the agent says next appears below it, so the
-            transcript still reads in the order things happened.</li>
-            <li>Queuing remains for the one case where nothing can receive a message — a Stop in flight, or
-            a session that has exited — and those messages still go out with the next turn. If the session
-            ends in the instant between the check and the send, your text stays in the composer and you're
-            told, rather than a message that looks sent reaching nobody.</li>
-        </ul>
-
-        <p><b>0.3.1-beta</b></p>
-        <ul>
-            <li>Compatibility fix: installs on Android Studio 2026.1 (build 261) and later again — a stray
-            upper build-limit in the previous artifact's descriptor has been removed.</li>
-        </ul>
-
-        <p><b>0.3.0-beta</b></p>
-        <ul>
-            <li><b>Generate commit messages.</b> A new button in the commit dialog's message toolbar reads
-            the diff of the changes you're committing and drafts a message into the field — using a fast,
-            low-effort model by default. It follows a commit style your project already states (a
-            "Commit messages" section in CONTRIBUTING, a <code>.gitmessage</code> template, a commitlint
-            config, or CLAUDE.md / AGENTS.md), and disables while it drafts. The model and optional style
-            guidance are configurable in Settings &#8594; Tools &#8594; Sightline.</li>
-        </ul>
-
-        <p><b>0.2.0-beta</b></p>
-        <ul>
-            <li><b>Mermaid diagrams render natively.</b> <code>```mermaid</code> flowcharts and state
-            diagrams draw as real diagrams in the transcript — shapes for decisions and states, directional
-            edges, start/final markers — with a Source toggle and Copy. Other diagram types fall back to a
-            code block. Claude is told the panel supports them, so it reaches for a diagram where one
-            illustrates better.</li>
-            <li><b>A clearer, calmer Activity Map.</b> A mode picker (Everything, Changes, Problems, Data
-            flow, Navigation, Test coverage) selects the nodes <i>and edges</i> that matter; nodes are drawn
-            by type as distinct shapes (files, commands, tests, warnings, errors) so the graph reads without
-            relying on colour; edges carry direction arrows; and a compact legend key sits in the corner.</li>
-            <li><b>Trustworthy run status.</b> A single recovered command failure no longer turns the whole
-            run red while work continues — it's shown as a separate health note. Each turn ends with a
-            structured completion card (Completed / Completed with warnings / Stopped) and any observed
-            warnings, instead of one grey line.</li>
-            <li><b>Better composer.</b> A message queued behind a running turn is an editable card (Edit /
-            Cancel), not an easy-to-miss count; and the composer collapses to a single row while Claude
-            works, restoring the moment you click it.</li>
-        </ul>
-
-        <p>Upgrading from 0.1.0-beta gains all of the above. Still a beta — please report problems on the
-        public issue tracker.</p>
+        <p>Earlier releases, and the reasoning behind each change, are in <code>CHANGELOG.md</code> in the
+        repository.</p>
     ]]></change-notes>
 
     <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST

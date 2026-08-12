@@ -49,10 +49,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      # gradle.properties pins `org.gradle.java.home` to the local Android Studio JBR, because a
-      # developer's PATH java is typically 17 while the platform needs 21. That path does not exist on a
-      # runner and Gradle rejects it before any task runs. Override it with the JDK just installed.
-      # Keeping the pin in gradle.properties is deliberate — it is correct for the machine it describes.
+      # gradle.properties pins `org.gradle.java.home` to a JDK 21 on the maintainer's machine, because a
+      # developer's PATH java is typically 17 (or absent) while the platform needs 21. That path does not
+      # exist on a runner and Gradle rejects it before any task runs. Override it with the JDK just
+      # installed. Keeping the pin in gradle.properties is deliberate — it is correct for the machine it
+      # describes, and it is deliberately NOT the Android Studio bundle any more: that made an IDE update
+      # silently change the build JDK, which it did (AS now ships JBR 25, which Gradle 8.14 rejects).
       #
       # Computed in a step, not in `env:` above: JAVA_HOME is not known until setup-java has run, and
       # GitHub does not shell-expand `env:` values.

@@ -115,6 +115,30 @@ Verify:
   paste it and confirm no home path, username, email or token survives. The sanitiser is heavily
   unit-tested; this pass is the copy round-trip.
 
+- **Live MCP sync** (new in 0.7.0, and the first thing Sightline does entirely on its own initiative —
+  it shipped straight to stable, so this pass is owed rather than optional). The protocol half is probed and recorded in
+  [PROTOCOL.md](PROTOCOL.md) §5 and the decision logic is unit-tested; what needs a human is the part that
+  only exists in a real IDE. With a session running, `claude mcp add`-style additions should appear in the
+  open conversation:
+  - Add a server from a terminal (`claude mcp add playwright npx @playwright/mcp`) **while a conversation
+    is open and idle**, and confirm the transcript reports it within a few seconds, with a tool count —
+    then that Claude can actually *call* one of its tools in that same conversation, without a restart.
+  - Add one **mid-turn** and confirm nothing happens until the turn finishes, then it syncs.
+  - `claude mcp remove` it and confirm the removal is reported.
+  - Point one at a **nonexistent command** and confirm the failure is reported in the CLI's words, once,
+    and does not repeat on every poll.
+  - A server that **hangs on connect** (accepts stdio, never answers `initialize`): confirm the panel stays
+    fully responsive for the ~30s the CLI takes to give up, that sending and approving still work
+    throughout, and that the outcome is eventually reported rather than left hanging.
+  - Drop a `.mcp.json` into the project and confirm it is **reported but not started**, with wording that
+    does not read as a failure.
+  - Turn **`mcpAutoSync` off** and confirm it reports without acting, and that servers already synced are
+    left running rather than torn down.
+  - Confirm the `ide` bridge **survives** a sync — `system/init.mcp_servers` must still list `ide` as
+    connected afterwards. This is the one failure mode with real blast radius; it is verified against CLI
+    2.1.228, and it is worth re-checking whenever the CLI major moves.
+  - Confirm no MCP server config value (an `env` token) ever reaches `idea.log` or the transcript.
+
 - **First-run disclosure**: on a fresh install, the notice appears **before** the first message is sent
   and before **Catch up on this project** (both send paths are gated). Closing it without acknowledging
   must *cancel* the send, not proceed. Confirm the mode-specific sentence changes with the mode chip,

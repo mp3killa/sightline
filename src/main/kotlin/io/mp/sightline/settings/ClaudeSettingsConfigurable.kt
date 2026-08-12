@@ -101,6 +101,16 @@ class ClaudeSettingsConfigurable : Configurable {
                     .bindSelected({ state.ideIntegration }, { state.ideIntegration = it })
                     .comment("Runs a local <code>ide</code> MCP server the CLI connects to. Restart a conversation (New) after changing this.")
             }
+            row {
+                checkBox("Load newly added MCP servers into the conversation in progress")
+                    .bindSelected({ state.mcpAutoSync }, { state.mcpAutoSync = it })
+                    .comment(
+                        "When you run <code>claude mcp add</code>, its tools become available in the " +
+                            "conversation you already have open — no restart, nothing lost. Every change is " +
+                            "reported in the transcript. Servers from the project's own <code>.mcp.json</code> " +
+                            "are always reported rather than started, since that file can arrive from version control.",
+                    )
+            }
             group("Agent Activity Map") {
                 row {
                     checkBox("Show the live Agent Activity Map while Claude works")

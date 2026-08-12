@@ -4,6 +4,39 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0 — 2026-08-12
+
+### Added
+- **MCP servers you add now appear in the conversation you already have open.** Run
+  `claude mcp add playwright …` while you are mid-conversation and its tools become available where you
+  are — no restart, no lost context, no writing yourself a handoff note. Sightline notices the change,
+  tells the running CLI about it, and reports what happened: which servers were added, how many tools
+  each brought, and, if one could not start, the CLI's own reason (`Executable not found in $PATH: "npx"`
+  says more than "playwright failed").
+
+  This had been believed impossible — the standing advice, including from Claude Code itself, is that a
+  session's tools are fixed at startup and only a full restart will do. That is true of the `/mcp`
+  reconnect, but not of the control protocol Sightline is already speaking: a running session can be
+  told to load a server, and the model can then call its tools in the same conversation. The behaviour
+  is recorded, with the probes it came from, in `docs/PROTOCOL.md` §5.
+
+  Details worth knowing:
+  - It is **off the send path entirely**. The request can take 30 seconds to answer when a server hangs
+    on connect, so nothing waits on it — you keep typing and sending throughout, and the result arrives
+    as a notice when it arrives. A change noticed mid-turn is applied once that turn is finished, never
+    into the middle of it.
+  - Servers from the project's own checked-in **`.mcp.json` are reported but never started for you**.
+    It is the same file format as a server you added yourself and a very different thing: it can arrive
+    in your working tree from a `git pull` you skim-read. Those load when you next start a conversation.
+  - A server's configuration can hold a credential in its `env`, so it goes to the CLI's stdin and
+    nowhere else — never a log, never the transcript, never the activity map. A test enforces that no
+    message this feature can produce contains anything but server names, tool counts and the CLI's own
+    words.
+  - On a CLI too old to support it, you are told exactly that — that the feature is unavailable here,
+    not that something broke.
+  - Turn it off with **Settings → Tools → Sightline → "Load newly added MCP servers into the
+    conversation in progress"**, which leaves it observing and reporting without ever acting.
+
 ## 0.6.0 — 2026-07-29
 
 ### Added

@@ -154,6 +154,68 @@ diff in a **modal dialog**, not an editor tab, so one never outlives its dialog)
 Naming: camelCase except `close_tab`. Reference:
 <https://github.com/coder/claudecode.nvim/blob/main/PROTOCOL.md>.
 
+---
+
+## 5. Changing a running session's MCP servers (`mcp_set_servers`)
+
+**Verified empirically against CLI 2.1.228 on 2026-08-12.** Everything in this section was probed; the
+scripts are throwaway but the captured payloads are the fixtures in `McpControlJsonTest`.
+
+The received wisdom — including from Claude Code itself — is that adding an MCP server needs a full
+restart, because a session's tools are resolved at startup. That is true of `/mcp`'s *reconnect*, which
+re-establishes a connection without changing the tool index. **It is not true of the control protocol**,
+which a stream-json host like Sightline is already speaking.
+
+The CLI's full control-request vocabulary is in the binary (`strings` over the embedded JS finds the
+dispatch). The MCP-related ones are `mcp_set_servers`, `mcp_status`, `mcp_reconnect`, `mcp_toggle`,
+`mcp_message`, `mcp_authenticate`, `mcp_clear_auth`, `mcp_oauth_callback_url`,
+`set_mcp_permission_mode_override`. Two matter here.
+
+**`mcp_set_servers` — "Replaces the set of dynamically managed MCP servers."**
+
+```json
+{"type":"control_request","request_id":"X","request":{"subtype":"mcp_set_servers",
+  "servers":{"playwright":{"type":"stdio","command":"npx","args":["@playwright/mcp"]}}}}
+```
+Response payload: `{"added":["playwright"],"removed":[],"errors":{}}`.
+
+**`mcp_status`** takes no arguments and returns `{"mcpServers":[{name,status,scope,tools[],config}]}`.
+It costs nothing — it never reaches the model.
+
+What the probes established, in the order it matters:
+
+1. **The tools become genuinely usable in the same conversation.** After adding a probe server, the
+   model called `mcp__probe__probe_ping` and returned its output — same process, same session id, no
+   relaunch. The next turn's `system/init` re-announces `mcp_servers` and lists the new `mcp__*` tools.
+2. **"Authoritative" means only over the set sent by that request.** With `studio` (user scope, from
+   `~/.claude.json`) and `ide` (from `--mcp-config`) already connected, an `mcp_set_servers` carrying an
+   unrelated server left both untouched, and so did a subsequent `servers:{}` clear. `--mcp-config`
+   servers are *reported* with `scope:"dynamic"` but are not part of the replaceable set. **This is what
+   makes the feature safe to use at all** — otherwise a sync would tear down the `ide` bridge — so
+   re-verify it if the CLI major changes.
+3. **It is idempotent.** Re-sending an identical set returns `{"added":[],"removed":[],"errors":{}}` and
+   does not churn a connected server. The CLI does the diffing, so the plugin does not have to.
+4. **Failures are per-server, named, and in the CLI's own words** — `{"errors":{"broken":"Executable not
+   found in $PATH: \"…\""}}`. A server can be in **both** `added` and `errors`: "added" means
+   registered, not working. `mcp_status` then reports it as `failed`.
+5. **The response does not arrive until every server has connected or timed out.** A server that accepts
+   a connection and never answers `initialize` held the reply for **30s** (`"connection timed out after
+   30000ms"`). The control channel and the session are fine afterwards — a following `mcp_status`
+   returned in 0.1s and a normal turn completed — but **nothing may block on this reply**, which is why
+   Sightline's sync is never on the send path. Do **not** set `alwaysLoad` on a synced server either: it
+   is documented as blocking startup until the server connects.
+6. **An older CLI says so cleanly.** An unknown subtype returns
+   `{"subtype":"error","error":"Unsupported control request subtype: …"}` and the session stays usable,
+   which is a precise fallback trigger. A malformed payload returns a *different* error
+   (`"mcp_set_servers: servers must be an object of config objects"`), so the two must not be conflated.
+
+**Where the CLI itself reads servers from** (all of which a *fresh* process picks up by itself):
+`~/.claude.json` → `mcpServers` (user scope) and `projects.<cwd>.mcpServers` (local scope — this is
+where `claude mcp add` writes by default), plus `<project>/.mcp.json` (project scope). Note that in
+headless `-p` mode a checked-in `.mcp.json` is **auto-loaded with no approval prompt** (verified:
+`repoServer` connected with `scope:"project"` and nothing was recorded in `enabledMcpjsonServers`) —
+so the approval gate that exists interactively is not one a `-p` host can rely on.
+
 ### Still to verify live (in a running AS)
 - Whether the CLI auto-injects the current selection each prompt vs. only on `getCurrentSelection`.
 - Whether edits route through `openDiff` automatically (needs `diffTool=auto`) and how that
