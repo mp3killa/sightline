@@ -97,7 +97,7 @@ Launches a throwaway Android Studio with the plugin preinstalled. Edit the Kotli
 | IDE integration | on | Runs the `ide` MCP server: selection, open editors, diagnostics, native diffs. |
 | Stream partial messages | on | The live typing effect. |
 | Show details | off | Detailed transcript (thinking + tool cards) vs. compact. Approval and question cards always stay visible. |
-| Show activity map | on | Plus layout (`chat`/`split`/`map`, default **split**), reduce motion, and node caps (200 visible / 500 retained). |
+| Show activity map | on | Plus layout (`chat`/`split`/`map`, default **chat** — switch in the header), reduce motion, and node caps (200 visible / 500 retained). |
 | Extra CLI args | — | Advanced: appended to every invocation. |
 
 ### Permission modes

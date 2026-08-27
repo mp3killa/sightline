@@ -91,7 +91,17 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         var showActivityMap by property(true)
 
         /** Layout of the transcript vs. the activity map: "chat" | "split" | "map". */
-        var activityViewMode by string("split")
+        /**
+         * Which of Chat / Split / Map the panel opens in.
+         *
+         * **Default `chat` since 0.8.1** (was `split`). Split is honoured from 520px up and gives the
+         * conversation 62% of the panel, so at a typical docked width the chat column lands at ~320px —
+         * under `ResponsiveLayout.MIN_CONTENT_WIDTH`, the floor this codebase says a conversation needs
+         * to stay readable. Squeezing the primary surface below its own stated minimum to show a graph
+         * nobody asked for yet is the wrong default; the map is one click away on the header switch, and
+         * choosing it persists.
+         */
+        var activityViewMode by string("chat")
 
         /** Static activity-map layout with no pulsing/animation (lower CPU). */
         var activityReduceMotion by property(false)

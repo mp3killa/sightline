@@ -139,15 +139,19 @@ Verify:
     2.1.228, and it is worth re-checking whenever the CLI major moves.
   - Confirm no MCP server config value (an `env` token) ever reaches `idea.log` or the transcript.
 
-- **0.8.0 session control** (new; the protocol half is probed and recorded in [PROTOCOL.md](PROTOCOL.md)
-  §6 and every decision class is unit-tested, so what is owed here is only what a real IDE can show):
-  - **Stop → interrupt.** With a turn running, press Stop once: the turn must end within a second or so,
-    the status must read *Interrupting*, and the **next message must continue the same conversation with
-    no relaunch** — check `system/init` is not re-announced and `mcp_servers` still lists `ide`. Press
-    Stop *twice* and confirm the second press ends the process instead.
+- **0.8.x session control.** A live pass was done on **2026-08-27** and the line was promoted to stable
+  as 0.8.1. Two of these gates are now closed by tests rather than by eye and have been removed from this
+  list: the two-face bridge (`IdeServerFacesTest` drives the real server over real WebSockets; the CLI's
+  own path preservation is probed in [PROTOCOL.md](PROTOCOL.md) §6) and the Stop notice's in-flight
+  accounting (`StopFlowTest` drives a real panel through the production event path). What is left is what
+  only a running CLI and a real build can show:
   - **The command caveat, with a real build.** Start `./gradlew assembleDebug`, press Stop, and confirm
-    the notice says the command keeps running — then confirm it actually does. This is the sentence most
-    likely to be "tidied" later, so see it be true once.
+    the notice says the command keeps running — then confirm it actually does. The protocol half is
+    verified (a `sleep 40 && touch SENTINEL` outlived an acknowledged interrupt); what is not is that a
+    Gradle daemon behaves the same way.
+  - **Stop → interrupt, against a live CLI.** Press Stop once mid-turn and confirm the next message
+    continues the same conversation with no relaunch — `system/init` not re-announced, `mcp_servers`
+    still listing `ide`. Press Stop twice and confirm the second press ends the process.
   - **Permission mode mid-conversation.** Switch modes from the chip with a session running and confirm
     the transcript says it switched *for this conversation*. Then switch to **Auto on Haiku** and confirm
     the refusal is reported in the CLI's words and the setting is still saved for next time.

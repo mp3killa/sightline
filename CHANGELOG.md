@@ -4,6 +4,25 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.1 — 2026-08-27
+
+**Stable.** The 0.8.x line reaches everyone, after a pass in a live Android Studio. Same code as
+0.8.1-beta plus the default below.
+
+### Changed
+
+- **The panel opens on the conversation, not a split.** `activityViewMode` now defaults to `chat`.
+  SPLIT is honoured from 520px up and gives the conversation 62% of the panel, so at a typical docked
+  width the chat column landed at roughly 320px — under `ResponsiveLayout.MIN_CONTENT_WIDTH`, the floor
+  this codebase itself sets for a readable conversation. Opening below your own stated minimum to show a
+  graph nobody has asked for yet is the wrong trade. The Activity Map is unchanged and one click away on
+  the header switch; whichever view you choose is remembered, and an explicit existing choice is not
+  touched.
+
+  This is a default, not a removal. The map is the only place a session's *relationships* — imports,
+  tests, navigation — are visible at all, and it keeps earning its place there. What it had not earned
+  was half the panel before you asked for it.
+
 ## 0.8.1-beta — 2026-08-27
 
 No feature changes. One fix, two gates closed, and the "What's new" that 0.8.0-beta should have shipped

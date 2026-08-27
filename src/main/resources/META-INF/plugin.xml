@@ -55,18 +55,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.8.1-beta</b> &#8212; fixes a case where a mid-turn follow-up could silently cost another
-        message its revert action, and closes two release gates with automated tests. Everything below
-        arrived in 0.8.0-beta.</p>
-
-        <p>Both are on the beta channel: this release line changes how Stop, permissions and file writes
-        behave, so stable stays on 0.7.0 until it has been driven by hand in a live IDE.</p>
+        <p><b>0.8.1</b> &#8212; the first stable release since 0.7.0, after a pass in a live IDE.</p>
 
         <p><b>Stop keeps your conversation.</b> Stop now ends the turn instead of ending the CLI, so the
         session, its MCP servers and everything Claude knows survive &#8212; your next message just
-        carries on. Press it again to end the process outright. Note that a command Claude already
-        started keeps running either way, and Sightline now says so rather than implying your build
-        stopped.</p>
+        carries on. Press it again to end the process outright. A command Claude already started keeps
+        running either way, and Sightline now says so rather than implying your build stopped.</p>
 
         <p><b>The permission mode chip now works mid-conversation.</b> Changing it used to save the
         setting and nothing else, leaving the chip showing a policy that was not actually in force.</p>
@@ -89,6 +83,10 @@
         restore the files Claude edited since. It covers edits made with Edit, Write and NotebookEdit
         &#8212; not changes made by a command it ran, and not a subagent's edits inside a Task &#8212;
         and it repeats that every time it asks you to confirm.</p>
+
+        <p><b>The panel now opens on the conversation, not a split.</b> At a typical docked width the old
+        default left the chat column narrower than its own readable minimum. The Activity Map is one
+        click away on the header switch, and whichever view you pick is remembered.</p>
 
         <p><b>Corrected:</b> this listing and the privacy notes said your conversation is never written
         to disk. Sightline writes no transcript, but the Claude Code CLI keeps its own session history

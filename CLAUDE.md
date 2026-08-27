@@ -172,7 +172,9 @@ verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things 
   beta channel, a bare version → **stable, everyone**. Shipping stable is a deliberate edit to `version`,
   not a workflow input. **0.5.0 (2026-07-27) is the first stable release**, gated on a human `runIde`
   pass over the interactive approval/diff paths — a precondition to re-satisfy whenever those paths
-  change, not a box permanently ticked. A beta-channel build is invisible to the plugin browser and the
+  change, not a box permanently ticked. **Re-satisfied for 0.8.1 (2026-08-27)**: the 0.8.x line changed
+  Stop, permission-mode application and file writes, went to beta as `0.8.0-beta`/`0.8.1-beta`, and was
+  promoted only after a pass in a live Android Studio. A beta-channel build is invisible to the plugin browser and the
   listing page, which both read the default channel only; that is what "not compatible with your IDE"
   means on a listing whose stable channel is empty.
 - **`version` lives only in `build.gradle.kts`.** `plugin.xml` carries no `<version>` — `patchPluginXml`
@@ -233,7 +235,7 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 - **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
   under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
   Both `select { }` and `ide(...)` hit the same wrong group. The script downloads the IDE itself and runs
-  the same verifier CLI. **Last run (2026-08-27): `io.mp.sightline:0.8.1-beta` vs `AI-261.26222.65`
+  the same verifier CLI. **Last run (2026-08-27): `io.mp.sightline:0.8.1` vs `AI-261.26222.65`
   — PASS, 0 compatibility problems** (the same 10 informational `ToolWindowFactory` usages — 4
   deprecated, 6 experimental — and nothing new from the 0.8.0 session-control, subagent, slash-command
   or checkpoint work). Note this ran against the
@@ -360,7 +362,9 @@ These outlived the backlog items that recorded them. They are constraints on fut
   appends a capability line to the system prompt (`--append-system-prompt`) so Claude reaches for a
   diagram where one illustrates better, worded to match what actually renders.
 - `showActivityMap` (default on) → show the Agent Activity Map; `activityViewMode`
-  (`chat`|`split`|`map`, default `split`), `activityReduceMotion`, `activityMaxNodes`
+  (`chat`|`split`|`map`, default **`chat`** since 0.8.1 — SPLIT gives the conversation 62% of the panel
+  and is honoured from 520px, which puts the chat column under `ResponsiveLayout.MIN_CONTENT_WIDTH` at a
+  typical dock width; the map is one click away and the choice persists), `activityReduceMotion`, `activityMaxNodes`
   (visible cap, default 200), `activityMaxRetained` (session cap, default 500),
   `activityTimelineExpanded` (default off — the dock starts as the compact collapsed summary), and
   `activityAboutDismissed` (whether the one-time "observable activity only" disclaimer was dismissed).
