@@ -55,55 +55,44 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.8.0-beta</b> &#8212; beta channel. This release changes how Stop, permissions and file
-        writes behave, so it goes to beta first and stable stays on 0.7.0 until it has been driven by
-        hand in a live IDE.</p>
-        <ul>
-            <li><b>Stop now stops the turn, not the session.</b> Pressing Stop interrupts the work in
-            progress and keeps the conversation, the process and its connected MCP servers — your next
-            message just carries on. Press it again to end the process outright. One honest caveat, and
-            Sightline says it rather than hiding it: a command Claude already started keeps running to
-            completion either way, so stopping a build is still yours to do.</li>
+        <p><b>0.8.1-beta</b> &#8212; fixes a case where a mid-turn follow-up could silently cost another
+        message its revert action, and closes two release gates with automated tests. Everything below
+        arrived in 0.8.0-beta.</p>
 
-            <li><b>The permission mode chip actually changes the permission mode.</b> Until now, picking
-            a different mode mid-conversation saved the setting and did nothing else — the chip claimed a
-            policy that was not in force. It now switches the running conversation, and says so; if
-            Claude refuses the switch (Auto needs Sonnet or Opus), you are told in the CLI's own
-            words instead of being left to guess.</li>
+        <p>Both are on the beta channel: this release line changes how Stop, permissions and file writes
+        behave, so stable stays on 0.7.0 until it has been driven by hand in a live IDE.</p>
 
-            <li><b>You can see what subagents are doing.</b> A <code>Task</code> used to render as a wall
-            of raw JSON. It is now a proper card — what was delegated, to which agent, the steps it takes
-            as it takes them, and what it concluded. <code>Skill</code>, <code>SlashCommand</code>,
-            <code>ExitPlanMode</code>, <code>BashOutput</code> and notebook edits are rendered properly
-            too.</li>
+        <p><b>Stop keeps your conversation.</b> Stop now ends the turn instead of ending the CLI, so the
+        session, its MCP servers and everything Claude knows survive &#8212; your next message just
+        carries on. Press it again to end the process outright. Note that a command Claude already
+        started keeps running either way, and Sightline now says so rather than implying your build
+        stopped.</p>
 
-            <li><b>Claude Code's own commands are in the actions menu.</b> Every command your setup has —
-            built-ins, your project's commands, your plugins' skills — with its description and argument
-            hint, straight from the CLI. Several, like <code>/context</code> and <code>/cost</code>, run
-            locally and cost nothing at all.</li>
+        <p><b>The permission mode chip now works mid-conversation.</b> Changing it used to save the
+        setting and nothing else, leaving the chip showing a policy that was not actually in force.</p>
 
-            <li><b>Fixed: Claude could not see any of the Android tools.</b> Sightline's Android tools
-            were hosted on the MCP server named <code>ide</code>, and the CLI filters that server down to
-            a single tool before the list ever reaches the model — so none of them had ever been callable.
-            They are served under their own name now, and Claude can use them.</li>
+        <p><b>You can see inside a Task.</b> Subagents used to render as a wall of raw JSON. You now get
+        what was delegated, the steps the subagent takes as it takes them, and what it concluded.</p>
 
-            <li><b>You are told when the conversation is compacted, and when you hit a rate limit.</b>
-            Both used to pass silently. A compaction replaces earlier messages with a summary, which is
-            why Claude sometimes seems to forget something you told it an hour ago — worth knowing rather
-            than puzzling over.</li>
+        <p><b>Your Claude Code commands are in the actions menu</b> &#8212; built-ins, your project's own
+        commands, and your plugins' skills, with their descriptions. Some, like <code>/context</code>,
+        cost no tokens at all.</p>
 
-            <li><b>New, off by default: "Revert Claude's file changes to here."</b> Right-click any
-            message you sent and restore the files Claude edited since. It covers edits made with Edit,
-            Write and NotebookEdit — <i>not</i> changes made by a command it ran, and not a subagent's
-            edits inside a Task — and Sightline repeats that every time it asks you to confirm. It rides
-            CLI behaviour that is not part of the documented interface, which is why it ships off and
-            promises nothing.</li>
+        <p><b>Claude can finally use the Android tools.</b> They were registered on an MCP server the CLI
+        filters down to a single tool, so none of them had ever been callable. They are served under
+        their own name now.</p>
 
-            <li><b>Corrected in PRIVACY.md:</b> Sightline stores no transcript, but the Claude Code CLI it
-            runs keeps its own full session transcripts under <code>~/.claude/projects/</code>. The
-            privacy page said the transcript "never existed on disk", which was true of the plugin and
-            misleading about your machine. It now says where the CLI's copy lives and who clears it.</li>
-        </ul>
+        <p><b>Compaction and rate limits are reported.</b> Both used to pass silently &#8212; which is why
+        Claude could seem to forget something you told it earlier, with nothing on screen to explain it.</p>
+
+        <p><b>New, off by default: revert Claude's file changes.</b> Right-click a message you sent to
+        restore the files Claude edited since. It covers edits made with Edit, Write and NotebookEdit
+        &#8212; not changes made by a command it ran, and not a subagent's edits inside a Task &#8212;
+        and it repeats that every time it asks you to confirm.</p>
+
+        <p><b>Corrected:</b> this listing and the privacy notes said your conversation is never written
+        to disk. Sightline writes no transcript, but the Claude Code CLI keeps its own session history
+        under <code>~/.claude/projects/</code>. Now stated plainly in both places.</p>
     ]]></change-notes>
 
     <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST

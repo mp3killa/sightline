@@ -1121,14 +1121,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         following = true // sending a message re-follows so the user always sees their own turn + the reply
         val bubble = addUserBubble(text, attachments, images, interjected = interjecting)
-        // A checkpoint belongs to a message the CLI will replay back to us; an interjection folds into a
-        // turn already under way and gets no restore point of its own.
+        // The queue must mirror **exactly what was written to stdin**, in order — including
+        // interjections. An interjection goes out as an identical `{"type":"user",…}` line
+        // (ClaudeSession.interjectUserMessage), so the CLI replays it like any other message; leaving it
+        // out of the queue meant its replay arrived with nothing to match and popped somebody else's
+        // entry instead, silently costing an unrelated message its revert action.
         //
-        // Queue `message`, not `text`: what the CLI echoes back is what went on the wire, and
-        // buildMessage prepends the Android context block and any `@path` refs. Queuing the composer
-        // text meant the very first message sent with a context chip never matched — and since the queue
-        // is matched head-first, it would have jammed every checkpoint after it too.
-        if (ClaudeSettings.getInstance().state.fileCheckpointing && !interjecting && message.isNotEmpty()) {
+        // Queue `message`, not `text`: what comes back is what went on the wire, and buildMessage
+        // prepends the Android context block and any `@path` refs. Queuing the composer text meant the
+        // first message sent with a context chip never matched — and, matched head-first, jammed every
+        // checkpoint after it too.
+        if (ClaudeSettings.getInstance().state.fileCheckpointing && message.isNotEmpty()) {
             if (awaitingCheckpoint.size >= MAX_AWAITING_CHECKPOINTS) awaitingCheckpoint.removeFirst()
             awaitingCheckpoint.addLast(message to bubble)
         }
@@ -1216,9 +1219,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * for this turn to end, so a message typed now belongs to the *next* one and queues rather than
      * folding into a turn being torn down.
      */
-    private fun stopRequest() {
+    private fun stopRequest(): StopPolicy.StopAction {
         val decided = StopPolicy.decide(running, interruptPending, interruptSupported)
-        if (decided == StopPolicy.StopAction.NONE) return
+        if (decided == StopPolicy.StopAction.NONE) return decided
         // Fall through to the kill if the interrupt cannot even be written — a Stop that does nothing
         // because the process died in the gap would leave the panel claiming a turn is still running.
         val action = when {
@@ -1237,6 +1240,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // into the run to queuing for the next turn, so it has to be re-read here.
         composer.refreshPlaceholder()
         header.setSessionState(StatusKind.WORKING, StopPolicy.statusLabel(action))
+        return action
     }
 
     // ---------- menus ----------
@@ -1569,6 +1573,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     @TestOnly
     internal fun renderProtocolLineForPreview(line: String) = handleEvent(line)
 
+    /**
+     * Test-only: presses Stop and reports what it did and whether the "a command is still running"
+     * caveat applied, so the wiring between the production event path and [StopPolicy] is assertable
+     * headlessly. With no live session the interrupt cannot be written, so a test sees the FORCE
+     * fallback — which is itself the behaviour worth pinning.
+     */
+    @TestOnly
+    internal fun stopForTest(): Pair<StopPolicy.StopAction, Boolean> {
+        val commandInFlight = inFlightCommands.isNotEmpty()
+        return stopRequest() to commandInFlight
+    }
+
     /** Test-only companion to [renderProtocolLineForPreview]: the user half of a turn. */
     @TestOnly
     internal fun addUserMessageForPreview(text: String, images: List<PendingImage> = emptyList()) {
@@ -1684,6 +1700,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         composer.refreshPlaceholder()
         doSend(message)
     }
+
+    /**
+     * Test-only: how many sent messages are still waiting for the CLI to replay their checkpoint id.
+     * The invariant worth pinning is that this tracks stdin writes exactly — one entry per message
+     * written, interjections included — because a queue that drifts from stdin pops the wrong entry.
+     */
+    @TestOnly
+    internal fun awaitingCheckpointCountForTest(): Int = awaitingCheckpoint.size
 
     /** Test-only: whether a turn is in flight — an interjection must not end the run it joined. */
     @TestOnly

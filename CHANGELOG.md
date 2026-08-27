@@ -4,6 +4,35 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.1-beta — 2026-08-27
+
+No feature changes. One fix, two gates closed, and the "What's new" that 0.8.0-beta should have shipped
+with — the Marketplace will not let a version's notes be replaced after upload, so tidying them costs a
+version number.
+
+### Fixed
+
+- **A mid-turn follow-up could silently cost another message its revert action.** With file
+  checkpointing on, an interjected message goes to the CLI as an ordinary user message and is replayed
+  like one — but it was never added to the queue that matches replays to messages. Its replay then
+  arrived with nothing of its own to match and popped somebody else's entry instead, so an unrelated
+  message lost its "Revert Claude's file changes to here" with nothing on screen to say so. The queue now
+  mirrors exactly what is written to the CLI's stdin, interjections included.
+
+### Added (tests only)
+
+Two of the three release gates this release owed a human are now closed automatically instead:
+
+- `IdeServerFacesTest` starts the **real** `IdeServer` and drives both faces over real WebSockets:
+  the two servers answer differently on one port and one token, no `android_*` tool is served where the
+  CLI would filter it, no editor RPC is exposed to the model, an unknown path falls back to the safe
+  face, and a bad token is refused on both. The other half — that the CLI's own ws client preserves the
+  path — was probed against 2.1.235 and is recorded in docs/PROTOCOL.md §6.
+- `StopFlowTest` drives a real panel through the production event path: a running `Bash` makes Stop say
+  a command keeps running, a finished one does not, a live `Task` counts (its subagent may have a shell
+  we cannot see the end of), a `Read` does not, and the in-flight set does not leak across a turn.
+- `CheckpointQueueTest` pins the queue invariant above, including the two ways it was already broken.
+
 ## 0.8.0-beta — 2026-08-27
 
 **Beta channel.** This release changes how Stop behaves, changes how the permission mode is applied,
