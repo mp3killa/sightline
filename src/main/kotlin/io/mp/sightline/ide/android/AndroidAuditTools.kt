@@ -21,7 +21,7 @@ import java.io.File
  */
 class AndroidAuditTools(private val project: Project) {
 
-    private val names = setOf("android.auditManifest", "android.analyzeRoutes")
+    private val names = setOf("android_auditManifest", "android_analyzeRoutes")
 
     fun handles(name: String): Boolean = name in names
 
@@ -29,7 +29,7 @@ class AndroidAuditTools(private val project: Project) {
         if (!enabled()) return
         tools.add(
             tool(
-                "android.auditManifest",
+                "android_auditManifest",
                 "Audit the Android manifest: components exported without a permission, intent filters " +
                     "missing android:exported, cleartext traffic, backup with no extraction rules, " +
                     "foreground-service types, and the code-vs-manifest permission cross-check. Reads " +
@@ -52,7 +52,7 @@ class AndroidAuditTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.analyzeRoutes",
+                "android_analyzeRoutes",
                 "Analyse Compose Navigation in a file: declared routes and their arguments, deep links, " +
                     "`navigate()` calls with no matching route (a runtime crash — routes are strings, so " +
                     "nothing catches this at compile time), unreachable routes, and duplicate deep links. " +
@@ -69,8 +69,8 @@ class AndroidAuditTools(private val project: Project) {
     }
 
     fun call(name: String, args: JsonObject): String = when (name) {
-        "android.auditManifest" -> auditManifest(args)
-        "android.analyzeRoutes" -> analyzeRoutes(args)
+        "android_auditManifest" -> auditManifest(args)
+        "android_analyzeRoutes" -> analyzeRoutes(args)
         else -> err("Unknown tool: $name")
     }
 

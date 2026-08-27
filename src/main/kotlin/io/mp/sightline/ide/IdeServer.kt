@@ -97,8 +97,8 @@ class IdeServer(private val project: Project) : Disposable {
         const val DIFF_TIMEOUT_MINUTES = 10L
         const val START_TIMEOUT_MS = 5_000L
 
-        /** Connection attachment marking a handshake that presented the right token. */
-        val AUTHENTICATED = Any()
+        // The connection attachment is the [McpFace] the handshake asked for; a null attachment means
+        // the handshake never presented a valid token.
     }
 
     private fun projectRoots(): List<String> {
@@ -185,19 +185,22 @@ class IdeServer(private val project: Project) : Disposable {
                 conn.close(1008, "unauthorized")
                 return
             }
-            // Mark the connection authenticated. `close()` only *asks* the peer to go away — frames
-            // already queued on this connection still arrive at onMessage — so refusing the token has
-            // to leave a fact behind that the message path can check, not just initiate a close.
-            conn.setAttachment(AUTHENTICATED)
+            // Mark the connection authenticated *and* which of the two servers it reached. `close()`
+            // only *asks* the peer to go away — frames already queued on this connection still arrive
+            // at onMessage — so refusing the token has to leave a fact behind that the message path can
+            // check, not just initiate a close. A non-null attachment is that fact; see [McpFace] for
+            // why one socket answers to two names.
+            conn.setAttachment(McpFace.of(handshake.resourceDescriptor))
         }
         override fun onClose(conn: WebSocket?, code: Int, reason: String?, remote: Boolean) {}
         override fun onMessage(conn: WebSocket, message: String) {
-            if (conn.getAttachment<Any?>() !== AUTHENTICATED) {
+            val face = conn.getAttachment<McpFace?>()
+            if (face == null) {
                 thisLogger().warn("ide: dropped a message from an unauthenticated connection")
                 conn.close(1008, "unauthorized")
                 return
             }
-            try { handle(conn, message) } catch (e: Exception) { thisLogger().warn("ide message error", e) }
+            try { handle(conn, face, message) } catch (e: Exception) { thisLogger().warn("ide message error", e) }
         }
         override fun onError(conn: WebSocket?, ex: Exception) { thisLogger().warn("ide ws error", ex) }
         override fun onStart() { started.countDown() }
@@ -209,14 +212,14 @@ class IdeServer(private val project: Project) : Disposable {
 
     // ---------- MCP dispatch ----------
 
-    private fun handle(conn: WebSocket, message: String) {
+    private fun handle(conn: WebSocket, face: McpFace, message: String) {
         val root = JsonParser.parseString(message).asJsonObject
         val method = root.str("method") ?: return
         val id = root.get("id")
         when (method) {
             "initialize" -> reply(conn, id, initializeResult())
             "notifications/initialized" -> { /* no response */ }
-            "tools/list" -> reply(conn, id, toolsList())
+            "tools/list" -> reply(conn, id, toolsList(face))
             "tools/call" -> {
                 val params = root.getObj("params") ?: JsonObject()
                 val name = params.str("name") ?: ""
@@ -284,8 +287,24 @@ class IdeServer(private val project: Project) : Disposable {
         })
     }
 
-    private fun toolsList(): JsonObject {
+    /**
+     * The tools this connection may see.
+     *
+     * Split by [McpFace] because the CLI hard-filters a server named `ide` down to `getDiagnostics`
+     * and `executeCode` before the list reaches the model. Advertising the `android_*` tools there —
+     * which is what Sightline did until 0.8.0 — meant the model never saw one of them. They are on the
+     * `sightline` face now; the IDE RPC stays where the CLI expects to find it.
+     */
+    private fun toolsList(face: McpFace): JsonObject {
         val tools = JsonArray()
+        if (face == McpFace.SIGHTLINE) {
+            androidTools.addToolDefs(tools) // no-op unless the Android features are on
+            androidDeviceTools.addToolDefs(tools)
+            androidScreenTools.addToolDefs(tools)
+            androidAuditTools.addToolDefs(tools)
+            testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
+            return JsonObject().apply { add("tools", tools) }
+        }
         tools.add(tool("getCurrentSelection", "Get the current text selection in the active editor"))
         tools.add(tool("getLatestSelection", "Get the most recent text selection"))
         tools.add(tool("getOpenEditors", "Get information about currently open editors"))
@@ -301,12 +320,23 @@ class IdeServer(private val project: Project) : Disposable {
         tools.add(tool("closeAllDiffTabs", "Close all diff tabs. This IDE reviews diffs in a modal dialog, not a tab, so the count is always 0."))
         tools.add(tool("checkDocumentDirty", "Check whether a document has unsaved changes"))
         tools.add(tool("saveDocument", "Save a document"))
-        androidTools.addToolDefs(tools) // no-op unless the Android features are on
-        androidDeviceTools.addToolDefs(tools)
-        androidScreenTools.addToolDefs(tools)
-        androidAuditTools.addToolDefs(tools)
-        testBridge.addToolDefs(tools) // no-op unless the sandbox test bridge is enabled
         return JsonObject().apply { add("tools", tools) }
+    }
+
+    /**
+     * Whether the `sightline` face has anything to offer this project — Android tools in an Android
+     * project, or the sandbox test bridge. False means [io.mp.sightline.process.ClaudeSession] should
+     * not declare the second server at all: an MCP server that connects and reports zero tools is a
+     * line of noise in `/mcp` and one more thing to explain.
+     */
+    fun hasModelFacingTools(): Boolean {
+        val probe = JsonArray()
+        androidTools.addToolDefs(probe)
+        androidDeviceTools.addToolDefs(probe)
+        androidScreenTools.addToolDefs(probe)
+        androidAuditTools.addToolDefs(probe)
+        testBridge.addToolDefs(probe)
+        return probe.size() > 0
     }
 
     private fun callTool(name: String, args: JsonObject): String = when (name) {

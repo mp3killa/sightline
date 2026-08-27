@@ -138,7 +138,59 @@ class ClaudeSession(
     @Synchronized
     fun setModel(model: String): Boolean {
         if (!isRunning) return false
-        writeLine("""{"type":"control_request","request_id":"model-${java.util.UUID.randomUUID()}","request":{"subtype":"set_model","model":"${jsonEscape(model)}"}}""")
+        val id = SessionControlJson.requestId(SessionControlJson.Kind.MODEL, java.util.UUID.randomUUID().toString())
+        writeLine(SessionControlJson.modelRequest(id, model))
+        return true
+    }
+
+    /**
+     * Changes the permission mode of the **running** session, returning false when no process is
+     * running (the caller then just persists the choice for the next launch).
+     *
+     * Verified against CLI 2.1.235: the request is acknowledged with `{"mode":"<mode>"}` and the CLI
+     * emits a `system/status` echoing the new `permissionMode`. A mode the model cannot honour — `auto`
+     * on Haiku — comes back as an **error** response instead, so the reply is worth reading rather than
+     * assuming: the mode chip claiming a policy that is not in force is the exact failure
+     * `notePermissionModeFallback` exists to prevent at launch, and this is the mid-session half of it.
+     */
+    @Synchronized
+    fun setPermissionMode(mode: String): Boolean {
+        if (!isRunning) return false
+        val id = SessionControlJson.requestId(SessionControlJson.Kind.PERMISSION_MODE, java.util.UUID.randomUUID().toString())
+        writeLine(SessionControlJson.permissionModeRequest(id, mode))
+        return true
+    }
+
+    /**
+     * Ends the turn in progress **without ending the session** — the process, its `session_id`, its MCP
+     * connections and the CLI's view of the conversation all survive, so the next message continues in
+     * the same process with no `--resume` and no reconnect.
+     *
+     * Returns false when there is no process to write to; the caller falls back to [stop]. An `interrupt`
+     * a CLI does not recognise comes back as a `control_response` error, which is the other fallback
+     * trigger — neither is a reason to leave the user with a turn that will not stop.
+     */
+    @Synchronized
+    fun interrupt(): Boolean {
+        if (!isRunning) return false
+        val id = SessionControlJson.requestId(SessionControlJson.Kind.INTERRUPT, java.util.UUID.randomUUID().toString())
+        writeLine(SessionControlJson.interruptRequest(id))
+        return true
+    }
+
+    /**
+     * Asks the CLI to restore the files it wrote since the user message [userMessageId].
+     *
+     * Returns false when there is no process; a running one always *answers*, but a success reply can
+     * still carry `canRewind:false`, so the caller reads the payload. See
+     * [io.mp.sightline.ui.state.CheckpointPolicy] for why this is off by default and why its limits are
+     * repeated at every click.
+     */
+    @Synchronized
+    fun rewindFiles(userMessageId: String): Boolean {
+        if (!isRunning) return false
+        val id = SessionControlJson.requestId(SessionControlJson.Kind.REWIND, java.util.UUID.randomUUID().toString())
+        writeLine(SessionControlJson.rewindRequest(id, userMessageId))
         return true
     }
 
@@ -177,6 +229,14 @@ class ClaudeSession(
         val cmd = GeneralCommandLine(exe)
         cmd.addParameters("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
         if (s.includePartialMessages) cmd.addParameter("--include-partial-messages")
+        // Subagent output arrives tagged with parent_tool_use_id and is folded into the Task card that
+        // spawned it. Only passed because the panel handles it: forwarding it without that routing
+        // would interleave two voices in one transcript, which is worse than the silence it replaces.
+        if (s.forwardSubagentText) cmd.addParameter("--forward-subagent-text")
+        // File checkpointing needs both halves: the env var arms it, and --replay-user-messages is the
+        // only way the checkpoint ids reach us — each replayed user message carries the `uuid` that
+        // `rewind_files` takes. Off by default; see [io.mp.sightline.ui.state.CheckpointPolicy].
+        if (s.fileCheckpointing) cmd.addParameter("--replay-user-messages")
         // Route tool-permission prompts to us over the control protocol (can_use_tool).
         if (s.interactiveApproval) cmd.addParameters("--permission-prompt-tool", "stdio")
         (s.permissionMode ?: "").takeIf { it.isNotBlank() }?.let { cmd.addParameters("--permission-mode", it) }
@@ -193,6 +253,7 @@ class ClaudeSession(
         project.basePath?.let { cmd.setWorkDirectory(it) }
         cmd.charset = StandardCharsets.UTF_8
         cmd.withEnvironment("CLAUDE_CODE_ENTRYPOINT", "claude-code-panel")
+        if (s.fileCheckpointing) cmd.withEnvironment("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")
 
         // Start the `ide` MCP server and register it with the CLI over a ws MCP config.
         // (In headless -p mode the CLI ignores the CLAUDE_CODE_SSE_PORT/lockfile discovery
@@ -200,7 +261,20 @@ class ClaudeSession(
         if (s.ideIntegration) {
             val ide = project.getService(io.mp.sightline.ide.IdeServer::class.java)
             if (ide != null && ide.ensureStarted() && ide.port > 0) {
-                val cfg = """{"mcpServers":{"ide":{"type":"ws","url":"ws://127.0.0.1:${ide.port}","headers":{"x-claude-code-ide-authorization":"${ide.authToken}"}}}}"""
+                // Two servers, one socket, one token — see [io.mp.sightline.ide.McpFace]. The CLI
+                // filters a server named `ide` down to `getDiagnostics` before the model sees it, so
+                // anything the *model* is meant to call has to be declared under a different name or it
+                // is invisible. `ide` keeps its name because that is what makes the CLI route edits
+                // through `openDiff` and treat the connection as editor context.
+                val auth = """"headers":{"x-claude-code-ide-authorization":"${ide.authToken}"}"""
+                val idePart = """"ide":{"type":"ws","url":"ws://127.0.0.1:${ide.port}",$auth}"""
+                val sightlinePart = if (ide.hasModelFacingTools()) {
+                    ""","sightline":{"type":"ws","url":"ws://127.0.0.1:${ide.port}${io.mp.sightline.ide.McpFace.SIGHTLINE_PATH}",$auth}"""
+                } else {
+                    // Nothing to offer — an MCP server that connects and reports zero tools is noise.
+                    ""
+                }
+                val cfg = """{"mcpServers":{$idePart$sightlinePart}}"""
                 // The config carries the bridge's auth token, so it goes in an owner-only file rather
                 // than on the command line: process arguments are readable by other users on most
                 // systems, which would let a different local user on a shared machine read the token
@@ -370,7 +444,14 @@ class ClaudeSession(
         if (id != null && id.isNotBlank()) lastSessionId = id
     }
 
-    /** Stops the current turn/process. The next message resumes the same session. */
+    /**
+     * Kills the process. The next message relaunches and `--resume`s the same session.
+     *
+     * This is the **fallback** stop, not the first choice: recovery costs a relaunch, a re-read of every
+     * config file and a reconnect of every MCP server, and leaves a window in which nothing is reading
+     * stdin. [interrupt] is the primary path; see [io.mp.sightline.ui.state.StopPolicy] for when this one
+     * is reached.
+     */
     @Synchronized
     fun stop() {
         val h = handler ?: return

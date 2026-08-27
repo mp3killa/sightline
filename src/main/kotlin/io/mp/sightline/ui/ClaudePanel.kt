@@ -80,6 +80,7 @@ import io.mp.sightline.interaction.QuestionFormState
 import io.mp.sightline.interaction.UserQuestionOption
 import io.mp.sightline.interaction.UserQuestionRequest
 import io.mp.sightline.process.ClaudeSession
+import io.mp.sightline.process.SessionControlJson
 import io.mp.sightline.process.UserMessageJson
 import io.mp.sightline.android.AndroidContextFormatter
 import io.mp.sightline.android.StackTraceResolver
@@ -96,6 +97,7 @@ import io.mp.sightline.ui.markdown.MarkdownDocParser
 import io.mp.sightline.ui.markdown.MdBlock
 import io.mp.sightline.ui.markdown.StreamingMarkdown
 import io.mp.sightline.ui.components.WrapLayout
+import io.mp.sightline.ui.state.CheckpointPolicy
 import io.mp.sightline.ui.state.CompletionCard
 import io.mp.sightline.ui.state.ComposerModel
 import io.mp.sightline.ui.state.ImageAttachmentPolicy
@@ -105,9 +107,13 @@ import io.mp.sightline.ui.state.LineDiff
 import io.mp.sightline.ui.state.PermissionModes
 import io.mp.sightline.ui.state.ResponsiveLayout
 import io.mp.sightline.ui.state.ScrollFollow
+import io.mp.sightline.ui.state.SessionNotices
+import io.mp.sightline.ui.state.SlashCommands
 import io.mp.sightline.ui.state.StatusKind
 import io.mp.sightline.ui.state.StatusModel
 import io.mp.sightline.ui.state.StatusView
+import io.mp.sightline.ui.state.StopPolicy
+import io.mp.sightline.ui.state.SubagentPresentation
 import io.mp.sightline.ui.state.ToolEventPresentation
 import io.mp.sightline.ui.state.ToolOutcome
 import io.mp.sightline.ui.state.ToolWeight
@@ -146,7 +152,9 @@ import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JLayeredPane
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JRadioButton
 import javax.swing.JTextArea
 import javax.swing.JToggleButton
@@ -401,6 +409,52 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * see [canInterject].
      */
     private var stopping = false
+
+    /**
+     * Stop state, per [StopPolicy]. `interruptPending` makes a second Stop press the escalation signal;
+     * `interruptSupported` latches false the first time a CLI answers `interrupt` with "unsupported", so
+     * later presses skip the polite path instead of asking again and waiting.
+     */
+    private var interruptPending = false
+    private var interruptSupported = true
+    private var interruptUnsupportedNoted = false
+
+    /**
+     * `tool_use_id`s of in-flight tools whose work can outlive a Stop — see [StopPolicy.LINGERING_TOOLS].
+     * Neither an interrupt nor a kill stops a shell the agent already started (docs/PROTOCOL.md §6), so
+     * the Stop notice needs to know whether there is one to be honest about.
+     */
+    private val inFlightCommands = mutableSetOf<String>()
+
+    /** Mode being switched into, so the `set_permission_mode` reply can name it. */
+    private var pendingModeLabel: String? = null
+
+    /**
+     * The CLI's own commands, as it reported them — never a built-in list, since the set depends on
+     * this project's commands, plugins and skills. See [SlashCommands].
+     */
+    private var slashCommands: List<SlashCommands.Command> = emptyList()
+
+    /** Speaks only when the rate-limit *status* changes; see [SessionNotices.RateLimits]. */
+    private val rateLimits = SessionNotices.RateLimits()
+
+    /**
+     * Bubbles sent but not yet matched to a replayed user message, oldest first. The replay is what
+     * carries the checkpoint `uuid`; until it arrives a message has no restore point and the action is
+     * simply not offered. Only populated when file checkpointing is on — see [CheckpointPolicy].
+     */
+    private val awaitingCheckpoint = ArrayDeque<Pair<String, Bubble>>()
+
+    /**
+     * Ceiling on that queue. It is normally 0 or 1 deep — a replay follows its send almost immediately —
+     * so reaching this means replays have stopped arriving, and the oldest entries are the ones least
+     * likely to ever match. Bounded so a broken replay stream cannot pin the whole transcript's Bubbles
+     * in memory for the life of the panel.
+     */
+    private val MAX_AWAITING_CHECKPOINTS = 32
+
+    /** Message being reverted to, so the `rewind_files` reply can be reported against it. */
+    private var rewindInFlight = false
     private var inAssistant = false
     private var sawStream = false
     private var curTurn: AssistantTurn? = null
@@ -813,7 +867,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         attachments: List<String>,
         images: List<PendingImage> = emptyList(),
         interjected: Boolean = false,
-    ) {
+    ): Bubble {
         val bubble = Bubble()
         bubble.border = JBUI.Borders.empty(9, 12)
         val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
@@ -846,6 +900,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         bubble.add(col, BorderLayout.CENTER)
         addRow(bubble)
+        return bubble
     }
 
     private fun plainArea(text: String): JTextArea {
@@ -1065,7 +1120,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             finalizeCurrent(); inAssistant = false; curTurn = null
         }
         following = true // sending a message re-follows so the user always sees their own turn + the reply
-        addUserBubble(text, attachments, images, interjected = interjecting)
+        val bubble = addUserBubble(text, attachments, images, interjected = interjecting)
+        // A checkpoint belongs to a message the CLI will replay back to us; an interjection folds into a
+        // turn already under way and gets no restore point of its own.
+        //
+        // Queue `message`, not `text`: what the CLI echoes back is what went on the wire, and
+        // buildMessage prepends the Android context block and any `@path` refs. Queuing the composer
+        // text meant the very first message sent with a context chip never matched — and since the queue
+        // is matched head-first, it would have jammed every checkpoint after it too.
+        if (ClaudeSettings.getInstance().state.fileCheckpointing && !interjecting && message.isNotEmpty()) {
+            if (awaitingCheckpoint.size >= MAX_AWAITING_CHECKPOINTS) awaitingCheckpoint.removeFirst()
+            awaitingCheckpoint.addLast(message to bubble)
+        }
         transcriptPresenter.onUserMessage(); showEmptyState(false)
         if (interjecting) {
             // A focus-card verb, not taskStarted(): the running task continues, and restarting it would
@@ -1142,17 +1208,68 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         setRunning(true)
     }
 
+    /**
+     * Stop, via `interrupt` where the CLI supports it and a process kill where it does not — see
+     * [StopPolicy] for why the two are not interchangeable and why a second press escalates.
+     *
+     * Both paths set [stopping]: even though `interrupt` leaves stdin readable, the user has just asked
+     * for this turn to end, so a message typed now belongs to the *next* one and queues rather than
+     * folding into a turn being torn down.
+     */
     private fun stopRequest() {
-        if (!running) return
+        val decided = StopPolicy.decide(running, interruptPending, interruptSupported)
+        if (decided == StopPolicy.StopAction.NONE) return
+        // Fall through to the kill if the interrupt cannot even be written — a Stop that does nothing
+        // because the process died in the gap would leave the panel claiming a turn is still running.
+        val action = when {
+            decided == StopPolicy.StopAction.INTERRUPT && session.interrupt() -> {
+                interruptPending = true
+                decided
+            }
+            else -> {
+                session.stop()
+                StopPolicy.StopAction.FORCE
+            }
+        }
         stopping = true
-        session.stop()
+        StopPolicy.notice(action, inFlightCommands.isNotEmpty())?.let { addInfo(it, false) }
         // The composer's placeholder promises what Enter does; while stopping that changes from folding
         // into the run to queuing for the next turn, so it has to be re-read here.
         composer.refreshPlaceholder()
-        header.setSessionState(StatusKind.WORKING, "Stopping")
+        header.setSessionState(StatusKind.WORKING, StopPolicy.statusLabel(action))
     }
 
     // ---------- menus ----------
+
+    /** Folds a newly reported catalogue into what we already have; the richer source wins per name. */
+    private fun noteSlashCommands(reported: List<SlashCommands.Command>) {
+        if (reported.isEmpty()) return
+        slashCommands = SlashCommands.merge(reported, slashCommands)
+    }
+
+    /**
+     * The CLI's own commands as a submenu. Choosing one **fills the composer**; it never sends. A
+     * command that takes arguments is incomplete until the user types them, and a menu where some
+     * entries send and some don't is one you have to read twice.
+     */
+    private fun commandsMenu(): DefaultActionGroup {
+        val offerable = SlashCommands.offerable(slashCommands)
+        val group = DefaultActionGroup("Commands", true)
+        if (offerable.isEmpty()) {
+            // Said, not hidden: an empty submenu with no explanation reads as a broken menu.
+            group.add(action("Not reported yet — start a conversation") {}.also { it.templatePresentation.isEnabled = false })
+            return group
+        }
+        for (cmd in offerable) {
+            val desc = SlashCommands.shortDescription(cmd)
+            group.add(
+                action(SlashCommands.label(cmd)) {
+                    composer.putInInput(SlashCommands.insertion(cmd))
+                }.also { if (desc.isNotBlank()) it.templatePresentation.description = desc },
+            )
+        }
+        return group
+    }
 
     private fun showSlashMenu(anchor: Component) {
         val group = DefaultActionGroup()
@@ -1160,6 +1277,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(action("Catch up on project") { primeProject() })
         group.add(action("Attach file…") { attachFile() })
         androidContextAction()?.let { group.add(it) }
+        group.add(Separator.create("Claude Code"))
+        group.add(commandsMenu())
         group.add(Separator.create("Model"))
         group.add(modelMenu())
         group.add(Separator.create("Conversation"))
@@ -1327,7 +1446,30 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         panel
     }
 
-    private fun setMode(value: String) { ClaudeSettings.getInstance().state.permissionMode = value; updateModeChip() }
+    /**
+     * Applies a permission-mode choice. Mirrors [chooseModel]: a running session switches **in place**
+     * over the control protocol, anything that can't is persisted for the next launch, and the transcript
+     * says which of the two happened.
+     *
+     * Until 0.8.0 this wrote the setting and repainted the chip and did nothing else, so changing the
+     * mode mid-conversation was a no-op that *looked* like it had worked — the chip claiming a policy
+     * that was not in force, which is the exact failure [notePermissionModeFallback] exists to prevent
+     * at launch.
+     */
+    private fun setMode(value: String) {
+        ClaudeSettings.getInstance().state.permissionMode = value
+        updateModeChip()
+        val label = PermissionModes.byValue(value).shortName
+        if (session.setPermissionMode(value)) {
+            // Reported from the reply, not here: the CLI can refuse (`auto` on Haiku), and an optimistic
+            // "switched" line would be the same lie in a new place.
+            pendingModeLabel = label
+        } else {
+            showEmptyState(false)
+            addInfo("Permission mode set to \"$label\" — it applies to the next conversation.", false)
+            scrollToBottomSoon()
+        }
+    }
     private fun updateModeChip() {
         val m = PermissionModes.byValue(ClaudeSettings.getInstance().state.permissionMode)
         composer.setMode(m.shortName, m.dangerous)
@@ -1560,11 +1702,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 "__panel" -> onPanel(o)
                 "system" -> onSystem(o)
                 "stream_event" -> o.objOrNull("event")?.let { onStream(it) }
-                "assistant" -> onAssistant(o)
-                "user" -> onUser(o)
+                // A forwarded subagent message is distinguished only by parent_tool_use_id. Rendered as
+                // an ordinary block it would interleave with the main agent's reply and read as one
+                // confused voice, so it folds into the Task card that spawned it instead.
+                "assistant" -> SubagentPresentation.parentOf(o)?.let { onSubagent(it, o) } ?: onAssistant(o)
+                "user" -> SubagentPresentation.parentOf(o)?.let { onSubagent(it, o) } ?: onUser(o)
                 "result" -> onResult(o)
                 "control_request" -> onControlRequest(o)
                 "control_response" -> onControlResponse(o)
+                // Not a `system` event: rate limits arrive on their own top-level type.
+                "rate_limit_event" -> rateLimits.onEvent(o, System.currentTimeMillis())
+                    ?.let { addInfo(it.text, it.isError) }
             }
         } catch (e: Exception) {
             // A malformed approval/result event can leave the UI inconsistent — surface those; ignore
@@ -1628,8 +1776,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 // The only trustworthy answer to "which model is this?": the CLI resolves an alias to a
                 // dated id and re-announces init after a set_model, so this is read on every init.
                 o.str("model")?.takeIf { it.isNotBlank() }?.let { reportedModel = it }
+                // Names only, so it never displaces a richer entry — see [SlashCommands.merge].
+                noteSlashCommands(SlashCommands.fromInitEvent(o))
             }
-            "status" -> if (o.str("status") == "requesting") feed(interpreter.status("Thinking"))
+            // Earlier conversation has just been replaced by a summary. Left unsaid, Claude "forgetting"
+            // something from an hour ago looks like a fault rather than the documented behaviour it is.
+            "compact_boundary" -> SessionNotices.compactNotice(o)?.let { addInfo(it.text, it.isError) }
+            "status" -> {
+                if (o.str("status") == "requesting") feed(interpreter.status("Thinking"))
+                // A live `set_permission_mode` is echoed back here, so the same divergence check that
+                // guards launch also guards a mid-session switch.
+                notePermissionModeFallback(o.str("permissionMode"))
+            }
         }
     }
 
@@ -1688,9 +1846,83 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * is not a reply anyone else is waiting for.
      */
     private fun onControlResponse(o: JsonObject): Boolean {
+        SessionControlJson.parseReply(o)?.let { onSessionControlReply(it); return true }
         val consumed = mcpSync.onControlResponse(o)
         if (consumed && !mcpSync.busy) mcpTimeoutTimer.stop()
         return consumed
+    }
+
+    /**
+     * The replies to Sightline's own session-control requests. Each is read rather than assumed: a
+     * request the CLI refuses is precisely the case where a silent success would leave the panel
+     * claiming something that did not happen.
+     */
+    private fun onSessionControlReply(reply: SessionControlJson.Reply) {
+        when (reply.kind) {
+            // The handshake's reply is the only place command descriptions and argument hints exist.
+            SessionControlJson.Kind.INITIALIZE ->
+                if (reply.ok) noteSlashCommands(SlashCommands.fromInitializeReply(reply.payload))
+            SessionControlJson.Kind.INTERRUPT -> if (!reply.ok) {
+                // This CLI cannot interrupt. Latch it so later presses don't ask again, say so once,
+                // and finish the stop the user asked for the only way left.
+                interruptSupported = false
+                interruptPending = false
+                if (!interruptUnsupportedNoted) {
+                    interruptUnsupportedNoted = true
+                    addInfo(StopPolicy.UNSUPPORTED_NOTICE, false)
+                }
+                session.stop()
+            }
+
+            SessionControlJson.Kind.PERMISSION_MODE -> {
+                val label = pendingModeLabel ?: PermissionModes.byValue(ClaudeSettings.getInstance().state.permissionMode).shortName
+                pendingModeLabel = null
+                showEmptyState(false)
+                if (reply.ok) {
+                    addInfo("Permission mode switched to \"$label\" for this conversation.", false)
+                } else {
+                    // The CLI's own words: `auto` on a model that can't run the classifier is refused
+                    // here rather than at launch, and its reason is more use than ours would be.
+                    val why = reply.error?.let { " — $it" } ?: ""
+                    addInfo(
+                        "This conversation could not switch to \"$label\"$why. " +
+                            "The setting is saved and applies to the next conversation.",
+                        true,
+                    )
+                }
+                scrollToBottomSoon()
+            }
+
+            SessionControlJson.Kind.REWIND -> {
+                rewindInFlight = false
+                showEmptyState(false)
+                val notice = if (!reply.ok) {
+                    // An older CLI refuses the subtype outright; anything else is its own words.
+                    CheckpointPolicy.Notice(reply.error ?: CheckpointPolicy.UNSUPPORTED, true)
+                } else {
+                    // A *success* can still carry canRewind:false, so the payload is read rather than
+                    // the subtype trusted — reporting a restore that did not happen is the one outcome
+                    // this feature must never produce.
+                    val p = reply.payload
+                    CheckpointPolicy.outcome(
+                        canRewind = p?.get("canRewind")?.let { it.isJsonPrimitive && it.asBoolean } ?: false,
+                        skippedLinks = p?.intOrNull("skippedLinks") ?: 0,
+                        error = p?.str("error"),
+                    )
+                }
+                addInfo(notice.text, notice.isError)
+                scrollToBottomSoon()
+            }
+
+            // A successful model switch is already reported by chooseModel, and the CLI re-announces the
+            // resolved id in system/init. Only a refusal is news.
+            SessionControlJson.Kind.MODEL -> if (!reply.ok) {
+                showEmptyState(false)
+                val why = reply.error?.let { " — $it" } ?: ""
+                addInfo("This conversation could not switch model$why. The setting applies to the next conversation.", true)
+                scrollToBottomSoon()
+            }
+        }
     }
 
     private fun onStream(ev: JsonObject) {
@@ -1772,7 +2004,32 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         scrollToBottomSoon()
     }
 
+    /**
+     * Folds one forwarded subagent event into the `Task` card that owns it.
+     *
+     * A parent we have no card for is dropped rather than rendered loose — that happens when the Task
+     * predates this transcript's retention window, and a stray "→ Ran grep" with nothing above it is
+     * worse than silence. The activity map is fed either way: what a subagent touched is observed fact
+     * and belongs in the graph whether or not a card survived to hold it.
+     */
+    private fun onSubagent(parentId: String, o: JsonObject) {
+        val card = toolCardsById[parentId]
+        for (entry in SubagentPresentation.entries(o)) {
+            when (entry) {
+                is SubagentPresentation.Entry.Activity -> {
+                    card?.appendSubagentActivity(entry.tool, entry.summary)
+                    // Null id: the subagent's tool_use ids are its own, and correlating results across
+                    // the boundary is not something the map needs to claim it can do.
+                    feed(interpreter.toolUse(null, entry.tool, entry.input))
+                }
+                is SubagentPresentation.Entry.Say -> card?.appendSubagentText(entry.text)
+            }
+        }
+        scrollToBottomSoon()
+    }
+
     private fun onUser(o: JsonObject) {
+        if (noteCheckpoint(o)) return
         val content = o.objOrNull("message")?.get("content") ?: return
         if (!content.isJsonArray) return
         for (el in content.asJsonArray) {
@@ -1787,9 +2044,61 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     meta.turn?.noteToolOutcome(meta.name, if (isErr) ToolOutcome.ERROR else ToolOutcome.OK, meta.path)
                 }
                 id?.let { tid -> pendingReportScans.remove(tid)?.let { (cmd, started) -> scanReportsAsync(cmd, started) } }
+                id?.let { inFlightCommands.remove(it) }
             }
         }
         scrollToBottomSoon()
+    }
+
+    /**
+     * Matches a replayed user message to the bubble that produced it and arms its revert action.
+     *
+     * Returns true when the event was a replay and nothing else should look at it. Matching is on the
+     * text, not on position, so the CLI's synthetic `[Request interrupted by user]` — which is also a
+     * `user` event with a `uuid` — can never claim a checkpoint that isn't its.
+     */
+    private fun noteCheckpoint(o: JsonObject): Boolean {
+        if (awaitingCheckpoint.isEmpty()) return false
+        val replayed = CheckpointPolicy.replayedText(o) ?: return false
+        // The CLI writes its own messages into this stream, shaped identically to a replay. Those are
+        // excluded before the queue is touched at all — letting one through would consume a checkpoint
+        // that belongs to a message the user actually sent.
+        if (CheckpointPolicy.isCliSynthetic(replayed)) return false
+        val (sent, bubble) = awaitingCheckpoint.removeFirst()
+        if (CheckpointPolicy.isSameMessage(sent, replayed)) {
+            o.str("uuid")?.let { bubble.armRevert(sent, it) }
+            return true
+        }
+        // Popped and discarded, not left at the head. A queued message whose replay never arrived is
+        // gone, and holding it would mean one lost replay costs every checkpoint for the rest of the
+        // conversation. Discarding **one** per replay self-heals within a message or two, and the
+        // discarded bubble simply never offers a revert — which is honest, since we have no id for it.
+        // What is never done is assigning this uuid to it anyway: a revert to the wrong point is the
+        // one outcome worse than no revert.
+        return false
+    }
+
+    /**
+     * Asks the CLI to restore files, once the user has confirmed against the limits.
+     *
+     * The confirmation is not ceremony: the restore covers only what Claude wrote with Edit/Write, so a
+     * user who believes it undoes a `Bash` command's damage would stop looking exactly when they should
+     * start. [CheckpointPolicy.confirmation] puts that in the dialog, every time.
+     */
+    private fun requestRewind(messageText: String, checkpointId: String) {
+        if (rewindInFlight) return
+        val ok = Messages.showYesNoDialog(
+            project, CheckpointPolicy.confirmation(messageText), "Revert File Changes",
+            "Restore Files", "Cancel", Messages.getWarningIcon(),
+        )
+        if (ok != Messages.YES) return
+        showEmptyState(false)
+        if (!session.rewindFiles(checkpointId)) {
+            addInfo("There is no Claude session running, so there is nothing to restore from.", true)
+            scrollToBottomSoon()
+            return
+        }
+        rewindInFlight = true
     }
 
     private fun onResult(o: JsonObject) {
@@ -1814,6 +2123,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         if (name == "Edit" || name == "Write" || name == "MultiEdit") card.expand()
         if (id != null) {
             renderedTools.add(id); toolCardsById[id] = card
+            // A Bash leaves a child process running; a Task may have a subagent running one we cannot
+            // see the end of. Either means the Stop notice must say so — see [StopPolicy.LINGERING_TOOLS].
+            if (name in StopPolicy.LINGERING_TOOLS) inFlightCommands.add(id)
             // Remembered so the turn can tally the outcome when the result arrives — the result event
             // carries only the tool_use_id, not what the tool was or which file it touched.
             toolMetaById[id] = ToolMeta(name, input?.str("file_path"), curTurn, card)
@@ -1941,6 +2253,30 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val count = if (n == 1) "1 question" else "$n questions"
                 summary = qs?.firstOrNull { it.isJsonObject }?.asJsonObject?.str("header")?.takeIf { it.isNotBlank() } ?: count
                 insert(count + "\n", sMuted)
+            }
+            "Task" -> {
+                // Until 0.8.0 a Task fell through to the JSON dump below — so every subagent, now the
+                // most common tool there is, rendered as a wall of escaped prompt text.
+                val agent = inp.str("subagent_type")?.takeIf { it.isNotBlank() }
+                summary = inp.str("description")?.takeIf { it.isNotBlank() } ?: agent ?: "subagent"
+                agent?.let { insert("agent: $it\n", sMuted) }
+                inp.str("prompt")?.takeIf { it.isNotBlank() }?.let { insert(truncate(it) + "\n", sMuted) }
+            }
+            "Skill" -> {
+                summary = inp.str("skill") ?: inp.str("command") ?: ""
+                inp.str("args")?.takeIf { it.isNotBlank() }?.let { insert("$it\n", sMuted) }
+            }
+            "SlashCommand" -> { summary = inp.str("command") ?: ""; insert((inp.str("command") ?: "") + "\n", sMuted) }
+            "ExitPlanMode" -> {
+                summary = "plan"
+                inp.str("plan")?.takeIf { it.isNotBlank() }?.let { insert(truncate(it) + "\n", sMuted) }
+            }
+            "BashOutput" -> { summary = inp.str("bash_id") ?: ""; insert("shell: " + (inp.str("bash_id") ?: "") + "\n", sMuted) }
+            "KillShell" -> { summary = inp.str("shell_id") ?: inp.str("bash_id") ?: "" ; insert("shell: $summary\n", sMuted) }
+            "NotebookEdit" -> {
+                val path = inp.str("notebook_path") ?: inp.str("file_path")
+                summary = shortPath(path)
+                addEditOrText(card, path, listOf(LineDiff.diff("", inp.str("new_source") ?: "")), inp.str("cell_id")?.let { "Cell $it" })
             }
             else -> if (inp.size() > 0) insert(inp.toString() + "\n", sCode)
         }
@@ -2126,6 +2462,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // Either boundary ends a stop window: a new process is listening again, or the old one is gone
         // and the next message will start one.
         stopping = false
+        // The turn is over however it ended, so the next Stop starts from the polite path again and no
+        // command from it can still be in flight. `interruptSupported` deliberately does NOT reset —
+        // it is a fact about this CLI, not about this turn.
+        interruptPending = false
+        inFlightCommands.clear()
+        // The reply this was waiting for can no longer arrive if the process is gone. Left set, every
+        // later revert would silently do nothing — the worst shape of failure for a destructive action,
+        // since the user sees no error and assumes the click was ignored rather than lost.
+        rewindInFlight = false
         SwingUtilities.invokeLater {
             composer.setRunning(v)
             refreshStatus()
@@ -2341,7 +2686,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun toolAction(name: String): String = when (name) {
         "Read" -> "Read"; "Edit", "MultiEdit", "NotebookEdit" -> "Edited"; "Write" -> "Created"
         "Bash" -> "Ran"; "Grep", "Glob", "WebSearch" -> "Searched"; "WebFetch" -> "Fetched"
-        "TodoWrite" -> "Planned"; "AskUserQuestion" -> "Asked"; else -> humanizeTool(name)
+        "TodoWrite" -> "Planned"; "AskUserQuestion" -> "Asked"
+        "Task" -> "Delegated"; "Skill" -> "Used skill"; "SlashCommand" -> "Ran command"
+        "ExitPlanMode" -> "Proposed a plan"; "BashOutput" -> "Read output"; "KillShell" -> "Stopped shell"
+        "NotebookEdit" -> "Edited notebook"
+        else -> humanizeTool(name)
     }
 
     private fun toolIcon(name: String): Icon = when (name) {
@@ -2350,7 +2699,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         "Bash" -> ClaudeIcons.command
         "Grep", "Glob", "WebSearch" -> ClaudeIcons.search
         "WebFetch" -> ClaudeIcons.web
-        "TodoWrite", "AskUserQuestion" -> ClaudeIcons.diamond
+        "TodoWrite", "AskUserQuestion", "ExitPlanMode" -> ClaudeIcons.diamond
+        "Task", "Skill", "SlashCommand" -> ClaudeIcons.diamond
         else -> ClaudeIcons.diamond
     }
 
@@ -2707,6 +3057,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val editBlocks = ArrayList<FileEditBlock>()
         private var installedActions = false
         private var highlight = false
+        /** Subagent fold-in state; see [appendSubagentActivity]. */
+        private var subagentSteps = 0
+        private var subagentHidden = 0
+        private var subagentOverflowFrom = -1
         var linkPath: String? = null
         var linkLabel: String? = null
 
@@ -2780,6 +3134,65 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
         fun expand() { if (!open) toggle() }
+
+        /**
+         * Folds one step of a **subagent**'s forwarded output into this Task card — see
+         * [SubagentPresentation] for what is kept and what is dropped, and why.
+         *
+         * The card is never auto-expanded by this: a subagent runs while the main agent is still
+         * working, and opening a card under the reader's cursor moves the text they are reading. The
+         * chevron appearing is signal enough that there is something inside.
+         */
+        fun appendSubagentActivity(tool: String, summary: String) {
+            if (subagentSteps >= SubagentPresentation.MAX_ACTIVITY) {
+                subagentHidden += 1
+                noteSubagentOverflow()
+                return
+            }
+            subagentSteps += 1
+            target = bodyDoc
+            insert("→ ", sMuted)
+            insert(toolAction(tool), sMuted)
+            if (summary.isNotBlank()) insert("  $summary", sMuted)
+            insert("\n", sMuted)
+            target = null
+            refreshDisclosure()
+        }
+
+        /** The subagent's own words — normally its conclusion, which is the point of having run it. */
+        fun appendSubagentText(text: String) {
+            target = bodyDoc
+            if (bodyDoc.length > 0) insert("\n", sMuted)
+            insert(truncate(text) + "\n", sMuted)
+            target = null
+            refreshDisclosure()
+        }
+
+        /**
+         * Replaces the overflow line in place rather than adding one per hidden step, so the count
+         * stays accurate and the card stays one line longer than the cap, not fifty.
+         */
+        private fun noteSubagentOverflow() {
+            val note = SubagentPresentation.overflowNote(subagentHidden) ?: return
+            target = bodyDoc
+            try {
+                if (subagentOverflowFrom >= 0 && subagentOverflowFrom <= bodyDoc.length) {
+                    bodyDoc.remove(subagentOverflowFrom, bodyDoc.length - subagentOverflowFrom)
+                } else {
+                    subagentOverflowFrom = bodyDoc.length
+                }
+                insert(note + "\n", sMuted)
+            } catch (e: BadLocationException) {
+                // Nothing to do but leave the last accurate note standing.
+            }
+            target = null
+            refreshDisclosure()
+        }
+
+        private fun refreshDisclosure() {
+            chevron.isVisible = ToolEventPresentation.hasDisclosure(bodyDoc.length)
+            relayout()
+        }
 
         /**
          * Attaches a real [FileEditBlock] for an Edit/MultiEdit/Write, instead of dumping diff lines
@@ -3290,6 +3703,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private inner class Bubble : JPanel(BorderLayout()) {
         init { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT; border = JBUI.Borders.empty(9, 12) }
+
+        /**
+         * Offers "Revert Claude's file changes to here" on right-click, once the CLI has replayed this
+         * message and told us its checkpoint id. A context menu rather than a visible button on purpose:
+         * every user turn would carry one, and a destructive action repeated down the whole transcript
+         * invites the misclick it is least able to undo.
+         */
+        fun armRevert(messageText: String, checkpointId: String) {
+            componentPopupMenu = JPopupMenu().apply {
+                add(JMenuItem(CheckpointPolicy.ACTION_LABEL).apply {
+                    toolTipText = CheckpointPolicy.LIMITS
+                    addActionListener { requestRewind(messageText, checkpointId) }
+                })
+            }
+        }
+
         override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D

@@ -55,7 +55,7 @@ data class EditorContext(
 
 /**
  * Everything Sightline knows about the Android state of this project right now — the model behind the
- * context strip and behind `android.getContext`.
+ * context strip and behind `android_getContext`.
  *
  * The point of the whole thing (docs/ANDROID.md §0): Claude can already run `adb` and read
  * `build.gradle.kts`. What it cannot do is know *which* variant, device and module apply without

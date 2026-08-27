@@ -79,15 +79,25 @@ under your own account.
 | What | Where | Cleared by |
 |---|---|---|
 | Settings (CLI path, permission mode, feature toggles) | IDE config, `sightline.xml` | Settings → Tools → Sightline, or uninstalling |
-| Conversation transcript | **Memory only** — never written to disk | Closing the project, or **New** |
+| Conversation transcript (Sightline's copy) | **Memory only** — never written to disk | Closing the project, or **New** |
 | Activity Map nodes and edges | **Memory only** | Same |
 | Android context | **Memory only**, cached ~15 seconds | Same |
 | Android cache (**off by default**) | `.sightline/` in the project | Turning it off, or deleting the directory |
 | IDE bridge lock file | `~/.claude/ide/<port>.lock` | Removed when the IDE closes |
+| Conversation transcript (**the CLI's** copy) | `~/.claude/projects/<project>/<session>.jsonl`, written by `claude` | `claude`'s own history commands — not Sightline |
 | IDE logs | `idea.log` | The IDE's own log rotation |
 
-**There is no session or transcript persistence.** Closing the project discards the conversation. This
-is a deliberate standing decision, not an unimplemented feature.
+**Sightline persists no session or transcript.** Closing the project discards its copy of the
+conversation. That is a deliberate standing decision, not an unimplemented feature.
+
+**The CLI is a separate matter, and you should know about it.** Sightline runs the `claude` CLI, and the
+CLI keeps its own full transcript of every session on disk at
+`~/.claude/projects/<project>/<session>.jsonl` — the prompts you typed, Claude's replies, and every tool
+call and result. That file is what makes `--resume` work, including Sightline's own recovery after a
+Stop. It is written by Claude Code, under your own account and its own retention rules; Sightline neither
+creates nor reads it, and uninstalling Sightline does not remove it. Manage it with the CLI, or delete
+the directory yourself. We say this plainly because the table above describes what Sightline stores, and
+reading it as "my conversation is not on disk anywhere" would be wrong.
 
 The optional `.sightline/` cache (flaky-test history, screenshot baselines, artifact sizes) stores
 **workspace-relative paths only** — never absolute paths, source contents, prompts, or model output.
@@ -116,10 +126,11 @@ no outbound network requests of its own.
 
 1. Settings → Plugins → Sightline → Uninstall.
 2. Delete `.sightline/` from any project where you enabled the cache.
-3. Settings are removed with the plugin; the transcript never existed on disk.
+3. Settings are removed with the plugin; Sightline's copy of the transcript never existed on disk.
 
 Removing Sightline does not touch your Claude Code CLI installation, its credentials, or its own
-history. Uninstall that separately if you want it gone.
+history — including the session transcripts under `~/.claude/projects/`. Uninstall that separately, and
+delete that directory, if you want it gone.
 
 ## Children
 

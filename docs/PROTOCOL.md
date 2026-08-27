@@ -220,3 +220,171 @@ so the approval gate that exists interactively is not one a `-p` host can rely o
 - Whether the CLI auto-injects the current selection each prompt vs. only on `getCurrentSelection`.
 - Whether edits route through `openDiff` automatically (needs `diffTool=auto`) and how that
   interacts with `--permission-prompt-tool` (possible double approval on edits).
+
+---
+
+## 6. Session control, subagents, slash commands, checkpoints (CLI 2.1.235)
+
+**Verified empirically against CLI 2.1.235 on 2026-08-27**, by driving `claude -p --input-format
+stream-json` directly and by reading schema declarations out of the binary. Every claim below is a
+probe result or a schema the CLI itself declares; nothing here is inferred from the changelog.
+
+The plugin had been built against ~2.1.215, and the surface had moved a long way.
+
+### 6.1 The full control-request vocabulary
+
+The SDK's `Query.processControlRequest` dispatch (readable in the binary) gives both directions.
+
+**Host → CLI**, all as `{"type":"control_request","request_id":"…","request":{"subtype":"…",…}}`:
+`initialize`, `interrupt`, `set_permission_mode`, `set_mcp_permission_mode_override`, `set_model`,
+`set_max_thinking_tokens`, `apply_flag_settings`, `get_settings`, `rewind_files`,
+`cancel_async_message`, `seed_read_state`, `set_cwd`, `remote_control`, `generate_session_title`,
+`side_question`, `ultrareview_launch`, `submit_feedback`, `message_rated`, `get_workspace_diff`, plus
+the `mcp_*` family from §5.
+
+`initialize` accepts far more than the bare subtype: `hooks`, `sdkMcpServers`, `jsonSchema`,
+`systemPrompt`, `appendSystemPrompt`, `planModeInstructions`, `appendSubagentSystemPrompt`,
+`toolAliases`, `excludeDynamicSections`, `agents`, `title`, `skills`,
+`webSearchIsolationExemptMcpServers`, `promptSuggestions`, `agentProgressSummaries`,
+`forwardSubagentText`, `supportedDialogKinds`.
+
+**CLI → host**: `can_use_tool` (§2), `hook_callback`, `mcp_message`, `elicitation`,
+`request_user_dialog`, `oauth_token_refresh`, `host_auth_token_refresh`. Sightline answers the first
+and errors on the rest, which is safe: `dialog_kind` is an open string union and the CLI **fails
+closed** — it only sends a dialog whose kind the host declared in `supportedDialogKinds`, and
+declaring kinds without a handler is rejected outright.
+
+Probed replies, verbatim:
+
+| Request | Reply |
+|---|---|
+| `set_permission_mode {"mode":"plan"}` | `{"mode":"plan"}`, **plus** a `system/status` echoing `permissionMode` |
+| `get_workspace_diff` | `{"diff":{stats,perFileStats,hunks,skippedLarge,restricted,source}}` |
+| `get_settings` | `{"effective":{permissions:{allow:[…]},…}}` |
+| `set_max_thinking_tokens` | `{}` (success, no payload) |
+| `generate_session_title` | `{"title":null}` with no conversation yet |
+| `rewind_files` (no checkpoint) | `{"canRewind":false,"error":"No file checkpoint found for this message."}` |
+| unknown subtype | `{"subtype":"error","error":"Unsupported control request subtype: …"}`, session stays usable |
+
+That last one remains the version-gate trigger, unchanged from §5.
+
+### 6.2 `interrupt` — and the one thing it does not do
+
+`{"subtype":"interrupt"}` replies in **~0.3s** with `{"still_queued":[]}`. The process stays alive,
+the `session_id` is unchanged, and a following user message runs a normal turn on the same process.
+After it the CLI emits, in order:
+
+1. a `user` message whose content is the text `[Request interrupted by user]` (carries a `uuid`);
+2. `result` with `subtype:"error_during_execution"`, `is_error:true`, `result:null`.
+
+**It does not kill a command that is already running.** A probe ran `sleep 40 && touch SENTINEL`,
+interrupted it three seconds in, and the sentinel appeared forty seconds later. The agent takes no
+further step; the shell it already started runs to completion. Killing the CLI process does not stop
+that child either. This is why `ui/state/StopPolicy` words its notice around what actually stopped —
+"Stopped" alone, in an Android IDE, reads as "your Gradle build stopped", and it did not.
+
+### 6.3 A server named `ide` is filtered down to two tools
+
+The binary carries a hardcoded allowlist:
+
+```
+["mcp__ide__executeCode","mcp__ide__getDiagnostics"]
+```
+
+**Every other tool on an MCP server named `ide` is filtered out before the tool list reaches the
+model.** Verified two ways: a stdio server named `ide` advertising thirteen tools produced exactly one
+model-visible tool (`mcp__ide__getDiagnostics`), and the *same* server under the name `sightline`
+produced all of them.
+
+For the IDE RPC this is correct and desirable — the CLI calls `openDiff`, `getCurrentSelection`,
+`close_tab` and the rest itself over `callIdeRpc`, and the model has no business seeing them. For
+Sightline's own `android_*` tools it was a **silent bug**: they were registered on the `ide` server, so
+from the model's point of view the entire Android tool surface never existed. Fixed in 0.8.0 by serving
+two MCP servers on one socket — see `ide/McpFace`.
+
+Also observed: the CLI **sanitises `.` out of tool names** when presenting them to the model
+(`android.getContext` → `mcp__sightline__android_getContext`), which is why the tools were renamed to
+underscores at the source rather than left to a rewrite we do not control.
+
+### 6.4 Slash commands work over stream-json stdin
+
+Sending `{"type":"user","message":{"role":"user","content":"/context"}}` **executes the local
+command**: the reply was a `<synthetic>` assistant message with `num_turns: 0` and
+`total_cost_usd: 0` — no API call at all.
+
+The catalogue comes from two places. `system/init` carries `slash_commands` as bare names. The
+`initialize` control_response carries `commands: [{name, description, argumentHint}]`, which is the
+only source of descriptions and argument hints. Both are read (`ui/state/SlashCommands`), the richer
+winning per name.
+
+### 6.5 Subagent output (`--forward-subagent-text`)
+
+With the flag (or `forwardSubagentText: true` on `initialize`), a subagent's `assistant` and `user`
+messages arrive on the same stream as the main agent's, distinguished **only** by a top-level
+`parent_tool_use_id` equal to the `Task`'s `tool_use.id`. They carry ordinary content blocks —
+`thinking`, `tool_use`, `text` and `tool_result`.
+
+Rendered as ordinary transcript blocks they interleave with the main agent's reply and read as one
+confused voice, so `ui/state/SubagentPresentation` folds them into the owning `Task` card and drops
+thinking and tool results.
+
+`agentProgressSummaries` additionally produces `system/task_started`, `system/task_progress`,
+`system/task_updated` and `system/task_notification`. Not consumed yet.
+
+### 6.6 File checkpointing and `rewind_files` — **verified end to end**
+
+Two halves are required, and the SDK sets both for you:
+
+```
+CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true    # arms the backups
+--replay-user-messages                            # the only way the checkpoint ids reach the host
+```
+
+Each user message we send is then echoed back on stdout carrying a `uuid`; that uuid **is** the
+checkpoint. `{"subtype":"rewind_files","user_message_id":"<uuid>"}` restores the files written since.
+
+A probe edited `utils.py` through the `Edit` tool and rewound it: the file came back byte-for-byte
+identical to the original, with `{"canRewind":true,"skippedLinks":0}`.
+
+Three things a host must get right:
+
+- **A `success` reply can still carry `canRewind:false`** — the subtype is not the outcome.
+- **Only `Write`/`Edit`/`NotebookEdit` are tracked.** Not `Bash`, not a subagent's edits (which is
+  most of a `Task`), not directory creation or deletion. A revert that silently covers only part of
+  what the agent did is more dangerous than none, which is why `ui/state/CheckpointPolicy` repeats
+  the limits at every click rather than in a doc.
+- **`skippedLinks`** counts tracked paths the CLI refused to write (a symlink, a moved parent
+  directory). Non-zero is a *partial* restore and must not read as a whole one.
+
+The env-var name is SDK-internal and `--rewind-files` is deliberately absent from `claude --help`, so
+this is the `UNKNOWN` rung of the fact ladder: offered behind a setting, **off by default**, never
+promised.
+
+### 6.7 Two events the panel used to drop
+
+Both schemas are the CLI's own declarations:
+
+```
+{"type":"system","subtype":"compact_boundary",
+ "compact_metadata":{"trigger":"manual"|"auto","pre_tokens":N,"post_tokens":N?,
+                     "cumulative_dropped_tokens":N?  /* @internal — do not surface */}}
+
+{"type":"rate_limit_event","rate_limit_info":{
+   "status":"allowed"|"allowed_warning"|"rejected",
+   "resetsAt":<epoch int>?, "utilization":N?,
+   "rateLimitType":"five_hour"|"seven_day"|"seven_day_opus"|"seven_day_sonnet"
+                  |"seven_day_overage_included"|"overage"}}
+```
+
+`resetsAt` is typed only as an integer and the unit is not stated; seconds and milliseconds are three
+orders of magnitude apart, so `ui/state/SessionNotices` decides by magnitude and yields **no time at
+all** for a value that fits neither.
+
+### 6.8 Flags that exist and are not used yet
+
+`--effort <low|medium|high|xhigh|max>`, `--max-budget-usd`, `--fallback-model`, `--autocompact`,
+`--json-schema`, `--agents` / `--agent`, `--plugin-dir` / `--plugin-url`, `--add-dir`, `--tools` /
+`--allowedTools` / `--disallowedTools`, `--setting-sources`, `--session-id`, `-n/--name`,
+`--include-hook-events` (verified: emits `system/hook_started` + `system/hook_response` per hook),
+`--prompt-suggestions` (emits a `prompt_suggestion` event after each turn), `--worktree`, `--bg`,
+`--cloud`, `--from-pr`. Subcommands: `claude agents`, `claude ultrareview`, `claude doctor`.

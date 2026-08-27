@@ -64,6 +64,24 @@ class ClaudeSettingsConfigurable : Configurable {
                     .bindSelected({ state.includePartialMessages }, { state.includePartialMessages = it })
             }
             row {
+                checkBox("Offer \"Revert Claude's file changes to here\" on your messages")
+                    .bindSelected({ state.fileCheckpointing }, { state.fileCheckpointing = it })
+                    .comment(
+                        "Restores files Claude edited with Edit, Write or NotebookEdit — not changes made " +
+                            "by a command it ran, and not a subagent's edits inside a Task. Uses CLI " +
+                            "behaviour that is not part of its documented interface, so it is off by " +
+                            "default and may stop working after a CLI update.",
+                    )
+            }
+            row {
+                checkBox("Show what subagents are doing inside their Task card")
+                    .bindSelected({ state.forwardSubagentText }, { state.forwardSubagentText = it })
+                    .comment(
+                        "A Task hands work to a subagent that can run for minutes. With this on, the steps " +
+                            "it takes and what it concludes appear in the card instead of nothing at all.",
+                    )
+            }
+            row {
                 checkBox("Show thinking & tool-call details by default (off = compact summary view)")
                     .bindSelected({ state.showDetails }, { state.showDetails = it })
             }

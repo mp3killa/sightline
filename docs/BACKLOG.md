@@ -139,6 +139,36 @@ Verify:
     2.1.228, and it is worth re-checking whenever the CLI major moves.
   - Confirm no MCP server config value (an `env` token) ever reaches `idea.log` or the transcript.
 
+- **0.8.0 session control** (new; the protocol half is probed and recorded in [PROTOCOL.md](PROTOCOL.md)
+  §6 and every decision class is unit-tested, so what is owed here is only what a real IDE can show):
+  - **Stop → interrupt.** With a turn running, press Stop once: the turn must end within a second or so,
+    the status must read *Interrupting*, and the **next message must continue the same conversation with
+    no relaunch** — check `system/init` is not re-announced and `mcp_servers` still lists `ide`. Press
+    Stop *twice* and confirm the second press ends the process instead.
+  - **The command caveat, with a real build.** Start `./gradlew assembleDebug`, press Stop, and confirm
+    the notice says the command keeps running — then confirm it actually does. This is the sentence most
+    likely to be "tidied" later, so see it be true once.
+  - **Permission mode mid-conversation.** Switch modes from the chip with a session running and confirm
+    the transcript says it switched *for this conversation*. Then switch to **Auto on Haiku** and confirm
+    the refusal is reported in the CLI's words and the setting is still saved for next time.
+  - **Android tools are reachable at last.** In a real Android project, confirm `system/init.tools` lists
+    `mcp__sightline__android_getContext` (it never did before 0.8.0), that `ide` still lists as connected,
+    and that Claude can actually *call* one. Then open a **non-Android** project and confirm the
+    `sightline` server is not declared at all rather than declared empty.
+  - **A `Task` card with a real subagent.** Confirm the steps appear as the subagent takes them, that the
+    conclusion lands, that the card does **not** auto-expand under a cursor mid-read, and that a long run
+    shows the "…and N more steps" line rather than stopping silently.
+  - **The commands submenu** against a project with its own commands and a plugin skill: descriptions and
+    argument hints present, a picked command lands in the composer, and one with arguments leaves the
+    caret ready to type.
+  - **Compaction.** Drive a conversation to auto-compaction (or run `/compact`) and confirm the notice
+    appears once, with the sizes, and reads as normal behaviour rather than an error.
+  - **Revert file changes** (turn the setting on): right-click a message → confirm dialog names the
+    message and repeats the limits → files restored. Then the failure paths that matter more: a message
+    with **no checkpoint** must say *nothing was restored*; a **symlinked** tracked file must produce the
+    partial-restore wording and be reported as a problem; and with the setting **off**, no menu item may
+    appear at all. Finally confirm a `Bash`-made change is *not* reverted — the caveat has to be true.
+
 - **First-run disclosure**: on a fresh install, the notice appears **before** the first message is sent
   and before **Catch up on this project** (both send paths are gated). Closing it without acknowledging
   must *cancel* the send, not proceed. Confirm the mode-specific sentence changes with the mode chip,

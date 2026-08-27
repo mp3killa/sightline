@@ -41,6 +41,14 @@ object ToolEventPresentation {
      */
     val MUTATING_TOOLS: Set<String> = setOf("Edit", "MultiEdit", "Write", "NotebookEdit")
 
+    /**
+     * Tools that hand work to something else and come back with a result: a subagent, a skill, a
+     * project command. Like an edit, the *point* of the turn rather than orientation for it — a `Task`
+     * can be minutes of work and dozens of steps, and letting that recede into a one-line compact row
+     * makes the busiest part of a turn its least visible.
+     */
+    val DELEGATING_TOOLS: Set<String> = setOf("Task", "Skill", "SlashCommand", "ExitPlanMode")
+
     fun weight(toolName: String?, outcome: ToolOutcome): ToolWeight = when {
         // A failure is the one thing a reader must not scroll past, whatever produced it.
         outcome == ToolOutcome.ERROR -> ToolWeight.CARD
@@ -48,6 +56,7 @@ object ToolEventPresentation {
         // to see they made — it must never fade into the routine noise.
         outcome == ToolOutcome.BLOCKED -> ToolWeight.CARD
         toolName in MUTATING_TOOLS -> ToolWeight.CARD
+        toolName in DELEGATING_TOOLS -> ToolWeight.CARD
         else -> ToolWeight.COMPACT
     }
 

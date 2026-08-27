@@ -14,7 +14,7 @@ import io.mp.sightline.settings.ClaudeSettings
 import java.io.File
 
 /**
- * Screen inspection and Compose analysis — the `android.inspectScreen` / `android.analyzeCompose` tools.
+ * Screen inspection and Compose analysis — the `android_inspectScreen` / `android_analyzeCompose` tools.
  *
  * Both are built around being explicit about a limit rather than papering over it.
  *
@@ -31,7 +31,7 @@ import java.io.File
  */
 class AndroidScreenTools(private val project: Project) {
 
-    private val names = setOf("android.inspectScreen", "android.analyzeCompose")
+    private val names = setOf("android_inspectScreen", "android_analyzeCompose")
 
     fun handles(name: String): Boolean = name in names
 
@@ -39,7 +39,7 @@ class AndroidScreenTools(private val project: Project) {
         if (!enabled()) return
         tools.add(
             tool(
-                "android.inspectScreen",
+                "android_inspectScreen",
                 "What is on screen right now: the resumed Activity, the back stack, and the window " +
                     "configuration (size, density, orientation, dark mode, font scale, locale). " +
                     "**This is Activity-level only** — it cannot see the current Compose route or " +
@@ -50,7 +50,7 @@ class AndroidScreenTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.analyzeCompose",
+                "android_analyzeCompose",
                 "Analyse a Kotlin file's composables: which are declared, which have @Preview and what " +
                     "those previews cover (dark theme, font scale, device size), plus findings that are " +
                     "unambiguous in the source — a screen-level composable with no preview, " +
@@ -69,8 +69,8 @@ class AndroidScreenTools(private val project: Project) {
 
     /** Off the EDT by contract (the WebSocket thread). */
     fun call(name: String, args: JsonObject): String = when (name) {
-        "android.inspectScreen" -> inspectScreen()
-        "android.analyzeCompose" -> analyzeCompose(args)
+        "android_inspectScreen" -> inspectScreen()
+        "android_analyzeCompose" -> analyzeCompose(args)
         else -> err("Unknown tool: $name")
     }
 

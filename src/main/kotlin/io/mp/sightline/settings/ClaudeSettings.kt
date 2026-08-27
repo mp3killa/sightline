@@ -31,6 +31,25 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
         /** Stream token-level deltas for a live "typing" effect. */
         var includePartialMessages by property(true)
 
+        /**
+         * Pass `--forward-subagent-text`, so a `Task`'s subagent reports what it is doing instead of the
+         * card sitting silent for minutes. Its output folds into the Task card
+         * ([io.mp.sightline.ui.state.SubagentPresentation]) rather than the transcript, so this costs
+         * stream volume, not readability. Off leaves a Task opaque, which is what it was before 0.8.0.
+         */
+        var forwardSubagentText by property(true)
+
+        /**
+         * Offer "Revert Claude's file changes to here" on each message you sent.
+         *
+         * **Off by default and deliberately so.** It works — verified end to end — but it rides an
+         * environment variable named for the SDK's internals and a CLI flag kept out of `--help`, so it
+         * is the UNKNOWN rung of the fact ladder: worth offering, not worth promising. It also covers
+         * only Edit/Write/NotebookEdit, never a command's changes or a subagent's, which is why
+         * [io.mp.sightline.ui.state.CheckpointPolicy] repeats that at every click.
+         */
+        var fileCheckpointing by property(false)
+
         /** Show thinking blocks and tool-call cards in the transcript (off = compact/summary view). */
         var showDetails by property(false)
 

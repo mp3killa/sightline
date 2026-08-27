@@ -114,7 +114,9 @@ labelled dangerous in the UI for a reason.
 ## What is written to disk
 
 Only settings, and — if you turn it on — a small Android cache under `.sightline/` in the project.
-There is no transcript persistence. `android/AndroidStorePolicy` enforces the cache's rules in code:
+Sightline writes no transcript. The `claude` CLI it runs does keep its own session transcripts under
+`~/.claude/projects/`, under your account and its own retention rules — see
+[PRIVACY.md](PRIVACY.md#what-is-stored-on-your-machine). `android/AndroidStorePolicy` enforces the cache's rules in code:
 workspace-relative paths only, versioned schema (an unknown version is discarded, not migrated), a
 retention cap, and a backstop that refuses to write anything credential-shaped or containing a home
 path. See [PRIVACY.md](PRIVACY.md).

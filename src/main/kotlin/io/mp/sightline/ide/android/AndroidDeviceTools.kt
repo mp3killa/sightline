@@ -34,10 +34,10 @@ import io.mp.sightline.settings.ClaudeSettings
 class AndroidDeviceTools(private val project: Project) {
 
     private val names = setOf(
-        "android.listDevices",
-        "android.captureLogcat",
-        "android.investigateCrash",
-        "android.deviceRecipe",
+        "android_listDevices",
+        "android_captureLogcat",
+        "android_investigateCrash",
+        "android_deviceRecipe",
     )
 
     fun handles(name: String): Boolean = name in names
@@ -46,7 +46,7 @@ class AndroidDeviceTools(private val project: Project) {
         if (!enabled()) return
         tools.add(
             tool(
-                "android.listDevices",
+                "android_listDevices",
                 "List connected devices and emulators, and the AVDs that could be started. Each device " +
                     "reports whether it is actually usable — `offline` and `unauthorised` are distinct " +
                     "states with different fixes.",
@@ -55,7 +55,7 @@ class AndroidDeviceTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.captureLogcat",
+                "android_captureLogcat",
                 "Capture recent logcat, **already redacted**: auth tokens, emails, coordinates, device " +
                     "identifiers and home paths are removed before you see it, and the response says how " +
                     "many values were removed. A redacted value was present in the log — treat it as " +
@@ -81,7 +81,7 @@ class AndroidDeviceTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.investigateCrash",
+                "android_investigateCrash",
                 "Capture logcat and explain the most recent crash or ANR, grouped by how well each " +
                     "statement is evidenced: **Confirmed** (read off the trace), **Likely cause**, " +
                     "**Contributing factors**, and **Missing evidence** (what could not be determined, " +
@@ -94,7 +94,7 @@ class AndroidDeviceTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.deviceRecipe",
+                "android_deviceRecipe",
                 "Plan a device-state recipe (`large_font`, `accessibility`, `dark_mode`, `landscape`) — " +
                     "the conditions developers usually skip. Returns the commands to apply it **and the " +
                     "commands to put the device back on the values it currently has**. Reports " +
@@ -109,10 +109,10 @@ class AndroidDeviceTools(private val project: Project) {
 
     /** Off the EDT by contract (the WebSocket thread) — every path here shells out to adb. */
     fun call(name: String, args: JsonObject): String = when (name) {
-        "android.listDevices" -> listDevices()
-        "android.captureLogcat" -> captureLogcat(args)
-        "android.investigateCrash" -> investigateCrash(args)
-        "android.deviceRecipe" -> deviceRecipe(args)
+        "android_listDevices" -> listDevices()
+        "android_captureLogcat" -> captureLogcat(args)
+        "android_investigateCrash" -> investigateCrash(args)
+        "android_deviceRecipe" -> deviceRecipe(args)
         else -> err("Unknown tool: $name")
     }
 

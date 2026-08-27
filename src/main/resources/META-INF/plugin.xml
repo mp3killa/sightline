@@ -50,40 +50,53 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.7.0</b></p>
+        <p><b>0.8.0</b></p>
         <ul>
-            <li><b>MCP servers you add show up in the conversation you already have open.</b> Run
-            <code>claude mcp add playwright …</code> while you are mid-conversation and its tools become
-            available right where you are — no restart, no lost context. Sightline reports what changed:
-            which servers were added, how many tools each brought, and the CLI's own reason if one could
-            not start.</li>
-            <li>It stays out of your way. Nothing waits on the sync, and a change noticed mid-turn is
-            applied once that turn ends. Servers from the project's checked-in <code>.mcp.json</code> are
-            reported but not started for you — that file can arrive from a <code>git pull</code> — and they
-            load with your next conversation.</li>
-            <li>Server configurations can carry credentials, so they go to the CLI and nowhere else: never
-            a log, never the transcript. Switch the whole feature off in Settings if you would rather it
-            only reported.</li>
+            <li><b>Stop now stops the turn, not the session.</b> Pressing Stop interrupts the work in
+            progress and keeps the conversation, the process and its connected MCP servers — your next
+            message just carries on. Press it again to end the process outright. One honest caveat, and
+            Sightline says it rather than hiding it: a command Claude already started keeps running to
+            completion either way, so stopping a build is still yours to do.</li>
+
+            <li><b>The permission mode chip actually changes the permission mode.</b> Until now, picking
+            a different mode mid-conversation saved the setting and did nothing else — the chip claimed a
+            policy that was not in force. It now switches the running conversation, and says so; if
+            Claude refuses the switch (Auto needs Sonnet or Opus), you are told in the CLI's own
+            words instead of being left to guess.</li>
+
+            <li><b>You can see what subagents are doing.</b> A <code>Task</code> used to render as a wall
+            of raw JSON. It is now a proper card — what was delegated, to which agent, the steps it takes
+            as it takes them, and what it concluded. <code>Skill</code>, <code>SlashCommand</code>,
+            <code>ExitPlanMode</code>, <code>BashOutput</code> and notebook edits are rendered properly
+            too.</li>
+
+            <li><b>Claude Code's own commands are in the actions menu.</b> Every command your setup has —
+            built-ins, your project's commands, your plugins' skills — with its description and argument
+            hint, straight from the CLI. Several, like <code>/context</code> and <code>/cost</code>, run
+            locally and cost nothing at all.</li>
+
+            <li><b>Fixed: Claude could not see any of the Android tools.</b> Sightline's Android tools
+            were hosted on the MCP server named <code>ide</code>, and the CLI filters that server down to
+            a single tool before the list ever reaches the model — so none of them had ever been callable.
+            They are served under their own name now, and Claude can use them.</li>
+
+            <li><b>You are told when the conversation is compacted, and when you hit a rate limit.</b>
+            Both used to pass silently. A compaction replaces earlier messages with a summary, which is
+            why Claude sometimes seems to forget something you told it an hour ago — worth knowing rather
+            than puzzling over.</li>
+
+            <li><b>New, off by default: "Revert Claude's file changes to here."</b> Right-click any
+            message you sent and restore the files Claude edited since. It covers edits made with Edit,
+            Write and NotebookEdit — <i>not</i> changes made by a command it ran, and not a subagent's
+            edits inside a Task — and Sightline repeats that every time it asks you to confirm. It rides
+            CLI behaviour that is not part of the documented interface, which is why it ships off and
+            promises nothing.</li>
+
+            <li><b>Corrected in PRIVACY.md:</b> Sightline stores no transcript, but the Claude Code CLI it
+            runs keeps its own full session transcripts under <code>~/.claude/projects/</code>. The
+            privacy page said the transcript "never existed on disk", which was true of the plugin and
+            misleading about your machine. It now says where the CLI's copy lives and who clears it.</li>
         </ul>
-
-        <p><b>0.6.0</b></p>
-        <ul>
-            <li><b>Switch models from the composer.</b> The <code>/</code> actions menu has a <b>Model</b>
-            submenu — the CLI's aliases, any full model id you pin, and a line reporting what the CLI says
-            it is actually running. Switching mid-conversation takes effect in place, keeping the session
-            and the conversation.</li>
-            <li><b>Wide tables render again.</b> A Markdown table whose cells were wider than the chat
-            column showed as an empty bordered box; it now scrolls horizontally instead.</li>
-            <li><b>Themes behave.</b> The Activity Map no longer renders its toolbar as dark strips around
-            a correctly light graph, and the panel follows a theme you switch while it is open.</li>
-        </ul>
-
-        <p><b>0.5.0</b> — first stable release, and the point at which the supported platform narrowed to
-        Android Studio Quail 2 (2026.1.2) or later. IntelliJ IDEA 2026.1+ is the same platform build and
-        can still install Sightline, with the Android features degrading as they always have.</p>
-
-        <p>Earlier releases, and the reasoning behind each change, are in <code>CHANGELOG.md</code> in the
-        repository.</p>
     ]]></change-notes>
 
     <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST

@@ -4,6 +4,94 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0 — 2026-08-27
+
+Built and verified against Claude Code CLI **2.1.235**. The previous release was built against ~2.1.215,
+and the CLI's control protocol had moved a long way in between; the probes are recorded in
+[docs/PROTOCOL.md](docs/PROTOCOL.md) §6 so the next person does not have to repeat them.
+
+### Fixed
+
+- **Claude could not see a single one of Sightline's Android tools.** All twelve — `getContext`,
+  `auditManifest`, `investigateCrash`, `captureLogcat`, `analyzeRoutes` and the rest — were registered on
+  the MCP server named `ide`, chosen at the time because `--mcp-config` was one hardcoded string and a
+  second server meant editing it. The CLI carries a hardcoded allowlist of exactly two `ide` tools and
+  filters everything else out **before the tool list reaches the model**. So the Android tool surface had
+  never been reachable, and no amount of use would have produced evidence either way.
+
+  The name `ide` cannot be given up — it is what makes the CLI route edits through the IDE's diff viewer
+  and treat the connection as editor context — so the bridge now answers to two names on one socket, one
+  port and one token, and tells them apart by the path the CLI connects to. Tools meant for the model
+  live on `sightline`; the editor RPC stays on `ide` where the CLI expects it. The tools also lost the
+  dots in their names, because the CLI rewrites those anyway and a name we do not control is a name that
+  can drift.
+
+- **The permission-mode chip was a no-op mid-conversation.** Choosing a different mode wrote the setting
+  and repainted the chip, and that was all — the running session kept whatever policy it started with.
+  The chip claiming a policy that is not in force is the exact failure the launch-time fallback notice
+  exists to prevent; this was the same bug in a different place. The mode now switches in the running
+  conversation, and a refusal — `Auto` needs Sonnet or Opus — is reported in the CLI's own words.
+
+- **A `Task` rendered as a raw JSON dump** of the subagent's prompt. Subagents are now the most common
+  tool there is, so the busiest part of a turn was also its least readable.
+
+- **PRIVACY.md was misleading about where your conversation lives.** It said the transcript is "memory
+  only — never written to disk" and "never existed on disk". True of Sightline, which persists nothing —
+  but the `claude` CLI that Sightline runs writes every session in full to
+  `~/.claude/projects/<project>/<session>.jsonl`, which is what makes `--resume` work. A reader took that
+  table to mean their conversation was not on disk. It now names the CLI's copy, says who clears it, and
+  says plainly that uninstalling Sightline does not remove it. `SECURITY.md` and `README.md` were
+  corrected to match.
+
+### Added
+
+- **Stop interrupts the turn instead of killing the CLI.** The old Stop destroyed the process and relied
+  on `--resume` to recover, which cost a relaunch, a re-read of every config file, and a reconnect of
+  every MCP server — and left a window where nothing was reading stdin, which is why messages sent during
+  a Stop had to be parked. Stop now sends an `interrupt`: the turn ends in about a third of a second and
+  the process, the session and its servers all survive. Pressing Stop again escalates to ending the
+  process, and a CLI too old to know the request falls back to that by itself, once, saying so.
+
+  **A command Claude already started keeps running.** Neither an interrupt nor a kill stops it — verified,
+  not assumed — so the notice says which is which. "Stopped", unqualified, would tell a developer their
+  Gradle build had stopped when it had not.
+
+- **Subagent activity, inside the card that spawned it.** A `Task` shows what was delegated and to which
+  agent, then the steps the subagent takes as it takes them, then what it concluded. Its reasoning and
+  its tools' raw output are deliberately left out — a subagent produces far more than its caller, and the
+  card exists to answer "what did it do and what did it find". Long runs list the first dozen steps and
+  then count the rest, which is stated rather than silently truncated. Off with a setting if you preferred
+  the silence.
+
+- **`Skill`, `SlashCommand`, `ExitPlanMode`, `BashOutput`, `KillShell` and `NotebookEdit`** are rendered
+  as themselves instead of falling through to a JSON dump.
+
+- **Claude Code's own commands, in the `/` actions menu.** Whatever your setup actually has — built-ins,
+  your project's commands, your plugins' skills — with the descriptions and argument hints the CLI
+  reports. Nothing is hardcoded, for the same reason the model list is not: the set depends on your
+  project. Picking one fills the composer rather than sending, so a command that takes arguments gets
+  them. Several, `/context` and `/cost` among them, run locally and cost no tokens at all.
+
+- **You are told when the conversation is compacted.** Compaction replaces earlier messages with a
+  summary — so Claude "forgetting" something from an hour ago is expected behaviour, not a fault, and it
+  is worth knowing which one you are looking at. The notice says how much was compacted, and warns that
+  detail from before that point may need repeating.
+
+- **Rate limits are reported.** Approaching one, hitting one, and coming back from one. Only when the
+  *status* changes, never on every tick, and the reset time is stated only when the CLI's own value is
+  unambiguous.
+
+- **"Revert Claude's file changes to here" — new, and off by default.** Right-click any message you sent
+  and the files Claude edited since it are restored. Verified end to end against the CLI: edited, then
+  restored byte-for-byte.
+
+  Two things are said plainly at every click, because a revert that quietly covers only part of what
+  happened is worse than none: it restores edits made with **Edit, Write and NotebookEdit only** — never
+  changes made by a command Claude ran, and never a subagent's edits inside a `Task` — and a partial
+  restore is reported as a problem, not a success. It also rides CLI behaviour that is not part of the
+  documented interface, which is why it ships off, and why a CLI that drops it costs you a menu item
+  rather than a revert you believed in.
+
 ## 0.7.0 — 2026-08-12
 
 ### Added

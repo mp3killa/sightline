@@ -201,6 +201,17 @@ class ClaudeComposerPanel(
     fun currentText(): String = input.text
     fun clearInput() { input.text = "" }
 
+    /**
+     * Puts [text] in the input and focuses it, replacing whatever draft was there only when there
+     * wasn't one — a half-typed message is the user's, and a menu pick must not eat it.
+     */
+    fun putInInput(text: String) {
+        val existing = input.text.orEmpty()
+        input.text = if (existing.isBlank()) text else existing.trimEnd() + " " + text
+        input.caretPosition = input.document.length
+        input.requestFocusInWindow()
+    }
+
     fun insertContextText(text: String) {
         input.insert(text, input.caretPosition.coerceIn(0, input.document.length))
         input.requestFocusInWindow()

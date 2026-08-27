@@ -195,8 +195,8 @@ point of it. Free during the beta.
 Redistributed third-party components keep their own licences, reproduced in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licenses/](licenses/).
 
-- **[PRIVACY.md](PRIVACY.md)** — no telemetry, no conversation persistence, no credential handling, and
-  exactly what does leave your machine.
+- **[PRIVACY.md](PRIVACY.md)** — no telemetry, no credential handling, nothing persisted by Sightline
+  (and where the CLI keeps its own transcripts), and exactly what does leave your machine.
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability privately, and the guards in place.
 - **[docs/PERMISSIONS.md](docs/PERMISSIONS.md)** — what each permission mode allows, and the three
   guards that apply regardless of mode.

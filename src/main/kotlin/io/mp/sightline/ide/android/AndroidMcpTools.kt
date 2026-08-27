@@ -27,7 +27,7 @@ import io.mp.sightline.settings.ClaudeSettings
  */
 class AndroidMcpTools(private val project: Project) {
 
-    private val names = setOf("android.getContext", "android.resolveTask", "android.selectTests", "android.diagnoseBuild")
+    private val names = setOf("android_getContext", "android_resolveTask", "android_selectTests", "android_diagnoseBuild")
 
     fun handles(name: String): Boolean = name in names
 
@@ -35,7 +35,7 @@ class AndroidMcpTools(private val project: Project) {
         if (!enabled()) return
         tools.add(
             tool(
-                "android.getContext",
+                "android_getContext",
                 "Get the current Android state of this project: modules, the selected build variant and " +
                     "product flavours, applicationId, min/target/compile SDK, the connected device and " +
                     "whether the app is running, and the open file. Every value carries the source it " +
@@ -53,7 +53,7 @@ class AndroidMcpTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.resolveTask",
+                "android_resolveTask",
                 "Get the exact Gradle task for an intent, resolved against the selected build variant — " +
                     "`assemble`, `bundle`, `install`, `compile`, `unit_test`, `instrumentation_test`, " +
                     "`lint`, `clean`. **Use this instead of composing a task name yourself.** AGP names " +
@@ -75,7 +75,7 @@ class AndroidMcpTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.selectTests",
+                "android_selectTests",
                 "Given changed files (or the open file), return the tests worth running and the Gradle " +
                     "commands to run them, grouped per module. Also returns `uncovered`: changed " +
                     "production files with no matching test, which those commands will NOT exercise.",
@@ -90,7 +90,7 @@ class AndroidMcpTools(private val project: Project) {
         )
         tools.add(
             tool(
-                "android.diagnoseBuild",
+                "android_diagnoseBuild",
                 "Classify raw Gradle output into a typed Android build failure — KSP/KAPT, manifest " +
                     "merge, duplicate class, unresolved dependency, R8, Compose/Kotlin mismatch, JVM " +
                     "target mismatch, version catalogue, configuration cache, SDK, OOM. Returns " +
@@ -105,10 +105,10 @@ class AndroidMcpTools(private val project: Project) {
 
     /** Called off the EDT by `IdeServer`'s WebSocket thread — [AndroidContextResolver] requires that. */
     fun call(name: String, args: JsonObject): String = when (name) {
-        "android.getContext" -> getContext(args)
-        "android.resolveTask" -> resolveTask(args)
-        "android.selectTests" -> selectTests(args)
-        "android.diagnoseBuild" -> diagnoseBuild(args)
+        "android_getContext" -> getContext(args)
+        "android_resolveTask" -> resolveTask(args)
+        "android_selectTests" -> selectTests(args)
+        "android_diagnoseBuild" -> diagnoseBuild(args)
         else -> """{"success":false,"error":"Unknown tool: $name"}"""
     }
 
