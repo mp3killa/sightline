@@ -18,6 +18,9 @@
             <li>Chat with Claude without leaving Android Studio.</li>
             <li>Attach files and IDE context, and remove any of it before you send.</li>
             <li>Review tool requests and proposed changes as diffs before they apply.</li>
+            <li>Stop a turn without losing the conversation, and pick up where you left off.</li>
+            <li>Watch what a subagent is doing inside the task that started it.</li>
+            <li>Run your own Claude Code commands, skills and plugins from the panel.</li>
             <li>See files, commands, tests and relationships in the Activity Map.</li>
             <li>Inspect structured build, test and diagnostic results.</li>
         </ul>
@@ -33,7 +36,9 @@
         credentials, and has no login screen or backend of its own.</p>
 
         <p><b>No telemetry.</b> No analytics, no usage statistics, nothing sent anywhere except to the
-        local <code>claude</code> process you started. Your conversation is never written to disk.</p>
+        local <code>claude</code> process you started. Sightline itself writes no transcript; note that
+        the Claude Code CLI keeps its own session history under <code>~/.claude/projects/</code>, under
+        your account and its own retention rules, which is what lets a conversation resume.</p>
 
         <p>
         Sightline is an independent project and is not affiliated with or endorsed by Anthropic,
@@ -50,7 +55,9 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.8.0</b></p>
+        <p><b>0.8.0-beta</b> &#8212; beta channel. This release changes how Stop, permissions and file
+        writes behave, so it goes to beta first and stable stays on 0.7.0 until it has been driven by
+        hand in a live IDE.</p>
         <ul>
             <li><b>Stop now stops the turn, not the session.</b> Pressing Stop interrupts the work in
             progress and keeps the conversation, the process and its connected MCP servers — your next

@@ -4,7 +4,13 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.8.0 — 2026-08-27
+## 0.8.0-beta — 2026-08-27
+
+**Beta channel.** This release changes how Stop behaves, changes how the permission mode is applied,
+adds an action that deletes work (file revert), and rewires the IDE bridge onto two MCP servers — the
+standing rule is that a change to the approval, permission or write paths goes to beta until a human
+has driven it in a live IDE. That pass is owed; see [docs/BACKLOG.md](docs/BACKLOG.md). Stable stays on
+0.7.0 until then.
 
 Built and verified against Claude Code CLI **2.1.235**. The previous release was built against ~2.1.215,
 and the CLI's control protocol had moved a long way in between; the probes are recorded in
