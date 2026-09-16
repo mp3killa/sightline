@@ -255,6 +255,12 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
   the floor is now an AS build, the script uses the **local Android Studio when it is at or above the
   floor** and otherwise downloads Quail 2 (checksum-verified). A local install *below* the floor is
   refused rather than quietly used, because a pass against an excluded IDE means nothing.
+- **The local test suite runs headless (`java.awt.headless=true` in `tasks.test`) because CI does.**
+  Do not remove it to make a rendering test easier. `Toolkit.getMenuShortcutKeyMaskEx()` throws
+  `HeadlessException`, and called during composer construction it failed **every** test that builds a
+  `ClaudePanel` — but only on CI, so a green local run shipped a tagged release that died at the Test
+  step. Prefer `SystemInfo.isMac` + `InputEvent.META_DOWN_MASK`/`CTRL_DOWN_MASK` over any `Toolkit`
+  query at construction time.
 - **A NUL byte makes a source file invisible to `grep`.** Two files here had one (a mangled `' '` char
   literal), so `file` reported them as `data`, grep skipped them, and a package-wide rename silently
   missed both — surfacing only as unresolved references at compile time. If a text tool seems to be

@@ -97,6 +97,13 @@ dependencies {
 
 tasks.test {
     useJUnit()
+
+    // Run headless locally, because CI does and that difference has already cost a release.
+    // `Toolkit.getMenuShortcutKeyMaskEx()` throws HeadlessException; called while the composer was
+    // being constructed it failed every test that builds a panel — on CI only, since a macOS desktop
+    // is not headless. The suite is worth nothing as a gate if it passes locally and fails there, so
+    // the two now run the same way.
+    systemProperty("java.awt.headless", "true")
 }
 
 java {

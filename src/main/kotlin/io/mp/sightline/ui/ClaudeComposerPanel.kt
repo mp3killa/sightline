@@ -29,6 +29,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import com.intellij.openapi.util.SystemInfo
 import java.awt.Image
 import java.awt.RenderingHints
 import java.awt.datatransfer.Clipboard
@@ -149,12 +150,15 @@ class ClaudeComposerPanel(
         input.toolTipText = "Enter to send · Shift+Enter for a new line"
         // Shift+Cmd/Ctrl+V forces the image off the clipboard. Registered on the input rather than as
         // an IDE action so it exists only where it means something, and cannot collide with a keymap.
+        //
+        // The modifier is chosen from SystemInfo, *not* Toolkit.getMenuShortcutKeyMaskEx(): that call
+        // throws HeadlessException, and this runs while the composer is being constructed — so every
+        // headless test that builds a panel died on it. It passed locally because macOS is not headless
+        // and failed the entire CI suite, which is the only place that difference shows up.
+        val menuMask = if (SystemInfo.isMac) InputEvent.META_DOWN_MASK else InputEvent.CTRL_DOWN_MASK
         input.registerKeyboardAction(
             { attachImageFromClipboard() },
-            KeyStroke.getKeyStroke(
-                KeyEvent.VK_V,
-                java.awt.Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx or java.awt.event.InputEvent.SHIFT_DOWN_MASK,
-            ),
+            KeyStroke.getKeyStroke(KeyEvent.VK_V, menuMask or InputEvent.SHIFT_DOWN_MASK),
             JComponent.WHEN_FOCUSED,
         )
         input.addKeyListener(object : KeyAdapter() {

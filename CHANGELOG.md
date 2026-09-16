@@ -128,6 +128,12 @@ A smaller plugin, and the conversation gets the whole panel.
   whatever you had already typed, which put it somewhere it could never run. It now goes to the front,
   with your text kept after it as the command's arguments (verified: trailing text is tolerated).
 
+- **The test suite now runs headless locally, as CI does.** A `Toolkit.getMenuShortcutKeyMaskEx()`
+  call added for the paste shortcut throws `HeadlessException`, and because it ran while the composer
+  was being constructed it failed every test that builds a panel — on CI only, since a macOS desktop is
+  not headless. A suite that passes locally and fails on CI is not a gate, so `java.awt.headless=true`
+  is now set for the local `test` task too.
+
 - **`tools/verify-plugin.sh` reported FAIL on a perfectly clean run.** Its pass check looked for
   `"Compatible."` — the trailing period the verifier writes only when it has informational notes to
   append. A verification with no deprecated or experimental usages at all prints a bare `Compatible`,
