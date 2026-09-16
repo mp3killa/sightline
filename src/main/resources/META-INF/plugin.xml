@@ -54,6 +54,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.9.1</b> &#8212; the same plugin as 0.9.0, published <b>signed</b>. Nothing in the panel
+        changed; 0.9.0 and the two releases before it went out unsigned because the signing step was
+        skipped silently, and the release now refuses to publish an unsigned build. Everything below is
+        the 0.9.0 release, which most people will be coming to from 0.8.1.</p>
+
         <p><b>0.9.0</b> &#8212; a smaller, faster plugin, and the conversation gets the whole panel.</p>
 
         <p><b>The Agent Activity Map has been removed.</b> The live graph of files, commands and

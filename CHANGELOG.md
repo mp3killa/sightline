@@ -4,6 +4,26 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.1 — 2026-09-16
+
+**No functional change.** The same plugin as 0.9.0, published signed.
+
+### Fixed
+
+- **Releases were being published unsigned, silently.** `signPlugin` is *skipped* when key material is
+  absent, and a skipped Gradle task reports success — so the Sign step logged nothing and went green
+  while 0.7.0, 0.8.1 and 0.9.0 all shipped unsigned. Signing key material now exists (RSA 4096,
+  self-signed to 2036) and the release fails rather than publishing unsigned: the Sign step checks both
+  for the secrets and for the `*-signed.zip` the task should have produced. A `workflow_dispatch` dry
+  run still tolerates absent secrets, so a fork can build.
+
+  0.9.0 could not be signed retroactively — the Marketplace refuses a re-upload of an existing version
+  number — which is why this is a version bump rather than a correction in place.
+
+- **`./gradlew verifyPluginSignature` does not work** (usage error, exit 64, IPGP 2.6.0) — the same
+  flavour of breakage as `verifyPlugin`. Verify with the marketplace-zip-signer CLI instead; the
+  command is in [docs/RELEASING.md](docs/RELEASING.md), and it confirms the 0.9.x artifact is valid.
+
 ## 0.9.0 — 2026-09-16
 
 A smaller plugin, and the conversation gets the whole panel.
