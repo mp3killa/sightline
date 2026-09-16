@@ -82,30 +82,6 @@ object ClaudeIcons {
         }
     }
 
-    val split = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.08f)
-        val p = s * 0.16f
-        g.draw(RoundRectangle2D.Float(p, p, s - 2 * p, s - 2 * p, s * 0.12f, s * 0.12f))
-        g.draw(line(s * 0.5f, p, s * 0.5f, s - p))
-    }
-
-    val settings = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.085f)
-        val cx = s * 0.5f; val cy = s * 0.5f
-        val rOuter = s * 0.3f; val rInner = s * 0.13f
-        g.draw(Ellipse2D.Float(cx - rInner, cy - rInner, rInner * 2, rInner * 2))
-        for (i in 0 until 8) {
-            val a = Math.PI * 2 * i / 8
-            val x1 = cx + Math.cos(a).toFloat() * rInner * 1.5f
-            val y1 = cy + Math.sin(a).toFloat() * rInner * 1.5f
-            val x2 = cx + Math.cos(a).toFloat() * rOuter
-            val y2 = cy + Math.sin(a).toFloat() * rOuter
-            g.draw(line(x1, y1, x2, y2))
-        }
-    }
-
-    // ---- composer ----
-
     val attach = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.088f)
         val old = g.transform
@@ -151,63 +127,14 @@ object ClaudeIcons {
         g.draw(line(s * 0.5f, s * 0.64f, s * 0.72f, s * 0.42f))
     }
 
-    val chevronUp = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.1f)
-        g.draw(line(s * 0.28f, s * 0.6f, s * 0.5f, s * 0.38f))
-        g.draw(line(s * 0.5f, s * 0.38f, s * 0.72f, s * 0.6f))
-    }
-
     val close = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.1f)
         g.draw(line(s * 0.3f, s * 0.3f, s * 0.7f, s * 0.7f))
         g.draw(line(s * 0.7f, s * 0.3f, s * 0.3f, s * 0.7f))
     }
 
-    // ---- activity controls ----
+    // ---- content actions ----
 
-    val filter = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.085f)
-        val p = GeneralPath()
-        p.moveTo(s * 0.2, s * 0.26); p.lineTo(s * 0.8, s * 0.26)
-        p.lineTo(s * 0.56, s * 0.52); p.lineTo(s * 0.56, s * 0.78)
-        p.lineTo(s * 0.44, s * 0.7); p.lineTo(s * 0.44, s * 0.52)
-        p.closePath()
-        g.draw(p)
-    }
-
-    val fit = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.1f)
-        val a = s * 0.2f; val b = s * 0.8f; val k = s * 0.16f
-        g.draw(line(a, a + k, a, a)); g.draw(line(a, a, a + k, a))
-        g.draw(line(b - k, a, b, a)); g.draw(line(b, a, b, a + k))
-        g.draw(line(a, b - k, a, b)); g.draw(line(a, b, a + k, b))
-        g.draw(line(b - k, b, b, b)); g.draw(line(b, b - k, b, b))
-    }
-
-    val pause = icon { g, s, c ->
-        g.color = c
-        val w = s * 0.13f
-        g.fill(RoundRectangle2D.Float(s * 0.36f - w, s * 0.26f, w, s * 0.48f, w * 0.6f, w * 0.6f))
-        g.fill(RoundRectangle2D.Float(s * 0.64f, s * 0.26f, w, s * 0.48f, w * 0.6f, w * 0.6f))
-    }
-
-    val resume = icon { g, s, c ->
-        g.color = c
-        val p = GeneralPath()
-        p.moveTo(s * 0.34, s * 0.26); p.lineTo(s * 0.78, s * 0.5); p.lineTo(s * 0.34, s * 0.74)
-        p.closePath()
-        g.fill(p)
-    }
-
-    val info = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.085f)
-        val p = s * 0.16f
-        g.draw(Ellipse2D.Float(p, p, s - 2 * p, s - 2 * p))
-        g.fill(Ellipse2D.Float(s * 0.5f - s * 0.045f, s * 0.28f, s * 0.09f, s * 0.09f))
-        g.draw(line(s * 0.5f, s * 0.45f, s * 0.5f, s * 0.68f))
-    }
-
-    /** The conventional copy glyph: a front sheet plus the exposed top/left edges of the one behind it. */
     val copy = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.085f)
         val r = s * 0.10f
@@ -221,7 +148,7 @@ object ClaudeIcons {
         g.draw(RoundRectangle2D.Float(s * 0.40f, s * 0.40f, s * 0.42f, s * 0.42f, r, r))
     }
 
-    // ---- tool / node semantic icons ----
+    // ---- tool icons ----
 
     val read = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.08f)
@@ -241,24 +168,11 @@ object ClaudeIcons {
         g.draw(line(s * 0.2f, s * 0.9f, s * 0.34f, s * 0.9f))
     }
 
-    val run = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.1f)
-        g.draw(line(s * 0.26f, s * 0.32f, s * 0.46f, s * 0.5f))
-        g.draw(line(s * 0.46f, s * 0.5f, s * 0.26f, s * 0.68f))
-        g.draw(line(s * 0.54f, s * 0.7f, s * 0.76f, s * 0.7f))
-    }
-
     val search = icon { g, s, c ->
         g.color = c; g.stroke = stroke(s, 0.095f)
         val d = s * 0.42f
         g.draw(Ellipse2D.Float(s * 0.22f, s * 0.22f, d, d))
         g.draw(line(s * 0.64f, s * 0.64f, s * 0.8f, s * 0.8f))
-    }
-
-    val test = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.11f)
-        g.draw(line(s * 0.24f, s * 0.52f, s * 0.44f, s * 0.72f))
-        g.draw(line(s * 0.44f, s * 0.72f, s * 0.78f, s * 0.28f))
     }
 
     val web = icon { g, s, c ->
@@ -319,25 +233,6 @@ object ClaudeIcons {
         val p = s * 0.16f
         g.draw(Ellipse2D.Float(p, p, s - 2 * p, s - 2 * p))
         g.draw(line(s * 0.32f, s * 0.32f, s * 0.68f, s * 0.68f))
-    }
-
-    val openFile = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.08f)
-        val p = GeneralPath()
-        p.moveTo(s * 0.16, s * 0.28); p.lineTo(s * 0.42, s * 0.28); p.lineTo(s * 0.5, s * 0.38)
-        p.lineTo(s * 0.84, s * 0.38); p.lineTo(s * 0.84, s * 0.76); p.lineTo(s * 0.16, s * 0.76)
-        p.closePath()
-        g.draw(p)
-    }
-
-    val reveal = icon { g, s, c ->
-        g.color = c; g.stroke = stroke(s, 0.09f)
-        val d = s * 0.3f
-        g.draw(Ellipse2D.Float(s * 0.5f - d / 2, s * 0.5f - d / 2, d, d))
-        g.draw(line(s * 0.5f, s * 0.16f, s * 0.5f, s * 0.28f))
-        g.draw(line(s * 0.5f, s * 0.72f, s * 0.5f, s * 0.84f))
-        g.draw(line(s * 0.16f, s * 0.5f, s * 0.28f, s * 0.5f))
-        g.draw(line(s * 0.72f, s * 0.5f, s * 0.84f, s * 0.5f))
     }
 
     private fun line(x1: Float, y1: Float, x2: Float, y2: Float) =

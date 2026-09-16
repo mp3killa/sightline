@@ -42,7 +42,7 @@ Anthropic does with it is governed by your agreement with them, not by this docu
 
 An AI coding assistant works by reading your code. If you ask Claude about a file, that file's contents
 leave your machine. Sightline's job is to make that *visible* — through the tool cards, the approval
-prompts, and the Activity Map — not to prevent it. Choose your permission mode accordingly; see
+prompts, and the diffs — not to prevent it. Choose your permission mode accordingly; see
 [docs/PERMISSIONS.md](docs/PERMISSIONS.md).
 
 ## What Sightline redacts before sending
@@ -80,15 +80,24 @@ under your own account.
 |---|---|---|
 | Settings (CLI path, permission mode, feature toggles) | IDE config, `sightline.xml` | Settings → Tools → Sightline, or uninstalling |
 | Conversation transcript (Sightline's copy) | **Memory only** — never written to disk | Closing the project, or **New** |
-| Activity Map nodes and edges | **Memory only** | Same |
 | Android context | **Memory only**, cached ~15 seconds | Same |
 | Android cache (**off by default**) | `.sightline/` in the project | Turning it off, or deleting the directory |
+| Session id (**off by default**) | The project's own IDE settings — **one id and a date, nothing else** | Turning it off, or **Clear conversation** |
 | IDE bridge lock file | `~/.claude/ide/<port>.lock` | Removed when the IDE closes |
 | Conversation transcript (**the CLI's** copy) | `~/.claude/projects/<project>/<session>.jsonl`, written by `claude` | `claude`'s own history commands — not Sightline |
 | IDE logs | `idea.log` | The IDE's own log rotation |
 
-**Sightline persists no session or transcript.** Closing the project discards its copy of the
-conversation. That is a deliberate standing decision, not an unimplemented feature.
+**Sightline persists no transcript.** Closing the project discards its copy of the conversation. That
+is a deliberate standing decision, not an unimplemented feature.
+
+**The one thing it can be asked to remember is a session id.** If — and only if — you accept the
+"Remember this conversation?" dialog, Sightline stores a session id and the date it was saved with that
+project's IDE settings, so you can resume the conversation after a restart. No messages, prompts, file
+contents or paths are stored. The conversation itself is not Sightline's to store: the Claude Code CLI
+already writes the full transcript of every session under `~/.claude/projects/` whether or not you turn
+this on, and the id is only a pointer into what is already there. Resuming hands the history back to
+**Claude** — the panel starts empty, because Sightline has no transcript to redraw. Turning the setting
+off forgets the id.
 
 **The CLI is a separate matter, and you should know about it.** Sightline runs the `claude` CLI, and the
 CLI keeps its own full transcript of every session on disk at

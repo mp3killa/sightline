@@ -61,8 +61,6 @@ class StreamedTableReproTest : BasePlatformTestCase() {
         try {
             val settings = ClaudeSettings.getInstance().state
             settings.showDetails = false
-            settings.showActivityMap = false
-            settings.activityViewMode = "chat"
 
             // The real session's project *contains* these files, so the finalize pass linkifies the
             // table cells — reproduce that, not just the plain-text table.

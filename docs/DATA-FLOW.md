@@ -66,7 +66,7 @@ Exactly five things, all of them yours:
 
 Claude Code then reads files, runs commands, and searches — and sends what it finds to Anthropic. That
 is the CLI's behaviour, governed by your permission mode. Sightline's role is to *show* it (tool cards,
-approval prompts, the Activity Map) and to let you stop it.
+approval prompts, diffs) and to let you stop it.
 
 **So: if you ask Claude about a file, that file leaves your machine.** No plugin setting changes that.
 It is what an AI coding assistant is.
@@ -103,10 +103,11 @@ Two places, both before data can leave:
 
 | | Location | Lifetime |
 |---|---|---|
-| Transcript, Activity Map | Memory | Until the project closes or **New** |
+| Transcript | Memory | Until the project closes or **New** |
 | Android context | Memory, ~15s cache | Same |
 | Settings | `sightline.xml` | Until uninstall |
 | Android cache *(opt-in)* | `.sightline/` | Until deleted; capped and versioned |
+| Session id *(opt-in, consent dialog)* | The project's IDE settings — one id + a date | Until turned off or the conversation is cleared |
 | Bridge lock | `~/.claude/ide/<port>.lock` | Until the IDE closes |
 | Bridge MCP config *(owner-only)* | A temp file, `rw-------` | Deleted when the CLI process exits |
 | Diagnostics | `idea.log` | IDE log rotation |
@@ -167,5 +168,5 @@ Two more you can see without any tooling:
 - **Every logcat capture reports what it removed** — "8 values redacted (3 tokens, 2 emails …)". A
   capture that redacted nothing says so too. A zero count on a log you know contains a token is a bug
   worth reporting.
-- **The Activity Map shows what was actually touched.** A file appearing there that you did not expect
-  Claude to read is visible at the time, not after the fact.
+- **The transcript shows what was actually touched.** Every file read, command run and change made
+  appears as a tool card at the time, not after the fact.

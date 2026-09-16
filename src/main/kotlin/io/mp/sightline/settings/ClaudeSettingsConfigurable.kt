@@ -1,5 +1,6 @@
 package io.mp.sightline.settings
 
+import io.mp.sightline.ui.state.TextScale
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
@@ -129,30 +130,37 @@ class ClaudeSettingsConfigurable : Configurable {
                             "are always reported rather than started, since that file can arrive from version control.",
                     )
             }
-            group("Agent Activity Map") {
+            group("Conversations") {
                 row {
-                    checkBox("Show the live Agent Activity Map while Claude works")
-                        .bindSelected({ state.showActivityMap }, { state.showActivityMap = it })
+                    checkBox("Remember which Claude session belongs to each project")
+                        .bindSelected({ state.rememberSessions }, { state.rememberSessions = it })
                         .comment(
-                            "A graph of what Claude is <i>observably</i> touching — files, commands, tests, errors — " +
-                                "not the model's private reasoning.",
+                            "Lets you resume a conversation after closing the IDE. <b>Only a session id " +
+                                "and a date are stored</b>, with the project's IDE settings — no messages, " +
+                                "prompts, file contents or paths. The Claude Code CLI already keeps the " +
+                                "full transcript of every session under <code>~/.claude/projects/</code> " +
+                                "either way; the id is a pointer into it. Resuming gives <i>Claude</i> its " +
+                                "history back — the panel starts empty, because Sightline stores no " +
+                                "transcript and cannot redraw one. Turning this off forgets the saved id.",
+                        )
+                }
+            }
+            group("Appearance") {
+                row("Conversation text size:") {
+                    comboBox(TextScale.STEPS)
+                        .bindItem(
+                            { TextScale.clamp(state.transcriptFontScale) },
+                            { state.transcriptFontScale = TextScale.clamp(it ?: TextScale.DEFAULT) },
+                        )
+                        .comment(
+                            "Scales the conversation — messages, code and tool output — relative to the " +
+                                "IDE's font. The header, composer and status strip stay on the IDE's own " +
+                                "metrics so the panel still matches the rest of the IDE.",
                         )
                 }
                 row {
-                    checkBox("Reduce motion (static layout, no pulsing)")
+                    checkBox("Reduce motion (no pulsing status indicators)")
                         .bindSelected({ state.activityReduceMotion }, { state.activityReduceMotion = it })
-                }
-                row("Max visible nodes:") {
-                    textField()
-                        .bindIntText({ state.activityMaxNodes }, { state.activityMaxNodes = it })
-                        .columns(6)
-                        .comment("Nodes rendered at once. Older nodes stay in the session but are hidden past this cap.")
-                }
-                row("Max retained nodes:") {
-                    textField()
-                        .bindIntText({ state.activityMaxRetained }, { state.activityMaxRetained = it })
-                        .columns(6)
-                        .comment("Session history size before the oldest non-pinned nodes are evicted.")
                 }
             }
             group("Android") {

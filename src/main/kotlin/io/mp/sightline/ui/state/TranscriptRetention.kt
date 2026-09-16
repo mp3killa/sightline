@@ -4,8 +4,7 @@ package io.mp.sightline.ui.state
  * Bounds how many turns the transcript keeps as live Swing components.
  *
  * Every turn was retained forever: a long session accumulated an unbounded component tree, and each
- * layout pass walked all of it. (The activity graph has always had `activityMaxRetained`; the
- * transcript never did.) This is the equivalent cap.
+ * layout pass walked all of it. This is the cap.
  *
  * Eviction is **real** — the components are dropped, not merely hidden — so the memory is actually
  * released. That means evicted turns cannot be brought back, and the UI must not pretend otherwise:

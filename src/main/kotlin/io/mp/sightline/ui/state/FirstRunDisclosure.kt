@@ -55,8 +55,8 @@ object FirstRunDisclosure {
 
     /** The reassurance that belongs last: this is reversible and discoverable. */
     const val FOOTER =
-        "You can change the permission mode at any time from the composer, and review what Claude " +
-            "touched in the Activity Map."
+        "You can change the permission mode at any time from the composer, and every file Claude " +
+            "reads, command it runs and change it makes appears in the conversation as it happens."
 
     const val CONTINUE = "Start using Sightline"
     const val SETTINGS = "Open settings"

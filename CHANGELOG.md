@@ -4,6 +4,134 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0 — 2026-09-16
+
+A smaller plugin, and the conversation gets the whole panel.
+
+### Added
+
+- **Context-window usage in the composer footer.** A long conversation gave you no way to see how full
+  the context was until it compacted. The footer now shows occupancy — *35.4k / 200k · 18%* — from the
+  CLI's own `usage`, turning amber past 70% and red past 90%. Clicking it runs `/context` for the CLI's
+  full breakdown by category, which costs nothing (it is answered locally, with no API call).
+
+  Every number is relayed, never derived. Occupancy is `input + cache_creation + cache_read + output`,
+  which is what the request actually carried — measured across three turns of one session it went
+  34,065 → 35,297 → 35,380 while `input_tokens` stayed at 10, because the conversation's history rides
+  in the cached-input figures. **The percentage appears only once the CLI has stated the window**
+  (`result.modelUsage[model].contextWindow`); before that the tokens stand alone rather than against a
+  guessed 200k. And the label says *last request*, not *context*: the CLI's own `/context` estimates
+  30.5k where `usage` sums to 34.0k on the same fresh session — both true, different measures, and
+  claiming to reproduce a number we do not compute would be the usual confident wrongness.
+
+- **"Deny with reason…" on approval cards.** Denying a tool could only block it. The new third button
+  asks what Claude should do instead and sends that with the denial — verified against 2.1.235, where
+  the text arrives as the model's own tool result, verbatim. So a permission prompt can now redirect
+  the work ("not that — run the tests first") without stopping the turn and retyping the request.
+
+- **A quiet turn now says so.** If a turn produces nothing for 90 seconds **and no tool is running**,
+  the transcript says how long it has been silent and points at Stop and the health check. The second
+  half of that condition is the important one: a Gradle build emits nothing for minutes and is perfectly
+  healthy, and a warning that fires during every Android build is one nobody reads. It reports what was
+  observed — "no response for 3 minutes" — and never diagnoses; nothing here can tell a slow model from
+  a dead process.
+
+- **Editor-side entry points.** *Add Selection to Sightline* (editor and project-view context menus)
+  references the selected lines in the composer as `@path#L10-20`, and *Open Sightline* focuses the
+  panel. Both are registered with **no default keyboard shortcut** — an IntelliJ keymap is dense and
+  personal, and a plugin that claims a chord breaks somebody's binding; bind them in Settings → Keymap.
+  The reference syntax is verified, not assumed: `@file` and `@file#L2-3` are expanded by the CLI itself
+  before the model sees them, with no `Read` call.
+
+- **`@`-mention completion in the composer.** Typing `@` offers a ranked list of project files —
+  filename matches before path matches, because typing `Claude` means `ClaudePanel.kt`, not the forty
+  paths containing the word. The popup never takes focus, so typing keeps narrowing it. The reference
+  is expanded by the CLI itself (verified: `@file` and `@file#L2-3` resolve with no `Read` call), so
+  Claude reads the current file rather than a stale paste.
+
+- **Plan mode is a document you can edit.** Plan mode ends with the CLI asking permission for
+  `ExitPlanMode`, with the plan in the payload — so that prompt is now a review rather than a yes/no.
+  The plan renders as Markdown with **Approve**, **Edit plan…** and **Keep planning**, plus a link to
+  the file the CLI wrote it to. Editing sends your rewritten plan back as Claude's instruction. Both
+  rejection paths carry something actionable on purpose: denying with a bare "no" made the model
+  re-propose the identical plan three times in a row.
+
+- **Resume a conversation after a restart, off by default.** Sightline can remember which Claude
+  session belongs to a project — **a session id and a date, nothing else**; no messages, prompts, file
+  contents or paths — and only after you accept a dialog that says so. This is a deliberate, narrowly
+  drawn exception to the "nothing is persisted but settings" rule: the id lives with the project's own
+  IDE settings, one class is the single writer, and turning the setting off forgets it rather than
+  merely ignoring it. Resuming hands the history back to **Claude**; the panel starts empty, because
+  Sightline stores no transcript and cannot redraw one. The CLI already keeps the full transcript of
+  every session under `~/.claude/projects/` either way — the id is a pointer into what is already there.
+
+- **Conversation text size** (80–200% of the IDE font). Scales the conversation only; the header,
+  composer and status strip keep the IDE's own metrics so the panel still matches the IDE.
+
+- **The tool window asks for attention when it is blocked and hidden** — a permission prompt or a
+  question, only. A turn merely finishing is not something you must act on, and a badge that fires on
+  every completed run teaches people to ignore it.
+
+### Removed
+
+- **The Agent Activity Map is gone.** The live graph of observable activity — its force-directed
+  canvas, focus card, node inspector, timeline, lenses, density tiers and label placement — was the
+  largest and most platform-coupled feature in the plugin, and it earned less than it cost. The
+  conversation is now the whole panel: the header's Chat/Split/Map switch and the SPLIT layout go with
+  it, since a switch between one view and itself is worse than no control.
+
+  Removed alongside it: the graph model, reducer, classifier and headless renderer; seven settings
+  keys (`showActivityMap`, `activityViewMode`, `activityMaxNodes`, `activityMaxRetained`,
+  `activityTimelineExpanded`, `activityAboutDismissed` — a stale value left in `sightline.xml` is
+  simply ignored); and the PSI/UAST enrichment chain (`ProjectStructureEnricher` and the source,
+  nav-graph and Android-resource parsers) that existed only to supply the graph's structural edges.
+  With nothing left calling Java PSI or UAST, **the plugin no longer depends on `com.intellij.java`
+  or any language plugin** — one fewer thing that can break when an IDE updates.
+
+  **Nothing in the conversation changed.** The status strip's live text ("Editing Foo.kt", "Build
+  failed", "41 tests passed"), the recovered-failure tally and the per-turn processing summary all run
+  on the same observable-event layer the map consumed, and that layer stayed — including the Gradle,
+  compiler, test, adb and logcat output parsers and the JUnit/detekt/ktlint/lint report readers.
+
+  `activityReduceMotion` survives under its old name: the status strip reads it, and renaming the key
+  would silently reset the choice of everyone who had turned motion off.
+
+### Changed
+
+- **Zero deprecated and zero experimental platform-API usages**, for the first time. Ten of the twelve
+  the Plugin Verifier reported were never calls this code made: Kotlin materialises a delegating member
+  for every default method of a Java interface it implements, so a Kotlin `ToolWindowFactory` emitted
+  bridges into `isApplicable`, `isDoNotActivateOnStart`, `getAnchor`, `getIcon` and `manage`. Those
+  bridges would break at runtime if the platform ever deleted a method nothing here uses, so the factory
+  — and only the factory — is now Java. The other two were real: the Markdown parse now uses the
+  two-argument `MarkdownParser` constructor and `parse(MARKDOWN_FILE, …)` instead of the deprecated
+  single-argument form and `buildMarkdownTreeFromString`.
+
+### Fixed
+
+- **`tools/verify-plugin.sh` reported FAIL on a perfectly clean run.** Its pass check looked for
+  `"Compatible."` — the trailing period the verifier writes only when it has informational notes to
+  append. A verification with no deprecated or experimental usages at all prints a bare `Compatible`,
+  so the better the result, the louder the script failed.
+
+### Added
+
+- **A failed turn is now something you can act on.** An error from the CLI used to render as one red
+  italic line of its own text — "Failed to authenticate: OAuth session expired and could not be
+  refreshed" — which is true and a dead end: the conversation is over and nothing says what would make
+  it work again. It now renders as a card with what the failure means and the two or three things worth
+  doing next: copy the sign-in command (`claude auth login`, the real shell subcommand — `/login` is the
+  in-REPL form and does nothing pasted into a shell), check the sign-in and see the CLI's own answer,
+  retry the message, open the health check or settings, or copy the full text.
+
+  The rules it follows are the house rules applied to error text. An unrecognised message is
+  **UNKNOWN**: its headline is the CLI's own wording and it explains nothing, because a guessed cause is
+  at its most expensive where the user cannot check it. **Retry is withheld** whenever it would not send
+  the same message — a turn still running, a turn that already ran tools before failing (re-sending
+  replays those edits and commands), or a message that carried images, whose bytes went out with the
+  send. And the card shows the CLI's text verbatim, saying how much it clipped when there is more, since
+  "Copy details" is itself a claim about completeness.
+
 ## 0.8.1 — 2026-08-27
 
 **Stable.** The 0.8.x line reaches everyone, after a pass in a live Android Studio. Same code as

@@ -5,13 +5,13 @@ without clicking pixels. See [../CLAUDE.md](../CLAUDE.md) for architecture and [
 
 ## What's covered by plain `./gradlew test`
 
-Mostly platform-free, deterministic JUnit4 (**927 tests**, green as of 2026-07-21; no IDE fixture for
+Mostly platform-free, deterministic JUnit4 (**1067 tests**, green as of 2026-09-16; no IDE fixture for
 the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform)` so the test JVM boots):
 
-- `activity/*` — interpreter, graph reducer, classifier, output/report parsers, colour roles, the
-  9-step sequence, `BuildReportScanner`, `ClusterCollapser`, `MapDensity`, `LabelPlacement`,
-  `NavGraphParser`, `AndroidResourceParser`, `SourceStructureParser`, plus the headless
-  `ActivityMapPreviewTest` (writes `build/activity-map-preview-{dark,light}.png`).
+- `activity/*` — the observable-event layer behind the status strip: `ActivityInterpreter`, the
+  Gradle/compiler/test/adb/logcat `OutputParsers`, and `ReportParsers` + `BuildReportScanner` for the
+  structured report files a build leaves behind. (The graph reducer, classifier, lenses, glyphs and
+  density/label systems went with the activity map.)
 - `ui/state/*` — status/composer/workspace/responsive/transcript/permission/scroll-follow/
   timeline-dock/completion-summary presentation logic.
 - `ui/markdown/*` — doc parser, file-ref detection, code-block collapse, table layout, fence
@@ -71,8 +71,6 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
   `RouteExtractorTest` — `navigate("earnings/old-statements")` is dangling against a declared
   `earnings/statements` (comparing first segments alone waved through exactly the renamed-route crash
   the check exists for), and `composable("prefix" + suffix)` yields **no** route rather than `prefix`.
-- `activity/GraphLensTest` — that a lens filters **edges**, not just nodes, and the boundary test: every
-  lens can only select from the nodes and edges it was given, never construct one.
 - `ui/state/FirstRunDisclosureTest` — the one-time notice's *wording*, tested like behaviour, because the
   wording is the feature: that it names reading files, running commands and changing code; that each
   permission mode gets a sentence true of that mode (they make opposite promises); that Unrestricted is
@@ -85,9 +83,8 @@ the bulk of them — but the run needs `testFramework(TestFrameworkType.Platform
 - `ide/PathAccessPolicy`, `ide/InteractionCoordinators`, `ide/QuestionCoordinator` — path guard +
   the approval/diff/question decision logic; `SightlineTestBridgeQuestionTest` drives the bridge.
 
-Several **do** need an IDE fixture (`BasePlatformTestCase`): `ProjectStructureEnricherTest` /
-`ProjectStructureEnricherKotlinTest` (UAST enrichment for Java and Kotlin), the Markdown and health
-render smoke tests, and `ChatLayoutPreviewTest` (below).
+Several **do** need an IDE fixture (`BasePlatformTestCase`): the Markdown and health render smoke
+tests, `FailureCardTest`, `ThemeTokensTest`, and `ChatLayoutPreviewTest` (below).
 
 ## Headless visual review (read the PNGs)
 
@@ -96,10 +93,8 @@ only automated visual channel available, and one that has already caught real de
 
 | Test | Writes | Covers |
 |---|---|---|
-| `activity/ActivityMapPreviewTest` | `activity-map-preview-{dark,light}.png` | The force-directed graph, label placement/collision |
-| ″ | `activity-map-dense-{dark,light}.png` | A **61-node** graph — past `MapDensity.IMPORTANT_ABOVE` (40), so label **thinning** is actually exercised |
 | `ui/ChatLayoutPreviewTest` | `chat-layout-{narrow,medium,wide}.png` | Panel layout at each `ResponsiveLayout` width class |
-| `ui/MarketplaceScreenshotTest` | `marketplace/0{1..4}-*.png` | The **listing screenshots**, 1280×800, driven through the production event path. Fictional content (`com.example.routes`) with a guard test asserting no real project, client, path or address appears — a listing image is public permanently. Calls `settleActivityMapForPreview()` so the graph is settled and framed rather than caught on frame one |
+| `ui/MarketplaceScreenshotTest` | `marketplace/0{1..3}-*.png` | The **listing screenshots**, 1280×800, driven through the production event path. Fictional content (`com.example.routes`) with a guard test asserting no real project, client, path or address appears — a listing image is public permanently |
 | `ui/ChatGalleryPreviewTest` | `chat-gallery-{light,dark,compact,queued,interjected}.png` | Every block type — Markdown (headings/lists/task lists/tables/fences/quotes/callouts), routine vs failed tool cards, an edit diff, the **ApprovalBlock**, and **AskUserQuestion** single- and multi-select — in **both themes**, plus `compact` (details off, showing the per-turn processing summary), `queued` (the fallback: a message parked because nothing was listening) and `interjected` (a mid-turn message folded into the running turn — bubble captioned, turn still running, nothing queued) |
 
 `ChatLayoutPreviewTest` builds a real `ClaudePanel` and seeds it through the **production event path**
@@ -118,11 +113,10 @@ first "light" render came out dark and would have been filed as verified.
 
 Alongside the images these assert the layout invariants, so regressions fail the build rather than
 waiting to be noticed in a picture. Assert on something specific: an early version checked "a
-`JScrollPane` exists somewhere", which the activity pane satisfied too, so it passed while the layout
-was wrong. The image caught it.
+`JScrollPane` exists somewhere", which a second pane satisfied too, so it passed while the layout was
+wrong. The image caught it.
 
-**Track record — the defects this channel found that every existing assertion missed:** a narrow
-panel still rendering the split; the header reading "Activity" while showing Chat; task-list markers
+**Track record — the defects this channel found that every existing assertion missed:** task-list markers
 truncated to "…" (the marker slot was sized by list *kind*, and a task list is unordered); and every
 literal `(`/`)`/`[`/`]` being **silently deleted from assistant prose** (dropped as "delimiter tokens"
 globally instead of only inside a link label). Three of those were on screen while the suite was green.
@@ -207,8 +201,8 @@ is why the bridge exists. (What an outside session *can* do today: run Gradle vi
 Controls a driver must find carry stable, semantic accessible names from `ui/A11yNames` (`sightline.*`),
 **not** visible text (which changes during UX work): `approval.allow/allowAlways/deny`,
 `diff.accept/reject`, `question.continue/cancel` plus the indexed `question.option.<q>.<o>` and
-`question.other.<q>`, `composer.send`, `workspace.chat/activity`, `toolWindow.root`,
-`activity.graph`, `transcript.jumpToLatest`. Set via the getter
+`question.other.<q>`, `composer.send`, `toolWindow.root`, `failure.<action>`,
+`transcript.jumpToLatest`. Set via the getter
 explicitly (`getAccessibleContext()`), because a raw `JComponent`'s inherited `accessibleContext` field
 is null-until-lazy.
 

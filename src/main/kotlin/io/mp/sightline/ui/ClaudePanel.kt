@@ -3,6 +3,8 @@ package io.mp.sightline.ui
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.util.ExecUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.AnAction
@@ -36,8 +38,8 @@ import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
-import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -46,10 +48,10 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.mp.sightline.ui.state.DiffLayout
 import io.mp.sightline.ui.state.DiffPresentation
 import java.awt.GridLayout
+import io.mp.sightline.ui.state.MentionQuery
 import io.mp.sightline.ui.state.ModelCatalog
 import io.mp.sightline.ui.state.PathDisplay
 import io.mp.sightline.ui.state.ProcessingSummary
-import io.mp.sightline.activity.ActivityNode
 import javax.swing.Timer
 import io.mp.sightline.ui.state.TranscriptRetention
 import com.intellij.ide.projectView.ProjectView
@@ -70,7 +72,6 @@ import io.mp.sightline.ide.ApprovalCoordinator
 import io.mp.sightline.ide.ApprovalDecision
 import io.mp.sightline.ide.PendingApproval
 import io.mp.sightline.ide.PendingQuestion
-import io.mp.sightline.ide.ProjectStructureEnricher
 import io.mp.sightline.ide.QuestionCoordinator
 import io.mp.sightline.ide.QuestionResolution
 import io.mp.sightline.interaction.AskUserQuestionParser
@@ -79,6 +80,7 @@ import io.mp.sightline.interaction.ParseResult
 import io.mp.sightline.interaction.QuestionFormState
 import io.mp.sightline.interaction.UserQuestionOption
 import io.mp.sightline.interaction.UserQuestionRequest
+import io.mp.sightline.process.ClaudePathResolver
 import io.mp.sightline.process.ClaudeSession
 import io.mp.sightline.process.SessionControlJson
 import io.mp.sightline.process.UserMessageJson
@@ -100,15 +102,20 @@ import io.mp.sightline.ui.components.WrapLayout
 import io.mp.sightline.ui.state.CheckpointPolicy
 import io.mp.sightline.ui.state.CompletionCard
 import io.mp.sightline.ui.state.ComposerModel
+import io.mp.sightline.ui.state.ContextUsage
 import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.LayoutProfile
 import io.mp.sightline.ui.state.PendingImage
 import io.mp.sightline.ui.state.LineDiff
 import io.mp.sightline.ui.state.PermissionModes
+import io.mp.sightline.ui.state.PlanReview
 import io.mp.sightline.ui.state.ResponsiveLayout
 import io.mp.sightline.ui.state.ScrollFollow
+import io.mp.sightline.ui.state.SessionFailure
 import io.mp.sightline.ui.state.SessionNotices
+import io.mp.sightline.ui.state.SessionPersistence
 import io.mp.sightline.ui.state.SlashCommands
+import io.mp.sightline.ui.state.StallPolicy
 import io.mp.sightline.ui.state.StatusKind
 import io.mp.sightline.ui.state.StatusModel
 import io.mp.sightline.ui.state.StatusView
@@ -118,8 +125,6 @@ import io.mp.sightline.ui.state.ToolEventPresentation
 import io.mp.sightline.ui.state.ToolOutcome
 import io.mp.sightline.ui.state.ToolWeight
 import io.mp.sightline.ui.state.TranscriptPresenter
-import io.mp.sightline.ui.state.WorkspaceMode
-import io.mp.sightline.ui.state.WorkspaceModes
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -216,9 +221,9 @@ private const val JUMP_TO_LATEST_GUTTER = 46
 
 /**
  * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
- * workspace (transcript / activity map / split), a coordinated [ClaudeStatusStrip], and the
+ * transcript, a coordinated [ClaudeStatusStrip], and the
  * [ClaudeComposerPanel]. Stream parsing feeds both the transcript blocks and a normalised activity
- * stream shared by the activity map and the status model.
+ * stream that drives the status model.
  */
 class ClaudePanel(private val project: Project, parent: Disposable) : Disposable {
 
@@ -237,12 +242,32 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
          * failure — this is for a reply that is never coming.
          */
         const val MCP_REPLY_TIMEOUT_MS = 45_000
+
+        /**
+         * How many lines of a failure's raw text the card shows before it says it clipped the rest.
+         * Enough for the multi-line messages the CLI actually prints, short enough that a stack trace
+         * can't push every recovery button off the bottom of the panel.
+         */
+        const val DETAIL_LINES = 12
+
+        /** Bound on `claude auth status`, which talks to the network. Off-EDT by construction. */
+        const val AUTH_PROBE_TIMEOUT_MS = 12_000
+
+        /** How often the quiet check runs while a turn is in flight. Cheap: two comparisons. */
+        const val QUIET_POLL_MS = 15_000
+
+        /**
+         * Caps on `@`-mention completion, so a keystroke in a large monorepo stays a keystroke. The
+         * name cap bounds the index walk; the path cap bounds resolving names to files, which is the
+         * expensive half (one common filename can map to dozens of modules).
+         */
+        const val MENTION_NAME_CAP = 400
+        const val MENTION_PATH_CAP = 200
     }
 
     val component: JComponent
     private val session: ClaudeSession = ClaudeSession(project) { line -> onLine(line) }
     private val interpreter = ActivityInterpreter()
-    private val activityMap = ActivityMapPanel(project, parent)
 
     private val statusModel = StatusModel()
     private val composerModel = ComposerModel()
@@ -271,13 +296,15 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private val mcpTimeoutTimer = Timer(MCP_REPLY_TIMEOUT_MS) { mcpSync.timedOut() }
         .apply { isRepeats = false }
 
+    /**
+     * Watches for a turn that has gone quiet. Runs only while a turn is in flight (started and stopped
+     * by [setRunning]), so an idle panel ticks nothing.
+     */
+    private val quietTimer = Timer(QUIET_POLL_MS) { checkForQuiet() }
+
     /** True while no turn is in flight — a sync waits for one to finish rather than interrupting it. */
     private var mcpPollInFlight = false
 
-    // proportionKey persists the user's dragged divider position across restarts; the default keeps
-    // the conversation the dominant pane.
-    private val mapSplitter = JBSplitter(false, "sightline.chatMapSplitter", 0.62f)
-    private val centerHost = JPanel(BorderLayout())
     private val chatHost = JPanel(BorderLayout())
     /** Status strip + composer. Padded in [applyProfile] so it lines up with the transcript column. */
     private val southHost = JPanel(BorderLayout())
@@ -287,15 +314,29 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private lateinit var statusStrip: ClaudeStatusStrip
     private lateinit var emptyState: EmptyStatePanel
 
-    private enum class ViewMode { CHAT, SPLIT, MAP }
+    /**
+     * How many normalised activity events this session has observed. The health report states it, as
+     * a check that the event pipeline behind the status strip is actually receiving anything — the
+     * activity map kept this count until it was removed.
+     */
+    private var observedEvents = 0
 
     /**
-     * What the user chose (and what we persist). Kept separate from [viewMode], the mode actually
-     * on screen: a panel too narrow for SPLIT shows CHAT without rewriting the preference, so
-     * widening the tool window again restores the split.
+     * Context-window occupancy, as last reported by the CLI. The window half is sticky for the session
+     * once stated (only `result.modelUsage` carries it, so a live turn would otherwise lose the
+     * denominator it had a moment ago and the chip would flick between "35.4k / 200k · 18%" and a bare
+     * "35.4k" on every message).
      */
-    private var preferredMode = ViewMode.SPLIT
-    private var viewMode = ViewMode.SPLIT
+    /** Wall-clock of the last event seen on the stream, and of the last quiet notice — see [StallPolicy]. */
+    private var lastEventAt = 0L
+    private var lastQuietNoticeAt = 0L
+
+    /** The one door to a remembered session id — see [io.mp.sightline.ui.state.SessionPersistence]. */
+    private val sessionMemory = SessionMemory(project)
+
+    private var contextTokens: Long? = null
+    private var contextWindow: Long? = null
+
     private var lastProfile: LayoutProfile? = null
     private var lastDiffWidth = -1
     private var evictedTurns = 0
@@ -488,7 +529,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     // Phase 2a: enriches files Claude touches with real project structure (imports/test targets/package),
     // off the EDT. Only files already touched are enriched; results feed back as background relations.
-    private val structureEnricher by lazy { ProjectStructureEnricher(project, this) }
     private val toolCardsById = HashMap<String, ToolCard>()
 
     /** What a tool call was, so its later result (which carries only an id) can be attributed. */
@@ -510,15 +550,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     init {
         Disposer.register(parent, this)
         initStyles()
-        preferredMode = initialViewMode()
-        // Start on the preference; applyProfile() demotes it once a real width is known.
-        viewMode = preferredMode
         component = build()
         component.getAccessibleContext()?.accessibleName = A11yNames.TOOL_WINDOW_ROOT
         uiState.rootComponent = component
         uiState.toolWindowVisible = true
         uiState.askQuestionSimulator = { input -> simulateAskUserQuestion(input) } // reachable only via the gated test bridge
-        activityMap.onNodeSelected = { node -> revealTranscriptFor(node) }
+        // How the editor-side actions reach this panel. Blank text means "just focus me", which is what
+        // "Open Sightline" wants and what activating an already-open window would otherwise not do.
+        uiState.insertIntoComposer = { text ->
+            runOnEdt {
+                if (text.isNotBlank()) {
+                    showEmptyState(false)
+                    composer.insertContextText(if (text.endsWith(" ")) text else "$text ")
+                }
+                composer.requestInputFocus()
+            }
+        }
         applyConfigToUi()
         installEmptyState()
         installResponsive()
@@ -531,9 +578,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val root = JPanel(BorderLayout())
 
         header = ClaudeToolHeader(
-            initialMode = toWorkspace(viewMode),
-            onWorkspace = { mode -> setWorkspace(if (mode == WorkspaceMode.CHAT) ViewMode.CHAT else ViewMode.MAP) },
-            onToggleSplit = { toggleSplit() },
             onNew = { session.newConversation() },
             onMore = { anchor -> showMoreMenu(anchor) },
         )
@@ -544,9 +588,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         scroll.viewport.background = ClaudeUiTokens.surface()
         transcript.add(retentionNotice)
         chatHost.add(transcriptLayer, BorderLayout.CENTER)
-        mapSplitter.setHonorComponentsMinimumSize(false)
-        installCenter()
-        root.add(centerHost, BorderLayout.CENTER)
+        root.add(chatHost, BorderLayout.CENTER)
 
         // Whether Enter mid-turn folds into the running turn or parks for the next one. The model owns
         // the decision but can't see a process, so the host supplies the answer.
@@ -563,6 +605,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             onFilesPasted = { files -> attachPastedFiles(files) },
             // A refused paste must be said somewhere the user will see it, not swallowed.
             onAttachmentNotice = { notice -> showEmptyState(false); addInfo(notice, err = false); scrollToBottomSoon() },
+            onContextBreakdown = { askForContextBreakdown() },
+            onMentionSearch = { prefix -> searchProjectFiles(prefix) },
         )
         installAndroidContext()
         statusStrip = ClaudeStatusStrip(this)
@@ -581,9 +625,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /**
      * Runs the MCP config poll only while the panel is actually on screen.
      *
-     * The same discipline as the activity map's physics timer: a docked tool window spends most of its
-     * life hidden, and a background tick that costs nothing individually still has no business running
-     * for a panel nobody is looking at. Coming back into view polls immediately, so a server added
+     * A docked tool window spends most of its life hidden, and a background tick that costs nothing
+     * individually still has no business running for a panel nobody is looking at. Coming back into view polls immediately, so a server added
      * while the window was collapsed is picked up on sight rather than after another interval.
      */
     private fun installMcpConfigPolling(root: JComponent) {
@@ -746,12 +789,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val profileChanged = profile != lastProfile
         lastProfile = profile
         header.applyProfile(profile)
-        activityMap.applyProfile(profile)
-        // SPLIT survives wherever the split button is offered (MEDIUM and up); only NARROW demotes,
-        // and the preference is untouched, so widening restores the split.
-        if (profileChanged) applyEffectiveMode()
-        // Reading width is a property of the *chat column*, not the whole panel: in SPLIT the
-        // transcript only gets its share of the width.
         //
         // Never substitute the panel width when the viewport hasn't been laid out yet. On first open
         // the viewport is still 0 while the panel is already full width, so that fallback produced
@@ -765,10 +802,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             JBUI.scale(ResponsiveLayout.BASE_PADDING)
         }
         transcript.border = JBUI.Borders.empty(12, hpad)
-        // Keep the composer on the same column as the conversation it belongs to (CHAT/MAP only —
-        // in SPLIT it spans both panes, which Tier 2 addresses when the composer moves into the
-        // chat pane).
-        val composerPad = if (viewMode == ViewMode.SPLIT) JBUI.scale(0) else (hpad - JBUI.scale(14)).coerceAtLeast(0)
+        // Keep the composer on the same column as the conversation it belongs to.
+        val composerPad = (hpad - JBUI.scale(14)).coerceAtLeast(0)
         southHost.border = JBUI.Borders.empty(0, composerPad)
         // Diffs pick unified vs side-by-side from the width the *transcript column* actually gets.
         val diffWidth = (textWidth - hpad * 2).coerceAtLeast(0)
@@ -901,6 +936,91 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         bubble.add(col, BorderLayout.CENTER)
         addRow(bubble)
         return bubble
+    }
+
+    /**
+     * Renders a failure as an actionable card instead of a red line.
+     *
+     * [raw] must be the **fullest** text available, not the one-line summary built from it: the card
+     * shows the CLI's own wording and "Copy details" hands over all of it. [exitCode] is set only
+     * where the failure was the process exiting.
+     */
+    private fun addFailure(raw: String, exitCode: Int? = null) {
+        val advice = SessionFailure.classify(raw, exitCode, canRetry = retryableMessage() != null)
+        showEmptyState(false)
+        addRow(FailureBlock(advice) { action, card -> runFailureAction(action, advice, card) })
+    }
+
+    /**
+     * The message a Retry would send again, or null when there isn't one that can be re-sent honestly.
+     *
+     * Three things disqualify it, and each of them is a way a one-click retry could do harm rather
+     * than nothing: a turn still running (the retry would interject into it), a turn that already ran
+     * tools before it failed (re-sending replays edits and commands that already happened — the
+     * duplicate `git commit` case), and a message that carried images, whose bytes were released with
+     * the send. A button labelled "Retry that message" must send *that* message or not be offered.
+     */
+    private fun retryableMessage(): String? {
+        if (running || toolsRanThisTurn) return null
+        return lastSentText?.takeIf { it.isNotBlank() }
+    }
+
+    /** Carries out a recovery action and says so in the card that offered it. */
+    private fun runFailureAction(
+        action: SessionFailure.Action, advice: SessionFailure.Advice, card: FailureBlock,
+    ) {
+        when (action) {
+            SessionFailure.Action.SIGN_IN -> {
+                CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(SessionFailure.SIGN_IN_COMMAND))
+                card.note("Copied — run it in a terminal, then \"Check sign-in\".")
+            }
+            SessionFailure.Action.CHECK_SIGN_IN -> {
+                card.note("Checking…")
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val answer = probeAuthStatus()
+                    runOnEdt { card.note(answer) }
+                }
+            }
+            SessionFailure.Action.RETRY -> {
+                val text = retryableMessage()
+                if (text == null) {
+                    // The turn moved on between the card being drawn and the click — say so rather
+                    // than sending something the button no longer stands for.
+                    card.note("There is nothing to send again now.")
+                    return
+                }
+                card.markRetried()
+                doSend(text)
+            }
+            SessionFailure.Action.HEALTH -> showHealth()
+            SessionFailure.Action.SETTINGS -> openSettings()
+            SessionFailure.Action.COPY -> {
+                CopyPasteManager.getInstance().setContents(java.awt.datatransfer.StringSelection(advice.detail))
+                card.note("Copied.")
+            }
+        }
+    }
+
+    /**
+     * Asks the CLI whether it is signed in, and relays **its** answer.
+     *
+     * Nothing here judges the output: the plugin holds no credentials and has no way to verify a
+     * login, so the honest thing to show is the CLI's own line. A CLI too old for the `auth`
+     * subcommand says so itself, which is also an answer. Off-EDT — the probe talks to the network.
+     */
+    private fun probeAuthStatus(): String {
+        val configured = ClaudeSettings.getInstance().state.claudeCommand ?: "claude"
+        ClaudePathResolver.invalidate() // the user may have just installed or re-logged-in
+        val path = runCatching { ClaudePathResolver.resolve(configured) }.getOrNull()
+        if (path.isNullOrBlank()) return "The claude command could not be found — try the health check."
+        return try {
+            val out = ExecUtil.execAndGetOutput(GeneralCommandLine(path, "auth", "status"), AUTH_PROBE_TIMEOUT_MS)
+            val line = (out.stdout.lineSequence() + out.stderr.lineSequence()).firstOrNull { it.isNotBlank() }
+            line?.trim()?.take(120) ?: "The CLI answered nothing."
+        } catch (e: Exception) {
+            thisLogger().info("auth status probe failed", e)
+            "Could not run `claude auth status`."
+        }
     }
 
     private fun plainArea(text: String): JTextArea {
@@ -1041,6 +1161,22 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         runCatching { ProjectView.getInstance(project).select(null, vf, true) }
     }
 
+    /**
+     * Opens an absolute path the CLI named — the plan file, which it writes under `~/.claude/plans/`
+     * and so lives outside the project. [openFileRef] resolves project files only and would silently
+     * do nothing here. Read-only, at the user's click, on a path the CLI itself reported.
+     */
+    private fun openPathInEditor(path: String) {
+        val vf = runCatching { com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByPath(path) }
+            .getOrNull()
+        if (vf == null) {
+            addInfo("The plan file is no longer at $path.", false)
+            scrollToBottomSoon()
+            return
+        }
+        FileEditorManager.getInstance(project).openTextEditor(OpenFileDescriptor(project, vf), true)
+    }
+
     private fun openFileRef(spec: String) {
         val line = Regex(":(\\d+)$|#L(\\d+)$").find(spec)?.let { (it.groupValues[1].ifBlank { it.groupValues[2] }).toIntOrNull() }
         val vf = resolveProjectFile(spec) ?: return
@@ -1118,7 +1254,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             inAssistant = false
         } else {
             finalizeCurrent(); inAssistant = false; curTurn = null
+            toolsRanThisTurn = false
         }
+        // Remembered for a failure card's Retry. Images disqualify it: their bytes go out with this
+        // send and are released, so "that message" could not be reproduced.
+        lastSentText = text.takeIf { it.isNotEmpty() && images.isEmpty() }
         following = true // sending a message re-follows so the user always sees their own turn + the reply
         val bubble = addUserBubble(text, attachments, images, interjected = interjecting)
         // The queue must mirror **exactly what was written to stdin**, in order — including
@@ -1156,6 +1296,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * below come from the real process.
      */
     private var assumeLiveSessionForTest = false
+
+    /**
+     * The last message text that actually went to the CLI, kept only so a failure card can offer to
+     * send it again — it is not a transcript history, and it is null whenever a retry would not be the
+     * same message (an image-carrying send, whose bytes are released with it).
+     */
+    private var lastSentText: String? = null
+
+    /** Whether the current turn ran any tool. A turn that did is not safe to replay with one click. */
+    private var toolsRanThisTurn = false
 
     /**
      * Whether a mid-turn message can be folded into the running turn right now. It needs a live process
@@ -1365,8 +1515,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(modelGroup)
         group.add(Separator.getInstance())
         group.add(action("Clear conversation") { session.newConversation() })
+        resumeAction()?.let { group.add(it) }
+        rememberAction()?.let { group.add(it) }
         group.add(action("Health check…") { showHealth() })
-        group.add(action("Activity map preferences…") { openSettings() })
         group.add(action("Settings…") { openSettings() })
         popup("More", group, anchor)
     }
@@ -1377,7 +1528,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             HealthGatherer.SessionFacts(
                 running = session.isRunning,
                 sawSession = session.sawSession,
-                activityEventCount = activityMap.observedEventCount(),
+                activityEventCount = observedEvents,
                 diagnosticsAvailable = diagnosticsAvailability()?.first,
                 diagnosticsReason = diagnosticsAvailability()?.second,
             )
@@ -1479,77 +1630,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         composer.setMode(m.shortName, m.dangerous)
     }
 
-    // ---------- workspace ----------
-
-    private fun toWorkspace(v: ViewMode): WorkspaceMode = when (v) {
-        ViewMode.CHAT -> WorkspaceMode.CHAT
-        ViewMode.SPLIT -> WorkspaceMode.SPLIT
-        ViewMode.MAP -> WorkspaceMode.ACTIVITY
-    }
-
-    private fun fromWorkspace(ws: WorkspaceMode): ViewMode = when (ws) {
-        WorkspaceMode.CHAT -> ViewMode.CHAT
-        WorkspaceMode.SPLIT -> ViewMode.SPLIT
-        WorkspaceMode.ACTIVITY -> ViewMode.MAP
-    }
-
-    private fun initialViewMode(): ViewMode {
-        val s = ClaudeSettings.getInstance().state
-        return fromWorkspace(WorkspaceModes.fromSettings(s.showActivityMap, s.activityViewMode))
-    }
-
-    /** A deliberate user choice: persist it, then show whatever the current width can carry. */
-    private fun setWorkspace(mode: ViewMode) {
-        preferredMode = mode
-        val s = ClaudeSettings.getInstance().state
-        val ws = toWorkspace(mode)
-        s.showActivityMap = WorkspaceModes.toShowActivityMap(ws)
-        s.activityViewMode = WorkspaceModes.toViewMode(ws)
-        applyEffectiveMode()
-    }
-
-    /**
-     * Re-derive the on-screen mode from the preference plus the current width. Never writes
-     * settings — only [setWorkspace] does — so a transient narrow layout can't clobber the choice.
-     */
-    private fun applyEffectiveMode() {
-        val profile = lastProfile ?: LayoutProfile.WIDE
-        val effective = fromWorkspace(WorkspaceModes.effectiveMode(toWorkspace(preferredMode), profile))
-        val changed = effective != viewMode
-        viewMode = effective
-        // The header names where you *are*, not what you asked for: showing "Activity" selected while
-        // a demoted panel displays the transcript reads as a bug.
-        header.setWorkspace(toWorkspace(effective))
-        uiState.workspace = toWorkspace(effective).name
-        if (changed || centerHost.componentCount == 0) installCenter()
-    }
-
-    private fun toggleSplit() {
-        setWorkspace(if (preferredMode == ViewMode.SPLIT) ViewMode.MAP else ViewMode.SPLIT)
-    }
-
-    private fun installCenter() {
-        centerHost.removeAll()
-        // Drop the splitter's component references *before* choosing a layout. CHAT and MAP steal
-        // these components from the splitter (Container.add reparents them silently), but
-        // Splitter.setFirstComponent/setSecondComponent no-op when handed the instance they still
-        // believe they own — so SPLIT → CHAT → SPLIT re-installed a splitter that never re-added
-        // the stolen pane, and one side of the split rendered as dead space while the header's
-        // split toggle claimed both views were on screen.
-        mapSplitter.firstComponent = null
-        mapSplitter.secondComponent = null
-        when (viewMode) {
-            ViewMode.CHAT -> centerHost.add(chatHost, BorderLayout.CENTER)
-            ViewMode.MAP -> centerHost.add(activityMap.component, BorderLayout.CENTER)
-            ViewMode.SPLIT -> {
-                mapSplitter.firstComponent = chatHost
-                mapSplitter.secondComponent = activityMap.component
-                centerHost.add(mapSplitter, BorderLayout.CENTER)
-            }
-        }
-        SwingUtilities.invokeLater { centerHost.revalidate(); centerHost.repaint() }
-    }
-
     private fun showEmptyState(show: Boolean) {
         chatHost.removeAll()
         chatHost.add(if (show) emptyState else transcriptLayer, BorderLayout.CENTER)
@@ -1590,14 +1670,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     internal fun addUserMessageForPreview(text: String, images: List<PendingImage> = emptyList()) {
         showEmptyState(false)
         addUserBubble(text, emptyList(), images)
+        // Mirrors the production send, whose UI half this stands in for: without it a preview could
+        // never show a failure card's Retry, which is exactly the state a real failure is in.
+        lastSentText = text.takeIf { it.isNotEmpty() && images.isEmpty() }
     }
 
     /**
-     * Test-only: drives the same workspace switch the header controls do, so mode-transition
-     * regressions (e.g. a splitter pane lost on SPLIT → CHAT → SPLIT) are testable headlessly.
+     * Test-only: the advice a failure would be rendered with *right now*, gating included — so a test
+     * can pin what the card offers after a tool has run without spawning a CLI process.
      */
     @TestOnly
-    internal fun setWorkspaceForTest(mode: WorkspaceMode) = setWorkspace(fromWorkspace(mode))
+    internal fun failureAdviceForTest(raw: String, exitCode: Int? = null): SessionFailure.Advice =
+        SessionFailure.classify(raw, exitCode, canRetry = retryableMessage() != null)
 
     /**
      * Test-only: pushes an Android context straight into the composer, bypassing the resolver.
@@ -1613,20 +1697,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         composer.setAndroidContext(context)
     }
 
-    /** Test-only: settle the activity graph's force layout and frame it, for a headless render. */
-    @TestOnly
-    internal fun settleActivityMapForPreview() = activityMap.settleAndFitForPreview()
-
     /** Test-only: the message that would actually be sent, context block and all. */
     @TestOnly
     internal fun buildMessageForPreview(text: String): String = composerModel.buildMessage(text)
-
-    /**
-     * Test-only: selects an activity-map node by path, exercising the **real** map→chat callback
-     * (`onNodeSelected` → [revealTranscriptFor]). Returns false when no such node exists.
-     */
-    @TestOnly
-    internal fun selectActivityNodeByPathForTest(path: String): Boolean = activityMap.selectByPath(path)
 
     /** Test-only: how many turns are still held as live components (see [TranscriptRetention]). */
     @TestOnly
@@ -1647,14 +1720,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Test-only: drives the same deferred scroll the streaming path uses. */
     @TestOnly
     internal fun scrollToBottomForTest() = scrollToBottomSoon()
-
-    /**
-     * Test-only: the chat/map splitter itself. The activity map contains its *own* JBSplitter, so a
-     * tree search cannot distinguish them — mode-transition tests need the real instance to assert
-     * its panes were genuinely (re)installed.
-     */
-    @TestOnly
-    internal fun chatMapSplitterForTest(): JBSplitter = mapSplitter
 
     /**
      * Test-only: runs the current text block's pending live render tick now. Deltas after the first
@@ -1721,6 +1786,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             return
         }
         val type = o.str("type")
+        // Any event at all is proof the CLI is alive — that is what the quiet check measures silence
+        // against, so it is stamped before anything can decide to ignore this event.
+        lastEventAt = System.currentTimeMillis()
         try {
             when (type) {
                 "__panel" -> onPanel(o)
@@ -1775,7 +1843,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             }
             "cleared" -> clearAll()
             "config" -> applyConfigToUi()
-            "error" -> { addInfo(o.str("text") ?: "Error", true); noteError(o.str("text") ?: "Error"); setRunning(false) }
+            "error" -> {
+                val text = o.str("text") ?: ""
+                setRunning(false)
+                addFailure(text)
+                noteError(text.ifBlank { "Error" })
+            }
             "exited" -> {
                 finalizeCurrent(); inAssistant = false; setRunning(false)
                 val c = o.intOrNull("code")
@@ -1783,10 +1856,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     // The CLI's own stderr is the only thing that explains an exit code — an expired
                     // login, an unknown flag from extraArgs. Showing the code alone sends the user to
                     // idea.log to find out what the plugin already had in hand.
+                    // The whole captured stderr tail goes to the card, not the one line the status
+                    // needs: the card shows the CLI's own text and its "Copy details" hands over all
+                    // of it, so summarising here would make that a claim it could not keep.
                     val why = o.str("text")?.takeIf { it.isNotBlank() }
-                    val msg = if (why != null) "Claude exited (code $c): ${why.lineSequence().last { l -> l.isNotBlank() }}" else "Claude exited (code $c)"
-                    addInfo(msg, true)
-                    noteError(msg)
+                    addFailure(why ?: "", c)
+                    val line = why?.lineSequence()?.last { l -> l.isNotBlank() }
+                    noteError(if (line != null) "Claude exited (code $c): $line" else "Claude exited (code $c)")
                 }
             }
         }
@@ -1951,7 +2027,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun onStream(ev: JsonObject) {
         when (ev.str("type")) {
-            "message_start" -> beginAssistant()
+            "message_start" -> {
+                // The request's own usage, before a token of the reply arrives — so the chip moves as
+                // the conversation grows rather than only at the end of a turn.
+                noteUsage(ev.objOrNull("message")?.objOrNull("usage"))
+                beginAssistant()
+            }
             "content_block_start" -> blockStart(ev.objOrNull("content_block"))
             "content_block_delta" -> blockDelta(ev.objOrNull("delta"))
             "content_block_stop" -> blockStop()
@@ -2033,8 +2114,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      *
      * A parent we have no card for is dropped rather than rendered loose — that happens when the Task
      * predates this transcript's retention window, and a stray "→ Ran grep" with nothing above it is
-     * worse than silence. The activity map is fed either way: what a subagent touched is observed fact
-     * and belongs in the graph whether or not a card survived to hold it.
+     * worse than silence. The status model is fed either way: what a subagent touched is observed fact
+     * and belongs in the session's activity whether or not a card survived to hold it.
      */
     private fun onSubagent(parentId: String, o: JsonObject) {
         val card = toolCardsById[parentId]
@@ -2134,13 +2215,20 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             o.dblOrNull("total_cost_usd"), o.dblOrNull("duration_ms"), o.intOrNull("num_turns"),
             isErr, statusModel.health().recoveredFailures,
         )
+        noteUsage(o.objOrNull("usage"))
+        noteContextWindow(o.objOrNull("modelUsage"))
+        // Only ever writes when the user has accepted; SessionMemory is the single gate.
+        sessionMemory.remember(session.currentSessionId)
         feed(interpreter.taskDone(o.str("result") ?: "", isErr))
-        if (isErr) o.str("result")?.let { addInfo(it, true) }
+        if (isErr) o.str("result")?.let { addFailure(it) }
     }
 
     // ---------- tool body rendering ----------
 
     private fun renderToolBody(name: String, id: String?, input: JsonObject?, card: ToolCard) {
+        // Once a tool has run, re-sending the message that started the turn would replay it — the
+        // failure card's Retry is withheld from here on.
+        toolsRanThisTurn = true
         target = card.bodyDoc
         card.setDetails(name, input ?: JsonObject(), renderToolContent(name, input ?: JsonObject(), card))
         target = null
@@ -2178,42 +2266,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         DiffPresentation.overflowText(DiffPresentation.overflow(rows.size, expanded = false))
             ?.let { insert("$it\n", sMuted) }
-    }
-
-    /**
-     * Map → chat. Finds the transcript row that produced [node] and reveals it.
-     *
-     * Matching is by **file path** first (exact, and what a file node carries) and falls back to the
-     * node's label for command/test nodes. The *most recent* match wins: when a file was touched
-     * several times, the latest step is the one the map's state reflects.
-     */
-    private fun revealTranscriptFor(node: ActivityNode) {
-        val meta = toolMetaById.values.lastOrNull { m ->
-            (node.path != null && m.path != null && m.path == node.path) ||
-                (node.path == null && m.card.linkLabel != null && m.card.linkLabel == node.label)
-        } ?: return
-        val card = meta.card
-        // A hidden card can't be revealed — turn details on rather than silently doing nothing.
-        if (!showDetails) setShowDetails(true)
-        runOnEdt {
-            card.expand()
-            card.flashHighlight()
-            following = false // the user asked to look here; don't yank them back to the bottom
-            updateJumpToLatest()
-            card.scrollRectToVisible(Rectangle(0, 0, card.width, card.height))
-        }
-    }
-
-    /** Chat → map. Selects the node this row produced, switching to a view that shows the map. */
-    private fun revealInMap(card: ToolCard) {
-        val found = card.linkPath?.let { activityMap.selectByPath(it) }
-            ?: card.linkLabel?.let { activityMap.selectByLabel(it) }
-            ?: false
-        // Don't switch away from the conversation to show a map with nothing selected.
-        if (!found) return
-        if (viewMode == ViewMode.CHAT) {
-            setWorkspace(if (ResponsiveLayout.allowSplitDefault(lastProfile ?: LayoutProfile.WIDE)) ViewMode.SPLIT else ViewMode.MAP)
-        }
     }
 
     /** Remembers a build/test/analysis Bash command so its report files can be read when it finishes. */
@@ -2322,6 +2374,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // AskUserQuestion rides the same can_use_tool channel but is a request for input, not permission
         // to act — route it to the structured question UI instead of a generic Allow/Deny approval.
         if (req.str("tool_name") == "AskUserQuestion") { showAskUserQuestion(reqId, req); return }
+        // Plan mode ends by asking permission for ExitPlanMode, with the plan itself in the payload.
+        // That is a plan to *review*, not a yes/no — approving something you cannot edit is how a
+        // wrong plan becomes a wrong branch.
+        if (req.str("tool_name") == "ExitPlanMode" && showPlanReview(reqId, req)) return
         val turn = ensureAssistant()
         val toolName = req.str("tool_name") ?: "tool"
         val input = req.objOrNull("input") ?: JsonObject()
@@ -2334,28 +2390,33 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         // The buttons just ask the coordinator to resolve; the one handler below does the real work,
         // whether the decision came from a human click or the sandbox test bridge.
-        val block = ApprovalBlock(title, toolName, input, canAllowAlways = suggestions != null,
-            onDecision = { decision -> approvalCoordinator.respond(reqId, decision) })
+        val block = ApprovalBlock(
+            title, toolName, input, canAllowAlways = suggestions != null,
+            onDecision = { decision, reason -> approvalCoordinator.respond(reqId, decision, reason) },
+        )
         turn.addBlock(block)
 
-        val handler: (ApprovalDecision) -> Unit = { decision ->
+        val handler: (ApprovalDecision, String?) -> Unit = { decision, reason ->
             runOnEdt {
                 when (decision) {
                     ApprovalDecision.ALLOW -> session.respondAllow(reqId, inputJson, null)
                     ApprovalDecision.ALLOW_ALWAYS -> session.respondAllow(reqId, inputJson, suggestions)
                     ApprovalDecision.DENY -> {
-                        session.respondDeny(reqId, "Denied by user")
+                        // The reason is what the model is told the tool returned, so it is the whole
+                        // point of the affordance: "not that — do this instead" without ending the turn.
+                        session.respondDeny(reqId, reason ?: "Denied by user")
                         onToolDenied(toolUseId, toolName, input)
                     }
                 }
                 resolvePermission()
-                block.markResolved(decision)
+                block.markResolved(decision, reason)
             }
         }
         approvalCoordinator.register(
             PendingApproval(reqId, toolUseId, toolName, title, targetPath, suggestions != null, handler),
         )
         statusModel.permissionRequested(); refreshStatus()
+        requestAttention()
         scrollToBottomSoon()
     }
 
@@ -2365,6 +2426,46 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * answers through the same control response. A parse failure still registers so Cancel can unblock
      * the CLI; it just can't be answered.
      */
+    /**
+     * Renders the proposed plan as a reviewable document: the Markdown as Claude wrote it, with
+     * **Approve**, **Edit plan…** and **Keep planning**. Returns false when the payload carries no
+     * plan, so the caller falls back to the ordinary approval card rather than showing an empty one.
+     *
+     * Editing sends the rewritten plan back through the denial channel, which the CLI hands to the
+     * model verbatim — so "not that, this" reaches Claude as an instruction rather than as a refusal
+     * it will simply retry.
+     */
+    private fun showPlanReview(reqId: String, req: JsonObject): Boolean {
+        val input = req.objOrNull("input") ?: return false
+        val plan = PlanReview.of(input.str("plan"), input.str("planFilePath")) ?: return false
+        val turn = ensureAssistant()
+        val block = PlanBlock(plan) { decision -> planCoordinator(reqId, plan, decision) }
+        turn.addBlock(block)
+        statusModel.permissionRequested("Waiting for you to review the plan"); refreshStatus()
+        requestAttention()
+        scrollToBottomSoon()
+        return true
+    }
+
+    /** One-shot resolution for a plan review — the same discipline as an approval. */
+    private fun planCoordinator(reqId: String, plan: PlanReview.Plan, decision: PlanDecision) {
+        when (decision) {
+            is PlanDecision.Approve -> session.respondAllow(reqId, JsonObject().also {
+                it.addProperty("plan", plan.markdown)
+                plan.filePath?.let { p -> it.addProperty("planFilePath", p) }
+            }.toString(), null)
+            is PlanDecision.Revise -> session.respondDeny(reqId, PlanReview.revisedMessage(decision.plan))
+            is PlanDecision.KeepPlanning -> session.respondDeny(reqId, PlanReview.keepPlanningMessage(decision.reason))
+        }
+        resolvePermission()
+    }
+
+    private sealed interface PlanDecision {
+        object Approve : PlanDecision
+        data class Revise(val plan: String) : PlanDecision
+        data class KeepPlanning(val reason: String?) : PlanDecision
+    }
+
     private fun showAskUserQuestion(reqId: String, req: JsonObject) {
         val turn = ensureAssistant()
         val input = req.objOrNull("input") ?: JsonObject()
@@ -2405,6 +2506,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             PendingQuestion(reqId, toolUseId, request ?: UserQuestionRequest(emptyList()), input.toString(), handler),
         )
         statusModel.permissionRequested("Waiting for your answer"); refreshStatus()
+        requestAttention()
         scrollToBottomSoon()
     }
 
@@ -2483,6 +2585,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun setRunning(v: Boolean) {
         running = v
+        // A turn boundary resets the quiet clock: silence before this moment belongs to the turn that
+        // has just ended, and carrying it over would greet the next turn with a stale complaint.
+        lastEventAt = System.currentTimeMillis()
+        lastQuietNoticeAt = 0L
+        quietTimer.let { if (v) it.start() else it.stop() }
         // Either boundary ends a stop window: a new process is listening again, or the old one is gone
         // and the next message will start one.
         stopping = false
@@ -2515,22 +2622,227 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         doSend(next.text, next.images)
     }
 
-    /** Push normalised activity events into both the map and the status model. */
+    /**
+     * Push normalised activity events into the status model.
+     *
+     * These are the same observable tool events the activity map consumed before it was removed; the
+     * status strip's live text, its recovered-failure tally and the per-turn processing summary all
+     * still run on them, which is why the interpreter and the output parsers stayed.
+     */
     private fun feed(events: List<AgentActivityEvent>) {
         if (events.isEmpty()) return
-        activityMap.apply(events)
+        observedEvents += events.size
         for (e in events) statusModel.apply(e)
         refreshStatus()
-        for (e in events) maybeEnrich(e)
     }
 
-    /** Kick off background structure enrichment for a file Claude just read/edited. */
-    private fun maybeEnrich(e: AgentActivityEvent) {
-        when (e) {
-            is FileRead -> structureEnricher.enrich(e.path, edited = false) { evs -> feed(evs) }
-            is FileEdited -> structureEnricher.enrich(e.path, edited = true) { evs -> feed(evs) }
-            else -> return
+    /**
+     * Records the occupancy of one `usage` object. Everything is relayed, nothing derived: the CLI
+     * states these four numbers and [ContextUsage] only adds them up.
+     */
+    private fun noteUsage(usage: JsonObject?) {
+        if (usage == null) return
+        val tokens = ContextUsage.occupancy(
+            inputTokens = usage.longOrZero("input_tokens"),
+            cacheCreationTokens = usage.longOrZero("cache_creation_input_tokens"),
+            cacheReadTokens = usage.longOrZero("cache_read_input_tokens"),
+            outputTokens = usage.longOrZero("output_tokens"),
+        )
+        if (tokens <= 0) return
+        contextTokens = tokens
+        refreshContextUsage()
+    }
+
+    /**
+     * The context window, read from `result.modelUsage`. Keyed by model id, and the CLI reports usage
+     * for **every** model a turn touched (a subagent on a different model adds its own entry), so the
+     * entry for the model this session announced wins; failing that, the largest window reported, since
+     * picking an arbitrary entry could shrink the denominator to a subagent's smaller model.
+     */
+    private fun noteContextWindow(modelUsage: JsonObject?) {
+        if (modelUsage == null) return
+        val reported = reportedModel
+        val exact = reported?.let { modelUsage.objOrNull(it)?.longOrNull("contextWindow") }
+        val window = exact ?: modelUsage.keySet()
+            .mapNotNull { modelUsage.objOrNull(it)?.longOrNull("contextWindow") }
+            .maxOrNull()
+        if (window != null && window > 0) {
+            contextWindow = window
+            refreshContextUsage()
         }
+    }
+
+    /**
+     * Runs the CLI's own `/context`, which prints a breakdown by category (system prompt, tools,
+     * memory, messages). Sent as an ordinary user line because that is what it is — a local command,
+     * answered with a synthetic turn at no token cost (verified: `num_turns: 0`, zero usage).
+     */
+    /**
+     * Project files matching a typed `@` prefix, for the composer's mention popup.
+     *
+     * Runs on the EDT because a completion popup has to answer within a keystroke, so it is kept cheap
+     * deliberately: the filename index is asked for **names** first and only the survivors are resolved
+     * to files, which is the difference between touching a few dozen entries and walking the project.
+     * During indexing there is no index to ask, so it returns nothing rather than blocking the typist —
+     * a popup that doesn't appear is a far smaller harm than a composer that freezes.
+     */
+    private fun searchProjectFiles(prefix: String): List<String> {
+        if (DumbService.getInstance(project).isDumb) return emptyList()
+        val base = project.basePath
+        val scope = GlobalSearchScope.projectScope(project)
+        val names = ArrayList<String>(MENTION_NAME_CAP)
+        val needle = prefix.lowercase()
+        return runCatching {
+            // computeBlocking, not the deprecated compute(...) — the Marketplace's own report flagged
+            // three of those on an earlier release, and this codebase now carries zero deprecated API.
+            ReadAction.computeBlocking<List<String>, RuntimeException> {
+                FilenameIndex.processAllFileNames({ name ->
+                    if (names.size >= MENTION_NAME_CAP) false
+                    else {
+                        if (prefix.isBlank() || name.lowercase().contains(needle)) names.add(name)
+                        true
+                    }
+                }, scope, null)
+                val paths = names.asSequence()
+                    .flatMap { FilenameIndex.getVirtualFilesByName(it, scope).asSequence() }
+                    .filter { !it.isDirectory }
+                    .map { f -> base?.let { b -> f.path.removePrefix(b).trimStart('/') } ?: f.path }
+                    .take(MENTION_PATH_CAP)
+                    .toList()
+                MentionQuery.rank(paths, prefix)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * "Resume conversation from <date>", when there is one saved and nothing running. Absent entirely
+     * when remembering is off or nothing is stored — an action that explains why it is disabled is
+     * still an action the user has to read past.
+     */
+    private fun resumeAction(): AnAction? {
+        if (!sessionMemory.enabled || running) return null
+        val id = sessionMemory.savedId ?: return null
+        return action(SessionPersistence.resumeLabel(sessionMemory.savedDate)) { resumeSavedSession(id) }
+    }
+
+    /**
+     * Hands a stored session id back to the CLI. The transcript is **not** restored and the notice says
+     * so: Sightline keeps no transcript, so the panel starts where you are now while Claude gets its
+     * history back. Promising otherwise would be the one thing this feature must not do.
+     */
+    /**
+     * Offered only while remembering is **off**: the invitation to turn it on, which opens the consent
+     * dialog rather than flipping a flag. Once on, it disappears and the resume action takes its place.
+     */
+    private fun rememberAction(): AnAction? {
+        if (sessionMemory.enabled) return null
+        return action("Remember this conversation…") {
+            if (ensureSessionMemoryConsent()) {
+                sessionMemory.remember(session.currentSessionId)
+                showEmptyState(false)
+                addInfo(
+                    if (session.currentSessionId != null) {
+                        "This project's session id will be remembered, so you can resume after a restart."
+                    } else {
+                        // Nothing to save yet, and saying "saved" would be false. The setting is on; the
+                        // id lands at the end of the first turn.
+                        "Sightline will remember this project's session id once a conversation has started."
+                    },
+                    false,
+                )
+                scrollToBottomSoon()
+            }
+        }
+    }
+
+    private fun resumeSavedSession(id: String) {
+        if (!session.resumeSession(id)) {
+            addInfo("Claude is already running — clear the conversation first to resume another.", false)
+            scrollToBottomSoon()
+            return
+        }
+        showEmptyState(false)
+        addInfo(SessionPersistence.RESUMED_NOTICE, false)
+        scrollToBottomSoon()
+        composer.requestInputFocus()
+    }
+
+    /**
+     * Asks, once, whether Sightline may remember this project's session id — and does nothing at all
+     * unless the answer is yes.
+     *
+     * This is a privacy decision with a standing decision behind it ("nothing is persisted but
+     * settings"), so it is taken by the user in as many words, not inferred from the fact that they
+     * clicked something adjacent. Returns true when remembering is on afterwards.
+     */
+    private fun ensureSessionMemoryConsent(): Boolean {
+        if (sessionMemory.enabled) return true
+        val accepted = Messages.showYesNoDialog(
+            project,
+            SessionPersistence.CONSENT,
+            SessionPersistence.TITLE,
+            SessionPersistence.ACCEPT,
+            SessionPersistence.DECLINE,
+            Messages.getQuestionIcon(),
+        ) == Messages.YES
+        ClaudeSettings.getInstance().state.rememberSessions = accepted
+        if (!accepted) sessionMemory.forget()
+        return accepted
+    }
+
+    private fun askForContextBreakdown() {
+        showEmptyState(false)
+        if (running) {
+            addInfo("Claude is working — /context can be run once the turn finishes.", false)
+            scrollToBottomSoon()
+            return
+        }
+        doSend("/context")
+    }
+
+    private fun refreshContextUsage() {
+        val tokens = contextTokens ?: return
+        composer.setContextUsage(ContextUsage.view(ContextUsage.Snapshot(tokens, contextWindow)))
+    }
+
+    /**
+     * Says so when a running turn has produced nothing for a while — the "it just sits there with no
+     * timeout and no error" case. [StallPolicy] holds the rule that makes this safe in an Android
+     * project: a tool in flight (a Gradle build, a test run, a subagent) explains the silence, so
+     * nothing is said at any duration while one is running.
+     */
+    /**
+     * Marks the tool window when the turn cannot proceed without the user — a permission prompt or a
+     * question — and the panel is not on screen. Without it, a docked window the user has switched away
+     * from blocks silently and the turn simply never finishes.
+     *
+     * **Only for the blocking cases.** A turn finishing while hidden is not something the user must act
+     * on, and a badge that fires on every completed run is noise that teaches people to ignore it. Uses
+     * the platform's own attention affordance rather than a balloon, which would steal focus — the
+     * complaint this is meant to answer, not cause.
+     */
+    private fun requestAttention() {
+        val window = runCatching {
+            ToolWindowManager.getInstance(project).getToolWindow(SightlineEditorAction.TOOL_WINDOW_ID)
+        }.getOrNull() ?: return
+        if (window.isVisible) return
+        runCatching { ToolWindowManager.getInstance(project).notifyByBalloon(
+            SightlineEditorAction.TOOL_WINDOW_ID,
+            com.intellij.openapi.ui.MessageType.INFO,
+            "Claude is waiting for you.",
+        ) }
+    }
+
+    private fun checkForQuiet() {
+        if (!running) return
+        val now = System.currentTimeMillis()
+        val silence = now - lastEventAt
+        val sinceNotice = lastQuietNoticeAt.takeIf { it > 0 }?.let { now - it }
+        if (!StallPolicy.quiet(silence, inFlightCommands.size, sinceNotice)) return
+        lastQuietNoticeAt = now
+        showEmptyState(false)
+        addInfo(StallPolicy.notice(silence), false)
+        scrollToBottomSoon()
     }
 
     private fun noteError(text: String) {
@@ -2602,7 +2914,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         transcript.add(retentionNotice)
         toolCardsById.clear(); toolMetaById.clear(); renderedTools.clear(); evictedTurns = 0; pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         updateRetentionNotice()
-        interpreter.reset(); activityMap.clearSession(); structureEnricher.reset()
+        interpreter.reset(); observedEvents = 0
+        // A new conversation starts with no context of its own. The window is kept: it is a property
+        // of the model, not of the conversation, and re-learning it costs a whole turn.
+        contextTokens = null
+        composer.setContextUsage(null)
+        // Clearing means clearing: leaving the id behind would offer to resume a conversation the user
+        // has just discarded.
+        sessionMemory.forget()
         statusModel.reset(); transcriptPresenter.reset()
         transcript.revalidate(); transcript.repaint()
         showEmptyState(true)
@@ -2612,8 +2931,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun applyConfigToUi() {
         SwingUtilities.invokeLater {
             updateModeChip()
-            val desired = initialViewMode()
-            if (desired != viewMode) setWorkspace(desired) else header.setWorkspace(toWorkspace(viewMode))
             statusStrip.setReduceMotion(ClaudeSettings.getInstance().state.activityReduceMotion)
         }
     }
@@ -2703,6 +3020,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun JsonObject.intOrNull(k: String): Int? = if (has(k) && get(k).isJsonPrimitive) get(k).asInt else null
     private fun JsonObject.dblOrNull(k: String): Double? = if (has(k) && get(k).isJsonPrimitive) get(k).asDouble else null
     private fun JsonObject.objOrNull(k: String): JsonObject? = if (has(k) && get(k).isJsonObject) getAsJsonObject(k) else null
+    private fun JsonObject.longOrNull(k: String): Long? = if (has(k) && get(k).isJsonPrimitive) runCatching { get(k).asLong }.getOrNull() else null
+    private fun JsonObject.longOrZero(k: String): Long = longOrNull(k) ?: 0L
     private fun parseObj(s: String): JsonObject? = try { if (s.isBlank()) null else JsonParser.parseString(s).asJsonObject } catch (e: Exception) { null }
 
     // ---------- tool presentation ----------
@@ -3080,7 +3399,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private var weight: ToolWeight = ToolEventPresentation.weight(name, ToolOutcome.RUNNING)
         private val editBlocks = ArrayList<FileEditBlock>()
         private var installedActions = false
-        private var highlight = false
         /** Subagent fold-in state; see [appendSubagentActivity]. */
         private var subagentSteps = 0
         private var subagentHidden = 0
@@ -3137,7 +3455,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     acts.add("Copy command" to { copyToClipboard(cmd) })
                     acts.add("Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) })
                 }
-                acts.add("Show in map" to { revealInMap(this) })
                 // Into the header row that already exists, not a new row below: the header's height is
                 // set by the labels either way, so revealing these can never move the transcript.
                 headerActions.add(hoverActions(this, *acts.toTypedArray()))
@@ -3249,24 +3566,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
 
-        /**
-         * Briefly outlines this row so the eye can find it after being sent here from the activity map.
-         * A permanent marker would accumulate; a flash says "here" and then gets out of the way.
-         */
-        fun flashHighlight() {
-            highlight = true; repaint()
-            Timer(1400) { highlight = false; repaint() }.apply { isRepeats = false; start() }
-        }
-
         override fun paintComponent(g: Graphics) {
-            if (highlight) {
-                val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val arc = ClaudeUiTokens.radiusMd()
-                g2.color = ClaudeUiTokens.accent()
-                g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-                g2.dispose()
-            }
             // A compact row draws no chrome at all — that is the whole point of the tier.
             if (weight == ToolWeight.CARD) {
                 val g2 = g.create() as Graphics2D
@@ -3416,9 +3716,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** Always-visible approval prompt for a can_use_tool control request. */
     private inner class ApprovalBlock(
         title: String, toolName: String, input: JsonObject,
-        canAllowAlways: Boolean, onDecision: (ApprovalDecision) -> Unit,
+        canAllowAlways: Boolean, private val onDecision: (ApprovalDecision, String?) -> Unit,
     ) : Block() {
-        private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
+        // WrapLayout, not FlowLayout: four buttons no longer fit one row on a narrow docked panel, and
+        // a FlowLayout reports a single row's height however many it lays out — which is how this
+        // codebase previously lost a context chip off the bottom of the composer. An approval whose
+        // Deny is clipped off-screen is the worst version of that bug.
+        private val buttons = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4)))
         private val decided = JBLabel("")
         init {
             layout = BorderLayout()
@@ -3437,26 +3741,51 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
             buttons.isOpaque = false
             val allow = JButton("Allow").named(A11yNames.APPROVAL_ALLOW)
-            allow.addActionListener { onDecision(ApprovalDecision.ALLOW) }; buttons.add(allow)
+            allow.addActionListener { onDecision(ApprovalDecision.ALLOW, null) }; buttons.add(allow)
             if (canAllowAlways) {
                 val aa = JButton("Allow always").named(A11yNames.APPROVAL_ALLOW_ALWAYS)
-                aa.addActionListener { onDecision(ApprovalDecision.ALLOW_ALWAYS) }; buttons.add(aa)
+                aa.addActionListener { onDecision(ApprovalDecision.ALLOW_ALWAYS, null) }; buttons.add(aa)
             }
             val deny = JButton("Deny").named(A11yNames.APPROVAL_DENY)
-            deny.addActionListener { onDecision(ApprovalDecision.DENY) }; buttons.add(deny)
+            deny.addActionListener { onDecision(ApprovalDecision.DENY, null) }; buttons.add(deny)
+            // "Not that — do this instead", without ending the turn. The text becomes the tool result
+            // the model reads, so a denial can redirect the work rather than only block it.
+            val why = JButton("Deny with reason…").named(A11yNames.APPROVAL_DENY_REASON)
+            why.addActionListener { promptForDenyReason() }
+            buttons.add(why)
             decided.foreground = mutedFg()
             val south = JPanel(BorderLayout()); south.isOpaque = false
             south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
             add(south, BorderLayout.SOUTH)
         }
+        /**
+         * Asks for the reason, then denies with it. Cancelling the dialog leaves the request pending —
+         * it is not a denial, and treating a dismissed dialog as one would block a tool the user never
+         * decided about.
+         */
+        private fun promptForDenyReason() {
+            val reason = Messages.showInputDialog(
+                project,
+                "What should Claude do instead? This is sent back as the tool's result, so it can " +
+                    "redirect the work rather than only block it.",
+                "Deny With Reason",
+                null,
+            )?.trim()
+            if (reason.isNullOrEmpty()) return
+            onDecision(ApprovalDecision.DENY, reason)
+        }
+
         /** Reflects a resolved decision (from a human click or the test bridge) in the card. */
-        fun markResolved(decision: ApprovalDecision) {
+        fun markResolved(decision: ApprovalDecision, reason: String? = null) {
             buttons.isVisible = false
             decided.text = when (decision) {
                 ApprovalDecision.ALLOW -> "Allowed"
                 ApprovalDecision.ALLOW_ALWAYS -> "Always allowed"
-                ApprovalDecision.DENY -> "Denied"
+                // The reason is shown because it is now part of the conversation: the model was told
+                // it, and a transcript that hid it would leave the next reply unexplained.
+                ApprovalDecision.DENY -> if (reason.isNullOrBlank()) "Denied" else "Denied — told: $reason"
             }
+            decided.toolTipText = decided.text
             relayout()
         }
         override fun paintComponent(g: Graphics) {
@@ -3466,6 +3795,256 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             g2.color = ClaudeUiTokens.overlaySurface()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.color = ClaudeUiTokens.accent()
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
+    }
+
+
+    /**
+     * A proposed plan, as a document you can read and change before it runs.
+     *
+     * Plan mode's value is the pause before the work; a yes/no on a wall of chat text throws that away.
+     * The plan renders through the same Markdown pipeline as an assistant message — headings, lists,
+     * code — and **Edit plan…** turns it into an editable document in place. Saving an edit sends the
+     * rewritten plan back to Claude as its instruction.
+     *
+     * Rejecting with nothing actionable makes the model re-propose the same plan (observed: three times
+     * in a row), so neither rejection path here is silent — one carries the new plan, the other carries
+     * a reason.
+     */
+    private inner class PlanBlock(
+        private val plan: PlanReview.Plan,
+        private val onDecision: (PlanDecision) -> Unit,
+    ) : Block() {
+        private val buttons = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4)))
+        private val decided = JBLabel("")
+        private val body = JPanel(BorderLayout())
+        private val editor = JTextArea(plan.markdown)
+        private var editing = false
+
+        init {
+            layout = BorderLayout()
+            border = JBUI.Borders.empty(9, 11)
+
+            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(5), 0))
+            head.isOpaque = false
+            head.border = JBUI.Borders.emptyBottom(5)
+            val titleLabel = JBLabel("Claude's plan")
+            titleLabel.foreground = ClaudeUiTokens.accent()
+            titleLabel.font = titleLabel.font.deriveFont(Font.BOLD)
+            head.add(titleLabel)
+            // Where the CLI saved it, so the plan outlives this panel and can be opened like any file.
+            plan.filePath?.let { path ->
+                val open = ActionLink("Open plan file") { openPathInEditor(path) }
+                open.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+                head.add(open)
+            }
+            add(head, BorderLayout.NORTH)
+
+            body.isOpaque = false
+            showRendered()
+            add(body, BorderLayout.CENTER)
+
+            buttons.isOpaque = false
+            val approve = JButton("Approve plan").named(A11yNames.PLAN_APPROVE)
+            approve.addActionListener { resolve(PlanDecision.Approve, "Approved") }
+            buttons.add(approve)
+
+            val edit = JButton("Edit plan…").named(A11yNames.PLAN_EDIT)
+            edit.addActionListener { if (editing) saveEdit() else startEditing(edit) }
+            buttons.add(edit)
+
+            val keep = JButton("Keep planning").named(A11yNames.PLAN_KEEP)
+            keep.addActionListener { keepPlanning() }
+            buttons.add(keep)
+
+            decided.foreground = mutedFg()
+            val south = JPanel(BorderLayout()); south.isOpaque = false
+            south.add(buttons, BorderLayout.WEST); south.add(decided, BorderLayout.EAST)
+            add(south, BorderLayout.SOUTH)
+        }
+
+        private fun showRendered() {
+            body.removeAll()
+            val rendered = runCatching {
+                val model = MarkdownDocParser.parse(plan.markdown)
+                JPanel().apply {
+                    isOpaque = false
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    markdownRenderer.render(model).forEach { add(fullWidth(it)) }
+                }
+            }.getOrElse {
+                // A plan that will not parse is still a plan: show it as text rather than nothing.
+                plainArea(plan.markdown)
+            }
+            body.add(rendered, BorderLayout.CENTER)
+            relayout()
+        }
+
+        private fun startEditing(trigger: JButton) {
+            editing = true
+            trigger.text = "Save plan"
+            editor.lineWrap = true
+            editor.wrapStyleWord = true
+            editor.font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+            editor.border = JBUI.Borders.empty(6)
+            editor.rows = editor.text.lines().size.coerceIn(6, 24)
+            body.removeAll()
+            body.add(JBScrollPane(editor), BorderLayout.CENTER)
+            relayout()
+            editor.requestFocusInWindow()
+        }
+
+        private fun saveEdit() {
+            val edited = editor.text
+            if (!PlanReview.isChanged(plan.markdown, edited)) {
+                // Opening the editor and changing nothing is an approval, not a rejection — sending an
+                // identical plan back as a correction would read to the model as disagreement it can't act on.
+                resolve(PlanDecision.Approve, "Approved")
+                return
+            }
+            resolve(PlanDecision.Revise(edited), "Sent your revised plan")
+        }
+
+        private fun keepPlanning() {
+            val reason = Messages.showInputDialog(
+                project,
+                "What should Claude reconsider? Left blank, it is simply asked to revise the plan.",
+                "Keep Planning",
+                null,
+            )
+            resolve(PlanDecision.KeepPlanning(reason), "Asked for more planning")
+        }
+
+        private fun resolve(decision: PlanDecision, label: String) {
+            buttons.isVisible = false
+            decided.text = label
+            if (decision is PlanDecision.Revise) {
+                // The transcript keeps what was actually sent — the conversation continues from the
+                // edited plan, so hiding it would leave the next step unexplained.
+                body.removeAll()
+                body.add(plainArea(decision.plan), BorderLayout.CENTER)
+            }
+            relayout()
+            onDecision(decision)
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = ClaudeUiTokens.radiusMd()
+            g2.color = ClaudeUiTokens.overlaySurface()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = ClaudeUiTokens.accent()
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
+    }
+
+    /**
+     * A failed turn, as something the user can act on rather than a red line of the CLI's own text.
+     *
+     * The content — headline, whether there is anything evidenced to explain, and which actions are
+     * worth offering — is decided by the platform-free [SessionFailure]; this is only the Swing half.
+     * Two things it is careful about:
+     * - **The detail is shown as the CLI wrote it**, and when it is too long to show whole, the card
+     *   *says* how much it clipped and that "Copy details" carries all of it. A silently shortened
+     *   error is how a user ends up debugging half a stack trace.
+     * - **Every action reports back into the card** ([note]), because three of them (copy, copy the
+     *   sign-in command, check the sign-in) produce nothing visible anywhere else, and a button that
+     *   looks inert is indistinguishable from one that is.
+     */
+    private inner class FailureBlock(
+        private val advice: SessionFailure.Advice,
+        private val onAction: (SessionFailure.Action, FailureBlock) -> Unit,
+    ) : Block() {
+        private val note = JBLabel("")
+        private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
+
+        init {
+            layout = BorderLayout()
+            border = JBUI.Borders.empty(9, 11)
+
+            val head = JPanel(BorderLayout(JBUI.scale(6), 0)); head.isOpaque = false
+            head.border = JBUI.Borders.emptyBottom(5)
+            val icon = JBLabel(ClaudeIcons.errorCircle.withSize(14))
+            icon.verticalAlignment = javax.swing.SwingConstants.TOP
+            head.add(icon, BorderLayout.WEST)
+            val headline = plainArea(advice.headline)
+            headline.foreground = ClaudeUiTokens.error()
+            headline.font = headline.font.deriveFont(Font.BOLD)
+            head.add(headline, BorderLayout.CENTER)
+            add(head, BorderLayout.NORTH)
+
+            val body = JPanel(); body.isOpaque = false; body.layout = BoxLayout(body, BoxLayout.Y_AXIS)
+            advice.explanation?.let {
+                val area = plainArea(it)
+                area.foreground = ClaudeUiTokens.textPrimary()
+                area.alignmentX = Component.LEFT_ALIGNMENT
+                body.add(area)
+                body.add(Box.createVerticalStrut(JBUI.scale(6)))
+            }
+            if (advice.detail.isNotEmpty()) {
+                val lines = advice.detail.lines()
+                val shown = lines.take(DETAIL_LINES)
+                val area = plainArea(shown.joinToString("\n"))
+                area.foreground = mutedFg()
+                area.font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+                    .deriveFont(UIUtil.getLabelFont().size2D - JBUI.scale(1))
+                area.alignmentX = Component.LEFT_ALIGNMENT
+                body.add(area)
+                if (lines.size > shown.size) {
+                    val more = plainArea(clippedNote(lines.size - shown.size))
+                    more.foreground = mutedFg()
+                    more.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC)
+                    more.alignmentX = Component.LEFT_ALIGNMENT
+                    body.add(more)
+                }
+                body.add(Box.createVerticalStrut(JBUI.scale(6)))
+            }
+            add(body, BorderLayout.CENTER)
+
+            buttons.isOpaque = false
+            for (action in advice.actions) {
+                val b = JButton(action.label).named(A11yNames.failureAction(action.name))
+                b.addActionListener { onAction(action, this) }
+                buttons.add(b)
+            }
+            note.foreground = mutedFg()
+            val south = JPanel(BorderLayout()); south.isOpaque = false
+            south.add(buttons, BorderLayout.WEST); south.add(note, BorderLayout.EAST)
+            add(south, BorderLayout.SOUTH)
+        }
+
+        /** Says what an action did, in the card that offered it. */
+        fun note(text: String) {
+            note.text = text
+            relayout()
+        }
+
+        /**
+         * A retry has gone out, so the buttons go: the turn it belonged to is over, and a second press
+         * would send the same message a second time into a conversation that is now live again.
+         */
+        fun markRetried() {
+            buttons.isVisible = false
+            note("Sent again.")
+        }
+
+        private fun clippedNote(hidden: Int): String =
+            if (hidden == 1) "1 more line — \"Copy details\" copies all of it."
+            else "$hidden more lines — \"Copy details\" copies all of them."
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = ClaudeUiTokens.radiusMd()
+            g2.color = ClaudeUiTokens.overlaySurface()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = ClaudeUiTokens.error()
             g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)

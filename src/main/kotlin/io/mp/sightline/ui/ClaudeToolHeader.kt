@@ -6,11 +6,9 @@ import com.intellij.util.ui.UIUtil
 import io.mp.sightline.theme.ClaudeIcons
 import io.mp.sightline.theme.ClaudeUiTokens
 import io.mp.sightline.ui.components.IconActionButton
-import io.mp.sightline.ui.components.SegmentedControl
 import io.mp.sightline.ui.state.LayoutProfile
 import io.mp.sightline.ui.state.ResponsiveLayout
 import io.mp.sightline.ui.state.StatusKind
-import io.mp.sightline.ui.state.WorkspaceMode
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -24,14 +22,12 @@ import javax.swing.BorderFactory
 import javax.swing.JPanel
 
 /**
- * Compact application header with three regions: brand + session state (left), a segmented
- * Chat/Activity workspace switch with a secondary Split toggle (centre), and icon actions
- * New + More (right). Common view switching is one click; everything secondary lives in More.
+ * Compact application header: brand + session state on the left, icon actions New + More on the
+ * right. The centre held a Chat/Activity switch and a Split toggle until the activity map was
+ * removed; with one view left there is nothing to switch between, and a control that only ever
+ * selects the view you are already in is worse than no control.
  */
 class ClaudeToolHeader(
-    initialMode: WorkspaceMode,
-    private val onWorkspace: (WorkspaceMode) -> Unit,
-    private val onToggleSplit: () -> Unit,
     private val onNew: () -> Unit,
     private val onMore: (Component) -> Unit,
 ) : JPanel(BorderLayout()) {
@@ -39,11 +35,6 @@ class ClaudeToolHeader(
     private val brandLabel = JBLabel("Sightline")
     private val stateDot = StateDot()
     private val stateLabel = JBLabel("Ready")
-    private val segmented = SegmentedControl(
-        listOf(WorkspaceMode.CHAT to "Chat", WorkspaceMode.ACTIVITY to "Activity"),
-        if (initialMode == WorkspaceMode.CHAT) WorkspaceMode.CHAT else WorkspaceMode.ACTIVITY,
-    ) { onWorkspace(it) }
-    private val splitButton = IconActionButton(ClaudeIcons.split, "Split view (chat + activity)") { onToggleSplit() }
     private val newButton = IconActionButton(ClaudeIcons.newChat, "New conversation") { onNew() }
     private val moreButton = IconActionButton(ClaudeIcons.more, "More actions") { onMore(moreButtonAnchor()) }
 
@@ -57,9 +48,7 @@ class ClaudeToolHeader(
         preferredSize = Dimension(JBUI.scale(320), JBUI.scale(40))
 
         add(buildLeft(), BorderLayout.WEST)
-        add(buildCenter(), BorderLayout.CENTER)
         add(buildRight(), BorderLayout.EAST)
-        setWorkspace(initialMode)
     }
 
     private fun buildLeft(): JPanel {
@@ -75,14 +64,6 @@ class ClaudeToolHeader(
         stateLabel.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
         left.add(stateLabel)
         return left
-    }
-
-    private fun buildCenter(): JPanel {
-        val center = JPanel(FlowLayout(FlowLayout.CENTER, JBUI.scale(4), JBUI.scale(3)))
-        center.isOpaque = false
-        center.add(segmented)
-        center.add(splitButton)
-        return center
     }
 
     private fun buildRight(): JPanel {
@@ -102,12 +83,6 @@ class ClaudeToolHeader(
 
     private fun moreButtonAnchor(): Component = moreButton
 
-    /** Reflects the active workspace on the segmented control and the Split toggle. */
-    fun setWorkspace(mode: WorkspaceMode) {
-        segmented.setSelectedSilently(if (mode == WorkspaceMode.CHAT) WorkspaceMode.CHAT else WorkspaceMode.ACTIVITY)
-        splitButton.toggledOn = mode == WorkspaceMode.SPLIT
-    }
-
     /** Coarse session state shown as a semantic dot + short label. */
     fun setSessionState(kind: StatusKind, label: String) {
         stateDot.color = ClaudeUiTokens.statusColor(kind)
@@ -120,7 +95,6 @@ class ClaudeToolHeader(
         val labels = ResponsiveLayout.showHeaderLabels(profile)
         brandLabel.isVisible = labels
         stateLabel.isVisible = labels
-        splitButton.isVisible = ResponsiveLayout.allowSplit(profile)
         revalidate(); repaint()
     }
 

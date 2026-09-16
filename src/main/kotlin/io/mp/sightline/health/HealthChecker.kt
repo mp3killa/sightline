@@ -264,8 +264,12 @@ object HealthChecker {
         )
     }
 
+    /**
+     * The observable-event stream behind the status strip. Worth a row because a silent status line and
+     * a session that genuinely has done nothing look identical from the outside.
+     */
     private fun activity(i: HealthInputs): HealthCheck = HealthCheck(
-        "activity", "Activity map", HealthStatus.OK,
+        "activity", "Observed activity", HealthStatus.OK,
         if (i.activityEventCount == 0) "No activity yet this session."
         else "${i.activityEventCount} event${if (i.activityEventCount == 1) "" else "s"} observed this session.",
     )

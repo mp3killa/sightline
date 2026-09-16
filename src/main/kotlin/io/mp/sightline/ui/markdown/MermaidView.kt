@@ -1,6 +1,6 @@
 package io.mp.sightline.ui.markdown
 
-import io.mp.sightline.activity.arrowhead
+import io.mp.sightline.ui.markdown.mermaid.arrowhead
 import io.mp.sightline.theme.ClaudeUiTokens
 import io.mp.sightline.ui.markdown.mermaid.MermaidDiagram
 import io.mp.sightline.ui.markdown.mermaid.MermaidEdgeStyle

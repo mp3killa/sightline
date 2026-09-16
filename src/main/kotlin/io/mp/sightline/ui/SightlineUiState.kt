@@ -11,10 +11,15 @@ import javax.swing.JComponent
  */
 class SightlineUiState {
     @Volatile var toolWindowVisible: Boolean = false
-    @Volatile var workspace: String = "CHAT"      // CHAT | ACTIVITY | SPLIT
     @Volatile var sessionState: String = "READY"  // READY | WORKING | WAITING_FOR_APPROVAL | ...
     /** The tool window's root Swing component, for off-EDT-triggered on-EDT capture. */
     @Volatile var rootComponent: JComponent? = null
     /** TEST-ONLY seam: inject a synthetic AskUserQuestion (the gated bridge's `simulate_question`). */
     @Volatile var askQuestionSimulator: ((JsonObject) -> Unit)? = null
+
+    /**
+     * Put text into the composer and focus it. Set by [ClaudePanel] while it is open; null when the
+     * tool window has never been created, which is exactly when an editor action has to open it first.
+     */
+    @Volatile var insertIntoComposer: ((String) -> Unit)? = null
 }

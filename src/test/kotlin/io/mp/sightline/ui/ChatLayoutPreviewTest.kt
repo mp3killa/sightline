@@ -1,7 +1,6 @@
 package io.mp.sightline.ui
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.intellij.ui.JBSplitter
 import com.intellij.util.ui.UIUtil
 import io.mp.sightline.android.AndroidContext
 import io.mp.sightline.android.DeviceContext
@@ -14,7 +13,6 @@ import io.mp.sightline.settings.ClaudeSettings
 import io.mp.sightline.ui.components.ContextChip
 import io.mp.sightline.ui.state.PendingImage
 import io.mp.sightline.ui.state.ResponsiveLayout
-import io.mp.sightline.ui.state.WorkspaceMode
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
@@ -100,33 +98,33 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
             """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"$id","content":${quote(content)},"is_error":$isError}]}}"""
         )
 
-        p.addUserMessageForPreview("Make the activity map stop eating half the chat view.")
+        p.addUserMessageForPreview("A failed turn just shows a red line — give the user something to do.")
         assistantText(
             """
-            I found the cause. `ResponsiveLayout.allowSplitDefault()` was **never called** —
-            the guard existed but was dead code.
+            The error text is true and it's a dead end. I've made it a card that says what the
+            failure **means** and offers the two or three things worth doing next.
 
             ## What I changed
 
-            - Wired the guard so `SPLIT` only survives on a wide panel
-            - Demoted narrow layouts to `CHAT`, not the graph
+            - Classified the CLI's error text into a typed failure, `UNKNOWN` when unsure
+            - Withheld **Retry** whenever it would not send the same message again
 
-            | Width | Before | After |
-            |---|---|---|
-            | Narrow | Graph only | Conversation |
-            | Wide | Split | Split |
+            | Failure | Offers |
+            |---|---|
+            | Not signed in | Copy sign-in command, check it, retry |
+            | Unrecognised | The CLI's own words, health check, copy |
             """.trimIndent()
         )
-        toolUse("t1", "Read", """{"file_path":"src/main/kotlin/io/mp/claudecodepanel/ui/ClaudePanel.kt"}""")
+        toolUse("t1", "Read", """{"file_path":"src/main/kotlin/io/mp/sightline/ui/ClaudePanel.kt"}""")
         toolResult("t1", "1767 lines read")
         toolUse("t2", "Bash", """{"command":"./gradlew test","description":"Run the test suite"}""")
         toolResult("t2", "BUILD SUCCESSFUL in 8s\n368 tests, 0 failures")
         toolUse(
             "t3", "Edit",
-            """{"file_path":"src/main/kotlin/io/mp/claudecodepanel/ui/state/WorkspaceModes.kt","old_string":"fun toViewMode(mode: WorkspaceMode): String","new_string":"fun effectiveMode(preferred: WorkspaceMode, profile: LayoutProfile): WorkspaceMode"}"""
+            """{"file_path":"src/main/kotlin/io/mp/sightline/ui/state/SessionFailure.kt","old_string":"fun classify(raw: String): Advice","new_string":"fun classify(raw: String, exitCode: Int? = null, canRetry: Boolean = false): Advice"}"""
         )
         toolResult("t3", "Applied")
-        assistantText("The split now only appears when there is genuinely room for it.")
+        assistantText("A failed turn now ends with somewhere to go, not just a statement of fact.")
         feed("""{"type":"result","result":"done","duration_ms":51600,"num_turns":13,"total_cost_usd":0.404,"is_error":false}""")
         // A pasted-screenshot turn, so the preview shows the thumbnail row in the user bubble.
         p.addUserMessageForPreview("Here's how the panel looks after that change:", listOf(previewScreenshot()))
@@ -182,8 +180,6 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
     }
 
     /** The splitter is present only when the two-pane layout is actually installed. */
-    private fun isSplit(c: Component): Boolean = descendants(c).any { it is JBSplitter && it.isShowing || it is JBSplitter && it.parent != null }
-
     private fun render(c: JComponent, w: Int, h: Int, out: File) {
         val img = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
         val g = img.createGraphics()
@@ -199,13 +195,9 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
 
     fun testWritesChatLayoutPreviewsAtEveryWidth() {
         val dir = File("build").apply { mkdirs() }
-        val settings = ClaudeSettings.getInstance().state
-        settings.showActivityMap = true
-        settings.activityViewMode = "split" // the shipped default — the case Tier 1 changes
-
         // Tool cards are hidden unless details are on; the preview wants them visible, since their
-        // visual weight is exactly what Tier 2 is about.
-        settings.showDetails = true
+        // visual weight is what these renders are for.
+        ClaudeSettings.getInstance().state.showDetails = true
 
         for ((name, w) in widths) {
             val p = panel()
@@ -220,82 +212,6 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
             render(comp, w, h, out)
             println("[chat-layout-preview] wrote ${out.absolutePath} (${w}x$h)")
             assertTrue("preview not written for $name", out.length() > 2000)
-        }
-    }
-
-    /**
-     * The Tier 1 invariant, narrowed to where it belongs: at a width that genuinely cannot carry
-     * two panes, the conversation survives. Before the fix a narrow panel fell back to the *graph*,
-     * leaving no transcript at all. MEDIUM no longer demotes — the split button is offered there,
-     * and a visible control that silently does nothing reads as a bug.
-     */
-    fun testNarrowPanelsKeepTheConversation() {
-        val settings = ClaudeSettings.getInstance().state
-        settings.showActivityMap = true
-        settings.activityViewMode = "split"
-        val p = panel()
-        layoutTree(p.component, 420, 900)
-
-        assertFalse(
-            "at 420px the two-pane split must be demoted so the conversation gets the width",
-            isSplit(p.component),
-        )
-        assertEquals(
-            "a width-driven demotion must not rewrite the user's preference",
-            "split",
-            ClaudeSettings.getInstance().state.activityViewMode,
-        )
-    }
-
-    /** SPLIT engages wherever the split button is offered — MEDIUM and WIDE alike. */
-    fun testMediumAndWidePanelsHonourTheSplitPreference() {
-        val settings = ClaudeSettings.getInstance().state
-        for (w in listOf(720, 1400)) {
-            settings.showActivityMap = true
-            settings.activityViewMode = "split"
-            val p = panel()
-            layoutTree(p.component, w, 900)
-            assertEquals("split", ClaudeSettings.getInstance().state.activityViewMode)
-            assertTrue("a ${w}px panel should honour the split preference", isSplit(p.component))
-        }
-    }
-
-    /**
-     * Regression: Splitter.setFirstComponent no-ops when handed the instance it still believes it
-     * owns, but CHAT/MAP steal the panes from the splitter (Container.add reparents). So
-     * SPLIT → CHAT → SPLIT re-installed a splitter that never re-added the chat pane — the header's
-     * split toggle lit up while only one view rendered. Both round trips must restore both panes.
-     */
-    fun testReenteringSplitRestoresBothPanes() {
-        val settings = ClaudeSettings.getInstance().state
-        settings.showActivityMap = true
-        settings.activityViewMode = "split"
-        val p = panel()
-        seedTranscript(p)
-        layoutTree(p.component, 1400, 900)
-
-        // The activity map holds its own internal JBSplitter, so identify the chat/map splitter by
-        // instance — a tree search cannot tell them apart.
-        val s = p.chatMapSplitterForTest()
-        fun assertBothPanes(leg: String) {
-            assertNotNull("[$leg] the splitter should be installed", s.parent)
-            val first = s.firstComponent
-            val second = s.secondComponent
-            assertNotNull("[$leg] the chat pane must be present", first)
-            assertNotNull("[$leg] the map pane must be present", second)
-            assertSame("[$leg] the chat pane must actually be a child of the splitter", s, first.parent)
-            assertSame("[$leg] the map pane must actually be a child of the splitter", s, second.parent)
-        }
-
-        assertBothPanes("initial split")
-
-        for (detour in listOf(WorkspaceMode.CHAT, WorkspaceMode.ACTIVITY)) {
-            p.setWorkspaceForTest(detour)
-            UIUtil.dispatchAllInvocationEvents()
-            assertNull("in ${detour.name} the chat/map splitter should be uninstalled", s.parent)
-            p.setWorkspaceForTest(WorkspaceMode.SPLIT)
-            UIUtil.dispatchAllInvocationEvents()
-            assertBothPanes("split after ${detour.name}")
         }
     }
 
@@ -319,8 +235,6 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
      */
     fun testFirstOpenUsesTheFullChatColumnWithoutResizing() {
         val settings = ClaudeSettings.getInstance().state
-        settings.showActivityMap = true
-        settings.activityViewMode = "split"
 
         val p = panel()
         // A fresh panel shows the empty state, so the transcript isn't in the tree yet — seed a turn
@@ -332,9 +246,13 @@ class ChatLayoutPreviewTest : BasePlatformTestCase() {
         val pad = p.transcriptPaddingForTest()
         assertTrue("the chat column should have a real width, got $column", column > 200)
         val content = column - pad * 2
+        // The reading cap deliberately narrows a very wide column, so "fills it" means: as wide as
+        // the cap allows, and never the sliver a padding computed from a not-yet-laid-out viewport
+        // produced. Both failure modes show up as content well under this floor.
+        val expected = minOf((column * 0.8).toInt(), ResponsiveLayout.MIN_CONTENT_WIDTH * 2)
         assertTrue(
             "the conversation should fill its column: column=$column pad=$pad content=$content",
-            content > column * 0.8,
+            content >= expected,
         )
     }
 

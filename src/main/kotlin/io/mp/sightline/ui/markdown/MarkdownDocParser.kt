@@ -1,5 +1,6 @@
 package io.mp.sightline.ui.markdown
 
+import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
@@ -18,7 +19,12 @@ import org.intellij.markdown.parser.MarkdownParser
 object MarkdownDocParser {
 
     fun parse(text: String): List<MdBlock> = try {
-        val root = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(text)
+        // Deliberately the two-argument constructor plus `parse`, not `MarkdownParser(flavour)` and
+        // `buildMarkdownTreeFromString` — both of those are deprecated in the bundled library and the
+        // Plugin Verifier reports them. The cancellation-token overload is the library's other
+        // replacement, but it is marked experimental, which trades one report for another.
+        val parser = MarkdownParser(GFMFlavourDescriptor(), true)
+        val root = parser.parse(MarkdownElementTypes.MARKDOWN_FILE, text, true)
         root.children.mapNotNull { block(it, text) }.ifEmpty { plainFallback(text) }
     } catch (e: Exception) {
         plainFallback(text)

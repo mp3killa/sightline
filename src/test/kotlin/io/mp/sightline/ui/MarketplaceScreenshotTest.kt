@@ -50,7 +50,7 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
 
     fun testScreenshot1Conversation() {
         if (!applyTheme(dark = true)) return
-        val p = panel(showMap = false)
+        val p = panel()
 
         user(p, "The route list is showing stale data after a refresh. Any idea why?")
         assistant(
@@ -95,7 +95,7 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
 
     fun testScreenshot2ReviewADiff() {
         if (!applyTheme(dark = true)) return
-        val p = panel(showMap = false)
+        val p = panel()
 
         user(p, "Fix it — use the observable query.")
         assistant(
@@ -122,51 +122,11 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
         write(p, "02-review-a-change.png")
     }
 
-    // ---------- 3. the Activity Map ----------
+    // ---------- 3. Android context + a structured question ----------
 
-    fun testScreenshot3ActivityMap() {
+    fun testScreenshot3AndroidContext() {
         if (!applyTheme(dark = true)) return
-        val p = panel(showMap = true, viewMode = "split")
-
-        user(p, "Why is the delivery screen crashing on open?")
-        assistant(p, "Reading the screen and its view model, then reproducing on the emulator.")
-        toolUse(p, "t1", "Read", """{"file_path":"app/src/main/java/com/example/routes/ui/DeliveryScreen.kt"}""")
-        toolResult(p, "t1", "212 lines read")
-        toolUse(p, "t2", "Read", """{"file_path":"app/src/main/java/com/example/routes/ui/DeliveryViewModel.kt"}""")
-        toolResult(p, "t2", "96 lines read")
-        toolUse(p, "t3", "Read", """{"file_path":"data/src/main/java/com/example/routes/RouteRepository.kt"}""")
-        toolResult(p, "t3", "184 lines read")
-        toolUse(p, "t4", "Bash", """{"command":"./gradlew :app:assembleDebug","description":"Build the app"}""")
-        toolResult(p, "t4", "BUILD SUCCESSFUL in 21s")
-        toolUse(p, "t5", "Bash", """{"command":"adb logcat -d","description":"Read the crash"}""")
-        toolResult(
-            p, "t5",
-            "E AndroidRuntime: FATAL EXCEPTION: main\n" +
-                "E AndroidRuntime: Process: com.example.routes, PID: 8123\n" +
-                "E AndroidRuntime: java.lang.IllegalStateException: Route was not loaded\n" +
-                "E AndroidRuntime: \tat com.example.routes.ui.DeliveryViewModel.load(DeliveryViewModel.kt:42)\n",
-            isError = true,
-        )
-        toolUse(p, "t6", "Bash", """{"command":"./gradlew :app:testDebugUnitTest","description":"Run the tests"}""")
-        toolResult(p, "t6", "BUILD SUCCESSFUL in 9s\n41 tests, 0 failures")
-        assistant(p, "The view model reads `route` before the load completes — that's the crash.")
-        result(p)
-
-        // Lay out first so the canvas has real dimensions, then settle the force simulation and frame
-        // it. Without this the render catches frame one, with every node stacked near the origin —
-        // which reads as a layout defect rather than an unsettled simulation.
-        p.component.preferredSize = Dimension(width, height)
-        layoutTree(p.component, width, height)
-        p.settleActivityMapForPreview()
-
-        write(p, "03-activity-map.png")
-    }
-
-    // ---------- 4. Android context + a structured question ----------
-
-    fun testScreenshot4AndroidContext() {
-        if (!applyTheme(dark = true)) return
-        val p = panel(showMap = false)
+        val p = panel()
         p.setAndroidContextForPreview(androidContext())
 
         user(p, "Run the tests for what I just changed.")
@@ -184,7 +144,7 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
         )
         question(p, "req-2")
 
-        write(p, "04-android-context.png")
+        write(p, "03-android-context.png")
     }
 
     /**
@@ -260,11 +220,9 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
 
     // ---------- rendering ----------
 
-    private fun panel(showMap: Boolean, viewMode: String = "chat"): ClaudePanel {
+    private fun panel(): ClaudePanel {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true          // tool cards visible — they are a selling point
-        settings.showActivityMap = showMap
-        settings.activityViewMode = viewMode
         settings.permissionMode = "auto"
         return ClaudePanel(project, testRootDisposable)
     }

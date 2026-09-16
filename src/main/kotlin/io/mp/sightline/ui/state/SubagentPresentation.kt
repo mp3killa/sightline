@@ -36,9 +36,9 @@ object SubagentPresentation {
 
     sealed interface Entry {
         /**
-         * One tool the subagent used. [input] is carried through verbatim so the activity map can be
-         * fed the same structured event the main agent's tools produce — the map's rule is that a node
-         * comes from a tool's own arguments, never from prose about them.
+         * One tool the subagent used. [input] is carried through verbatim so the same structured event
+         * the main agent's tools produce can be fed to the status model — the rule being that what is
+         * reported comes from a tool's own arguments, never from prose about them.
          */
         data class Activity(val tool: String, val summary: String, val input: JsonObject? = null) : Entry
 

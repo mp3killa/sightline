@@ -25,7 +25,19 @@ claude -p --input-format stream-json --output-format stream-json --verbose --inc
      `signature_delta`), `content_block_stop`, `message_delta`, `message_stop`
   5. `assistant` — **per-completed-block snapshot** (one block per event, in order)
   6. `user` — carries `tool_result` blocks (`tool_use_id`, `content`, `is_error`)
-  7. `result` — `{result, session_id, total_cost_usd, duration_ms, num_turns, is_error, permission_denials, usage}`
+  7. `result` — `{result, session_id, total_cost_usd, duration_ms, num_turns, is_error, permission_denials, usage, modelUsage}`
+
+**Token usage / context occupancy** (captured from 2.1.235, and what `ui/state/ContextUsage` reads):
+`stream_event`/`message_start` carries `message.usage` at the start of each request and `result`
+carries the turn's final `usage`, both shaped
+`{input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, …}`. `result`
+additionally carries **`modelUsage`**, keyed by model id, whose entry includes **`contextWindow`**
+(200000 for Haiku 4.5) and `maxOutputTokens` — the only place the CLI states the window.
+Occupancy is the sum of the four, and it is **cumulative across turns**: measured over one session it
+went 34,065 → 35,297 → 35,380 while `input_tokens` stayed at **10**, because the conversation's history
+rides in `cache_read_input_tokens`. Note this is *not* the figure `/context` prints — on the same fresh
+session `/context` estimated 30.5k against a `usage` sum of 34.0k, since `/context` is the CLI's own
+estimate by category. Both are true; they measure different things.
 - `--include-partial-messages` gives the token-level `stream_event` deltas (live typing).
 - Session: `--resume <id>`, `--continue`, `--session-id <uuid>`, `--fork-session`.
 
@@ -68,7 +80,10 @@ user message can be sent back-to-back (no delay needed; verified).
 ```
 - Allow: `{"behavior":"allow","updatedInput":<echo the input>}` (+ `updatedPermissions` = the
   `permission_suggestions` array for "always allow"). Verified: the tool then actually runs.
-- Deny: `{"behavior":"deny","message":"…"}`.
+- Deny: `{"behavior":"deny","message":"…"}`. **The `message` reaches the model verbatim** as the
+  tool's own result — verified by denying a `Bash` with "BLOCKED_BY_USER_XQ42: never delete files; run
+  `echo safe` instead" and watching exactly that text come back as the `tool_result` the model then
+  quoted. This is what makes "Deny with reason…" a redirect rather than only a block.
 - Any **unknown** control_request → reply `{"type":"control_response","response":{"subtype":"error","request_id":"<R>","error":"…"}}` so the CLI doesn't hang.
 
 Composes with `--permission-mode` (`default` prompts all, `acceptEdits` only non-edit tools,

@@ -31,36 +31,34 @@ import javax.swing.JComponent
 class ChatGalleryPreviewTest : BasePlatformTestCase() {
 
     private val richMarkdown = """
-        I traced the layout problem to a guard that was never wired up.
+        I traced the failure UX problem to what the panel does with an error it can't fix.
 
         ## What changed
 
-        - Wired `ResponsiveLayout.allowSplitDefault()` into the panel
-        - Demoted a cramped `SPLIT` to **CHAT**, never to the graph
-        - [x] Reading width measured from the chat column
-        - [ ] Composer alignment inside SPLIT (Tier 2)
+        - A failed turn renders as a card, not a red line of the CLI's own text
+        - `UNKNOWN` invents nothing: the CLI's wording, and no explanation
+        - [x] Retry withheld once the turn has run tools
+        - [ ] Sign-in check relays `claude auth status` verbatim (Tier 2)
 
-        | Width | Before | After |
+        | Failure | Explains | Offers |
         |---|---|:-:|
-        | Narrow | Graph only | Conversation |
-        | Medium | Split | Conversation |
-        | Wide | Split | Split |
+        | Not signed in | Yes | Copy command, check, retry |
+        | Rate limited | Yes | Retry |
+        | Unrecognised | No | Health check, copy |
 
         ```kotlin
-        fun effectiveMode(preferred: WorkspaceMode, profile: LayoutProfile): WorkspaceMode =
-            if (preferred == WorkspaceMode.SPLIT && !allowSplitDefault(profile)) {
-                WorkspaceMode.CHAT
-            } else {
-                preferred
-            }
+        private fun retryableMessage(): String? {
+            if (running || toolsRanThisTurn) return null
+            return lastSentText?.takeIf { it.isNotBlank() }
+        }
         ```
 
-        > The guard existed, was documented, and was tested — but nothing called it.
+        > The error was already on screen. What was missing was anywhere to go from it.
 
         > [!WARNING]
-        > A transient narrow layout must never rewrite the persisted preference.
+        > A turn that already edited files must never offer a one-click replay.
 
-        See `ui/state/WorkspaceModes.kt` for the pure logic.
+        See `ui/state/SessionFailure.kt` for the pure logic.
     """.trimIndent()
 
     private fun quote(s: String): String = JsonPrimitive(s).toString()
@@ -68,12 +66,12 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     private fun seed(p: ClaudePanel) {
         fun feed(line: String) = p.renderProtocolLineForPreview(line)
 
-        p.addUserMessageForPreview("Stop the activity map from eating half the chat view.")
+        p.addUserMessageForPreview("A failed turn just shows a red line — give the user something to do.")
 
         feed("""{"type":"assistant","message":{"content":[{"type":"text","text":${quote(richMarkdown)}}]}}""")
 
         // A routine success — the case Tier 2 wants demoted to a compact row.
-        feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/main/kotlin/io/mp/claudecodepanel/ui/ClaudePanel.kt"}}]}}""")
+        feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/main/kotlin/io/mp/sightline/ui/ClaudePanel.kt"}}]}}""")
         feed("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"1767 lines","is_error":false}]}}""")
 
         // A failure — must stay visually louder than the routine rows above.
@@ -81,7 +79,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         feed("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"FAILURE: Could not resolve idea:ideaIC:2025.3\nBUILD FAILED in 4s","is_error":true}]}}""")
 
         // An edit with a diff.
-        feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"src/main/kotlin/io/mp/claudecodepanel/ui/state/WorkspaceModes.kt","old_string":"fun toViewMode(mode: WorkspaceMode): String = when (mode) {","new_string":"fun effectiveMode(preferred: WorkspaceMode, profile: LayoutProfile): WorkspaceMode =\n    if (preferred == WorkspaceMode.SPLIT) WorkspaceMode.CHAT else preferred"}}]}}""")
+        feed("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"src/main/kotlin/io/mp/sightline/ui/state/SessionFailure.kt","old_string":"fun classify(raw: String): Advice = when {","new_string":"fun classify(raw: String, exitCode: Int? = null, canRetry: Boolean = false): Advice {\n    val detail = raw.trim()"}}]}}""")
         feed("""{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"Applied","is_error":false}]}}""")
 
         // A permission prompt — the real ApprovalBlock, via the control channel.
@@ -96,20 +94,39 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         feed(
             """{"type":"control_request","request_id":"req-2","request":{"subtype":"can_use_tool",
             "tool_name":"AskUserQuestion","tool_use_id":"t5","input":{"questions":[
-              {"question":"Which layout should be the default on a wide panel?","header":"Layout",
+              {"question":"What should Retry do after a turn that already edited files?","header":"Retry",
                "options":[
-                 {"label":"Split","description":"Conversation and activity graph side by side"},
-                 {"label":"Chat only","description":"Graph stays available on its own tab"}]}]}}}"""
+                 {"label":"Withhold it","description":"Re-sending would replay those edits and commands"},
+                 {"label":"Offer it with a warning","description":"The user decides, having been told"}]}]}}}"""
         )
         feed(
             """{"type":"control_request","request_id":"req-3","request":{"subtype":"can_use_tool",
             "tool_name":"AskUserQuestion","tool_use_id":"t6","input":{"questions":[
               {"question":"Which milestones should ship next?","header":"Milestones","multiSelect":true,
                "options":[
-                 {"label":"Compact tool rows","description":"M2"},
-                 {"label":"File edit blocks","description":"M3"},
-                 {"label":"Hover actions","description":"M4"}]}]}}}"""
+                 {"label":"Auth failures","description":"Sign in, check, retry"},
+                 {"label":"Rate limits","description":"Retry once the limit resets"},
+                 {"label":"Unrecognised errors","description":"The CLI's own words, verbatim"}]}]}}}"""
         )
+
+        // A plan review — the real ExitPlanMode payload shape, so the plan card is the production one.
+        feed(
+            """{"type":"control_request","request_id":"req-plan","request":{"subtype":"can_use_tool",
+            "tool_name":"ExitPlanMode","tool_use_id":"tp",
+            "input":{"plan":${quote("## Add a --dry-run flag\n\n1. **Parse it** — add the flag to the argument parser, defaulting to off.\n2. **Thread it through** — pass it to every side-effecting call rather than reading a global.\n3. **Test the refusal** — assert the destructive path is not taken when it is set.")},"planFilePath":"/tmp/plan-dry-run.md"}}}"""
+        )
+
+        // Usage as the CLI really reports it (captured from 2.1.235), so the composer's context chip
+        // renders from the production parse path rather than a stub.
+        feed(
+            """{"type":"result","result":"done","is_error":false,"num_turns":3,"duration_ms":51600,"total_cost_usd":0.404,
+            "usage":{"input_tokens":10,"cache_creation_input_tokens":150,"cache_read_input_tokens":35181,"output_tokens":39},
+            "modelUsage":{"claude-sonnet-5":{"inputTokens":10,"outputTokens":39,"contextWindow":200000}}}"""
+        )
+
+        // A failed turn — the actionable failure card, built by the production result path so the
+        // buttons are the ones a real failure offers.
+        feed("""{"type":"result","is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","duration_ms":540,"num_turns":1,"total_cost_usd":0.0}""")
     }
 
     private fun descendants(root: Component): List<Component> {
@@ -181,13 +198,11 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     private fun renderGallery(name: String, details: Boolean = true) {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = details       // tool cards visible — their weight is the point
-        settings.showActivityMap = false     // gallery is about the conversation column
-        settings.activityViewMode = "chat"
 
         val p = ClaudePanel(project, testRootDisposable)
         seed(p)
         val w = 900
-        val h = 1750
+        val h = 2400
         p.component.preferredSize = Dimension(w, h)
         layoutTree(p.component, w, h)
 
@@ -223,38 +238,12 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     }
 
     /**
-     * M5: selecting a node in the activity map must reveal the transcript row that produced it.
-     * Drives the real callback rather than a stub, so a broken wiring fails here.
-     */
-    fun testMapSelectionRevealsTheOriginatingTranscriptRow() {
-        val settings = ClaudeSettings.getInstance().state
-        settings.showDetails = false // deliberately off: revealing must turn details on itself
-        settings.showActivityMap = true
-        settings.activityViewMode = "split"
-        val p = ClaudePanel(project, testRootDisposable)
-        seed(p)
-        layoutTree(p.component, 1400, 900)
-
-        val edited = "src/main/kotlin/io/mp/claudecodepanel/ui/state/WorkspaceModes.kt"
-        assertTrue(
-            "the edited file should have a node to select",
-            p.selectActivityNodeByPathForTest(edited),
-        )
-        assertTrue(
-            "selecting a node must reveal the hidden transcript row, not silently do nothing",
-            ClaudeSettings.getInstance().state.showDetails,
-        )
-    }
-
-    /**
      * M6: a marathon session must not grow an unbounded component tree. Drives more turns than the
      * cap through the real event path and checks the oldest are actually released.
      */
     fun testLongSessionEvictsOldestTurns() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = false
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
         val p = ClaudePanel(project, testRootDisposable)
 
         val overshoot = 12
@@ -289,8 +278,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         try {
             val settings = ClaudeSettings.getInstance().state
             settings.showDetails = true
-            settings.showActivityMap = false
-            settings.activityViewMode = "chat"
             val p = ClaudePanel(project, testRootDisposable)
             seed(p)
             p.queueMessageForPreview("And then run the tests")
@@ -322,8 +309,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         try {
             val settings = ClaudeSettings.getInstance().state
             settings.showDetails = true
-            settings.showActivityMap = false
-            settings.activityViewMode = "chat"
             // The send path gates on the first-run disclosure; acknowledging it keeps this headless.
             // Restored below — it is a safety gate, and leaking an acknowledgement into another test
             // could hide a regression in the very thing that gate exists for.
@@ -379,8 +364,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     fun testHoverActionsExistButStartHidden() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
         val p = ClaudePanel(project, testRootDisposable)
         seed(p)
         layoutTree(p.component, 900, 1750)
@@ -424,8 +407,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     fun testStreamingKeepsAutoFollowWithoutUserScrolling() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
         val p = ClaudePanel(project, testRootDisposable)
         layoutTree(p.component, 900, 600)
         assertTrue("follow starts armed", p.isFollowingForTest())
@@ -460,8 +441,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     fun testInlineActionsCarryNoFixedSizeButtonTypeAndHaveLabels() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
         val p = ClaudePanel(project, testRootDisposable)
         seed(p)
         layoutTree(p.component, 900, 1750)
@@ -487,8 +466,6 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
     fun testUserScrollingUpStillPausesFollowEvenWhileStreaming() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
         val p = ClaudePanel(project, testRootDisposable)
         repeat(20) { i ->
             p.addUserMessageForPreview("turn $i")

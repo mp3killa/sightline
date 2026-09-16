@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "io.mp"
-version = "0.8.1"
+version = "0.9.0"
 
 // The Marketplace channel is derived from the version, never chosen by hand. A pre-release suffix
 // publishes to its own channel, which users opt into by adding a repository URL; only a bare version
@@ -64,20 +64,14 @@ dependencies {
         }
 
         // The platform test framework: needed so the `test` task's JVM (which the plugin decorates
-        // with a platform file-system bootstrap arg) can start. Our tests are plain JUnit4 unit
-        // tests over the activity/graph logic and don't spin up an IDE fixture.
+        // with a platform file-system bootstrap arg) can start. Most tests are plain JUnit4 unit
+        // tests over the platform-free logic and don't spin up an IDE fixture.
         testFramework(TestFrameworkType.Platform)
 
-        // Java PSI (com.intellij.psi.PsiClass) + Java UAST provider — used by ProjectStructureEnricher
-        // for precise class-hierarchy (extends/implements) resolution across Kotlin & Java via UAST.
-        // Always present in Android Studio; the plugin declares <depends>com.intellij.modules.java</depends>.
-        bundledPlugin("com.intellij.java")
-
-        // The Kotlin plugin puts the Kotlin UAST provider on the classpath so the enricher's Kotlin path
-        // is covered by a BasePlatformTestCase (Kotlin uses the same UAST code as Java). The main plugin
-        // does NOT declare a runtime <depends> on it — it only calls language-neutral UAST — so this is
-        // effectively test-scoped. Always bundled in Android Studio / IntelliJ IDEA.
-        bundledPlugin("org.jetbrains.kotlin")
+        // No `com.intellij.java` / `org.jetbrains.kotlin` here on purpose. They were the Java + Kotlin
+        // UAST providers that `ProjectStructureEnricher` needed for class-hierarchy resolution; that
+        // whole chain went with the activity map it fed. Nothing left calls Java PSI or UAST —
+        // `FilenameIndex` is core platform — so the plugin no longer needs a language plugin at all.
 
         // Android Studio's project model, for `ide/android/studio/StudioFactProvider` only. Declared in
         // plugin.xml as an OPTIONAL <depends> (config-file="sightline-android.xml"), so the artifact

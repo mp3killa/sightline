@@ -87,36 +87,33 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
          */
         var mcpAutoSync by property(true)
 
-        /** Show the live Agent Activity Map (graph of observable tool activity) while Claude works. */
-        var showActivityMap by property(true)
-
-        /** Layout of the transcript vs. the activity map: "chat" | "split" | "map". */
         /**
-         * Which of Chat / Split / Map the panel opens in.
+         * Static status indicators with no pulsing/animation (lower CPU, and an accessibility
+         * preference for anyone who does not want movement in the panel).
          *
-         * **Default `chat` since 0.8.1** (was `split`). Split is honoured from 520px up and gives the
-         * conversation 62% of the panel, so at a typical docked width the chat column lands at ~320px —
-         * under `ResponsiveLayout.MIN_CONTENT_WIDTH`, the floor this codebase says a conversation needs
-         * to stay readable. Squeezing the primary surface below its own stated minimum to show a graph
-         * nobody asked for yet is the wrong default; the map is one click away on the header switch, and
-         * choosing it persists.
+         * The key keeps its `activity*` name although the activity map it was introduced for is gone:
+         * the status strip reads the same preference, and renaming the key would silently reset the
+         * choice of every user who had turned motion off.
          */
-        var activityViewMode by string("chat")
-
-        /** Static activity-map layout with no pulsing/animation (lower CPU). */
         var activityReduceMotion by property(false)
 
-        /** Max nodes rendered in the activity map at once. */
-        var activityMaxNodes by property(200)
+        /**
+         * Conversation text size, as a percentage of the IDE's own font (see `ui/state/TextScale`).
+         * Scales the transcript only — chrome stays on the IDE's metrics so the panel still looks
+         * like part of the IDE.
+         */
+        var transcriptFontScale by property(100)
 
-        /** Max nodes retained in a session before the oldest non-pinned ones are evicted. */
-        var activityMaxRetained by property(500)
-
-        /** Whether the activity-log dock is expanded (vs. the compact collapsed summary). */
-        var activityTimelineExpanded by property(false)
-
-        /** Whether the one-time "observable activity only" activity-map disclaimer was dismissed. */
-        var activityAboutDismissed by property(false)
+        /**
+         * Whether Sightline may remember which CLI session belongs to a project, so a conversation can
+         * be resumed after the IDE closes. **Off until the user accepts the consent dialog** — see
+         * `ui/state/SessionPersistence` for what is stored (a session id and a date, nothing else) and
+         * why this is a deliberate, narrowly-drawn exception to the no-persistence rule.
+         *
+         * The id itself is *not* stored here: it is per project, and lives in that project's own
+         * `PropertiesComponent`. This flag only records the decision, which is application-wide.
+         */
+        var rememberSessions by property(false)
 
         /**
          * Android SDK location. Blank = auto-detect (ANDROID_HOME, ANDROID_SDK_ROOT, `local.properties`,

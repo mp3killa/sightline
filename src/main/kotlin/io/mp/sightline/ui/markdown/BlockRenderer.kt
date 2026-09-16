@@ -9,6 +9,8 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import io.mp.sightline.settings.ClaudeSettings
+import io.mp.sightline.ui.state.TextScale
 import io.mp.sightline.theme.ClaudeUiTokens
 import io.mp.sightline.ui.markdown.mermaid.MermaidParse
 import io.mp.sightline.ui.markdown.mermaid.MermaidParser
@@ -577,6 +579,21 @@ class BlockRenderer(
         return col
     }
 
-    private fun baseFont(): Font = UIUtil.getLabelFont()
-    private fun monoFont(): Font = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+    /**
+     * The conversation's base font: the IDE's label font at the user's reading scale. Read fresh on
+     * every call rather than cached, for the same reason `ClaudeUiTokens` hands out lazy colours — a
+     * value captured once pins the panel to whatever was current when a block was built, and blocks
+     * here outlive settings changes.
+     */
+    private fun baseFont(): Font = scaled(UIUtil.getLabelFont())
+
+    private fun monoFont(): Font =
+        scaled(EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN))
+
+    private fun scaled(font: Font): Font {
+        val percent = runCatching { ClaudeSettings.getInstance().state.transcriptFontScale }
+            .getOrDefault(TextScale.DEFAULT)
+        if (!TextScale.isCustom(percent)) return font
+        return font.deriveFont(TextScale.size(font.size2D, percent))
+    }
 }

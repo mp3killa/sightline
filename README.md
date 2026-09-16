@@ -32,9 +32,20 @@ stock Android Studio runtime.
   copied *file* attaches it as an `@path` chip instead.
 - **Native IDE integration** via the `ide` MCP server: Claude sees your selection and open editors,
   gets scoped diagnostics, and edits open in **Android Studio's own diff viewer** to accept or reject.
-- The **Agent Activity Map** — a live force‑directed graph of what Claude is *observably* touching
-  (files, searches, commands, Gradle tasks, tests, errors), with a focus card, node inspector,
-  timeline, and **Chat / Split / Map** layouts.
+- **`@`-mention any project file** — type `@` in the composer and pick from a ranked file list; the
+  reference is expanded by the CLI itself, so it reads the current file rather than a stale paste.
+- **Plan mode as a document you can edit** — a proposed plan renders as Markdown with **Approve**,
+  **Edit plan…** and **Keep planning**; editing sends your rewritten plan back as Claude's instruction.
+- **Resume a conversation after a restart** *(opt-in)* — Sightline can remember a session id per
+  project, after you accept a dialog that says exactly what is stored. Claude gets its history back;
+  the panel starts empty, because Sightline stores no transcript.
+- **Context-window usage in the composer footer** — *35.4k / 200k · 18%*, from the CLI's own reported
+  usage, amber past 70% and red past 90%. Click it for `/context`, the CLI's full breakdown, which
+  costs no tokens.
+- **Deny with a reason** — a permission prompt can redirect the work ("not that, run the tests first")
+  instead of only blocking it; the reason reaches Claude as the tool's result.
+- **Editor entry points** — *Add Selection to Sightline* references the selected lines as
+  `@path#L10-20`; both actions ship with no default shortcut, bindable in Settings → Keymap.
 - A **Health check** panel (composer **More ▸ Health check…**) that preflights the CLI, the IDE
   server and your settings, with a **sanitised** "Copy report" for bug reports.
 - **Multi‑turn** conversations over a single persistent CLI process, with automatic session **resume** after Stop.
@@ -97,7 +108,10 @@ Launches a throwaway Android Studio with the plugin preinstalled. Edit the Kotli
 | IDE integration | on | Runs the `ide` MCP server: selection, open editors, diagnostics, native diffs. |
 | Stream partial messages | on | The live typing effect. |
 | Show details | off | Detailed transcript (thinking + tool cards) vs. compact. Approval and question cards always stay visible. |
-| Show activity map | on | Plus layout (`chat`/`split`/`map`, default **chat** — switch in the header), reduce motion, and node caps (200 visible / 500 retained). |
+| Reduce motion | off | Static status indicators, with no pulsing. |
+| Context usage | always | Shown in the composer footer once the CLI reports any. Not a setting. |
+| Conversation text size | 100% | 80–200% of the IDE font; scales the conversation, not the chrome. |
+| Remember sessions | **off** | Stores one session id + a date per project so a conversation can be resumed. Consent dialog first; off forgets it. |
 | Extra CLI args | — | Advanced: appended to every invocation. |
 
 ### Permission modes
@@ -119,8 +133,7 @@ Passed to the CLI as `--permission-mode`, and composed with interactive approval
  | ClaudePanel.kt (Swing)                         |
  |   transcript: per-turn block components        |   renders events
  |     (text / thinking / tool card / approval)   |
- |   ActivityMapPanel  (chat | split | map)       |
- |   header (wordmark / state / layout switch)    |
+ |   header (wordmark / session state / actions)  |
  |   composer (textarea + mode chip + Send/Stop)  |
  |        ^ parsed stream-json events             |
  |        |                                       |
@@ -148,11 +161,10 @@ Key source files:
 
 | File | Role |
 |---|---|
-| [ClaudeToolWindowFactory.kt](src/main/kotlin/io/mp/sightline/ClaudeToolWindowFactory.kt) | Registers the tool window |
+| [ClaudeToolWindowFactory.java](src/main/java/io/mp/sightline/ClaudeToolWindowFactory.java) | Registers the tool window |
 | [ui/ClaudePanel.kt](src/main/kotlin/io/mp/sightline/ui/ClaudePanel.kt) | Swing chat UI + event rendering |
 | [ui/markdown/](src/main/kotlin/io/mp/sightline/ui/markdown/) | Markdown parsing + rendering for assistant messages |
-| [ui/ActivityMapPanel.kt](src/main/kotlin/io/mp/sightline/ui/ActivityMapPanel.kt) | The Agent Activity Map view |
-| [activity/](src/main/kotlin/io/mp/sightline/activity/) | Platform‑free activity model, graph reducer and output parsers |
+| [activity/](src/main/kotlin/io/mp/sightline/activity/) | Platform‑free event model and build/test output parsers behind the status strip |
 | [process/ClaudeSession.kt](src/main/kotlin/io/mp/sightline/process/ClaudeSession.kt) | CLI process + stream‑json plumbing |
 | [process/ClaudePathResolver.kt](src/main/kotlin/io/mp/sightline/process/ClaudePathResolver.kt) | Finds the `claude` binary in GUI‑launched IDEs |
 | [ide/IdeServer.kt](src/main/kotlin/io/mp/sightline/ide/IdeServer.kt) | The `ide` MCP WebSocket server |
@@ -167,12 +179,11 @@ interactive flows are verified see [docs/TESTING.md](docs/TESTING.md).
 ## Roadmap / known limitations
 
 - **Images** in assistant replies are not rendered (all other GFM Markdown is).
-- **Deep code relationships** — full call graphs and inferred architectural links (ViewModel →
-  Composable, UseCase → Repository) are deliberately deferred; the map shows evidence‑backed
-  relationships only, so it never claims a link it can't justify.
-- **Timeline replay & persistence** — the activity log lives in memory for the current session
-  only; replaying to an earlier point and retaining past sessions are planned.
-- The activity map shows **observable** activity only. It makes no claim to reveal hidden reasoning.
+- **No session history** — a conversation lives in memory for as long as the project is open. The
+  CLI keeps its own session history under `~/.claude/projects/`; Sightline writes no transcript.
+- **The Agent Activity Map was removed** in favour of a smaller plugin. Its graph of observable
+  activity is gone; the live status line, the recovered‑failure tally and the per‑turn summary still
+  read the same build, test and tool events it was built on.
 
 ## Troubleshooting
 

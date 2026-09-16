@@ -83,8 +83,8 @@ When a prompt appears you get three choices:
 - **Allow always** — this tool, for the rest of the session. Not persisted across restarts.
 - **Deny** — the tool does not run. Claude is told, and continues.
 
-A denial is *not* an error. The Activity Map marks a denied node distinctly and drops the optimistic
-edge, so a denied edit never looks like it happened.
+A denial is *not* an error. The tool card says "Denied by user" and keeps the change it *would* have
+made visible, so a denied edit never looks like it happened.
 
 ## Reviewing a change
 

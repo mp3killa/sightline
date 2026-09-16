@@ -7,10 +7,8 @@ import io.mp.sightline.activity.CommandRun
 import io.mp.sightline.activity.ErrorObserved
 import io.mp.sightline.activity.FileEdited
 import io.mp.sightline.activity.FileRead
-import io.mp.sightline.activity.FilePackage
 import io.mp.sightline.activity.FileSearched
 import io.mp.sightline.activity.GradleTaskRun
-import io.mp.sightline.activity.StructuralRelation
 import io.mp.sightline.activity.StatusUpdated
 import io.mp.sightline.activity.SymbolInspected
 import io.mp.sightline.activity.TaskCompleted
@@ -150,8 +148,6 @@ class StatusModel(private val clock: () -> Instant = Instant::now) {
                 val verb = if (event.cancelled) "Cancelled" else "Blocked"
                 offer(outcome(StatusKind.WARNING, "$verb ${event.toolName}", "not run", now))
             }
-            // Background structure enrichment never changes the status line.
-            is StructuralRelation, is FilePackage -> view
         }
     }
 

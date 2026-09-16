@@ -223,7 +223,7 @@ are now in CLAUDE.md. **M1** — the context strip, removable chips, prompt inje
 and the tier-2/3 parsers — and **M2** — variant-aware task resolution, the build-failure classifier,
 stack-trace-to-source and targeted test selection — and **M3** — the logcat redactor, device actions,
 revertible state recipes and evidence-graded crash investigation — and **M5** — the manifest audit, route
-and deep-link analysis, and `GraphLens` — shipped 2026-07-20 too. **M4** shipped
+and deep-link analysis, and `GraphLens` (since removed with the activity map) — shipped 2026-07-20 too. **M4** shipped
 its verifiable half the same day — screen inspection, Compose source analysis, and the `limits` contract
 on both; what it deliberately did **not** ship is listed below.)
 

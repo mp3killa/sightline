@@ -51,7 +51,7 @@ What Sightline adds on top:
 | Path guard | Refuses sensitive locations outright; confirms writes outside the project |
 | Device action gate | Confirms anything that destroys app data, whatever the permission mode |
 | Logcat redaction | Strips credentials and personal data before a log can reach a prompt |
-| Activity Map | Shows what was actually touched, so a surprise is visible |
+| Tool cards | Every file read, command run and change made is shown as it happens |
 
 ## The IDE bridge
 

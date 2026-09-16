@@ -76,9 +76,12 @@ class FirstRunDisclosureTest {
     }
 
     @Test
-    fun `it closes by saying the choice is reversible`() {
+    fun `it closes by saying the choice is reversible, and where the work is visible`() {
         assertTrue(FirstRunDisclosure.FOOTER.contains("change the permission mode at any time"))
-        assertTrue(FirstRunDisclosure.FOOTER.contains("Activity Map"))
+        // Where you can see what it did. It named the Activity Map until that was removed; a notice
+        // pointing at a view that no longer exists is worse than one that points at nothing.
+        assertTrue(FirstRunDisclosure.FOOTER.contains("appears in the conversation"))
+        assertFalse(FirstRunDisclosure.FOOTER.contains("Activity Map"))
     }
 
     @Test

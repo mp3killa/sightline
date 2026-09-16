@@ -37,9 +37,9 @@ class PendingApproval(
     val title: String,
     val targetPath: String?,
     val canAllowAlways: Boolean,
-    private val handler: (ApprovalDecision) -> Unit,
+    private val handler: (ApprovalDecision, String?) -> Unit,
 ) {
-    internal fun invoke(decision: ApprovalDecision) = handler(decision)
+    internal fun invoke(decision: ApprovalDecision, reason: String?) = handler(decision, reason)
 }
 
 class ApprovalCoordinator {
@@ -56,14 +56,22 @@ class ApprovalCoordinator {
     fun get(id: String): PendingApproval? = pending[id]
     fun hasPending(): Boolean = pending.isNotEmpty()
 
-    /** Resolve a pending approval (human button or test bridge). Runs its handler exactly once. */
-    fun respond(id: String, decision: ApprovalDecision): ApprovalOutcome {
+    /**
+     * Resolve a pending approval (human button or test bridge). Runs its handler exactly once.
+     *
+     * [reason] rides along with a DENY and reaches the model verbatim: the control protocol's deny
+     * takes a `message`, and the CLI hands that straight to the model as the tool's result — verified
+     * against 2.1.235, where a denial carrying "never delete files; run `echo safe` instead" came back
+     * to the model as exactly that text. It is ignored for the allow decisions, which have no such
+     * channel.
+     */
+    fun respond(id: String, decision: ApprovalDecision, reason: String? = null): ApprovalOutcome {
         val approval = pending[id] ?: return ApprovalOutcome.NotFound(id)
         if (decision == ApprovalDecision.ALLOW_ALWAYS && !approval.canAllowAlways) {
             return ApprovalOutcome.Unsupported(id, decision)
         }
         pending.remove(id)
-        approval.invoke(decision)
+        approval.invoke(decision, reason?.takeIf { it.isNotBlank() })
         notifyListeners()
         return ApprovalOutcome.Applied
     }

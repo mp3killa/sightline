@@ -150,7 +150,11 @@ STATUS=${PIPESTATUS[0]}
 set -e
 
 echo
-if grep -q "Compatible\." "$WORK/last-report.txt"; then
+# Match the verdict line ("… against AI-…: Compatible"), not the string "Compatible." — the verifier
+# only writes that trailing period when it has informational notes to append ("Compatible. 10 usages
+# of deprecated API…"). A clean run with no deprecated or experimental usages at all prints a bare
+# "Compatible", which this check used to read as failure: the better the result, the louder it failed.
+if grep -qE ": Compatible(\.|$)" "$WORK/last-report.txt"; then
   echo "==> PASS — no compatibility problems."
   echo "    Deprecated and experimental API usages are informational; read them, don't ignore them."
   exit 0

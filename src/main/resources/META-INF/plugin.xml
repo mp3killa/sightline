@@ -6,7 +6,7 @@
     <vendor email="support@cxk.co.za" url="https://cxk.co.za">Michael Carroll</vendor>
 
     <description><![CDATA[
-        <p><b>Claude Code inside Android Studio, with visible project activity and controlled tool
+        <p><b>Claude Code inside Android Studio, with reviewable changes and controlled tool
         execution.</b></p>
 
         <p>
@@ -21,7 +21,6 @@
             <li>Stop a turn without losing the conversation, and pick up where you left off.</li>
             <li>Watch what a subagent is doing inside the task that started it.</li>
             <li>Run your own Claude Code commands, skills and plugins from the panel.</li>
-            <li>See files, commands, tests and relationships in the Activity Map.</li>
             <li>Inspect structured build, test and diagnostic results.</li>
         </ul>
 
@@ -55,48 +54,56 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.8.1</b> &#8212; the first stable release since 0.7.0, after a pass in a live IDE.</p>
+        <p><b>0.9.0</b> &#8212; a smaller, faster plugin, and the conversation gets the whole panel.</p>
 
-        <p><b>Stop keeps your conversation.</b> Stop now ends the turn instead of ending the CLI, so the
-        session, its MCP servers and everything Claude knows survive &#8212; your next message just
-        carries on. Press it again to end the process outright. A command Claude already started keeps
-        running either way, and Sightline now says so rather than implying your build stopped.</p>
+        <p><b>The Agent Activity Map has been removed.</b> The live graph of files, commands and
+        relationships was the largest and most platform-coupled thing here, and it earned less than it
+        cost. The conversation is now the entire panel &#8212; the Chat/Split/Map switch goes with it,
+        since a switch between one view and itself is worse than no control. Nothing in the conversation
+        changed: the status line, the recovered-failure tally and the per-turn summary all run on the
+        same observed build, test and tool events they always did. Sightline also no longer needs the
+        Java or Kotlin plugins to be present at all.</p>
 
-        <p><b>The permission mode chip now works mid-conversation.</b> Changing it used to save the
-        setting and nothing else, leaving the chip showing a policy that was not actually in force.</p>
+        <p><b>You can see how full the context is.</b> The composer footer now shows context-window usage
+        &#8212; <code>35.4k / 200k &#183; 18%</code> &#8212; from the CLI's own reported figures, turning
+        amber past 70% and red past 90%. Click it for <code>/context</code>, the full breakdown by
+        category, which costs no tokens.</p>
 
-        <p><b>You can see inside a Task.</b> Subagents used to render as a wall of raw JSON. You now get
-        what was delegated, the steps the subagent takes as it takes them, and what it concluded.</p>
+        <p><b>A failed turn now has somewhere to go.</b> An error used to be one red line. It is now a
+        card that says what the failure means and offers what is worth doing next &#8212; copy the
+        sign-in command, check the sign-in, retry, or copy the full text. An unrecognised error still
+        shows the CLI's own words and explains nothing, rather than guessing.</p>
 
-        <p><b>Your Claude Code commands are in the actions menu</b> &#8212; built-ins, your project's own
-        commands, and your plugins' skills, with their descriptions. Some, like <code>/context</code>,
-        cost no tokens at all.</p>
+        <p><b>Plan mode is a document you can edit.</b> A proposed plan renders as Markdown with
+        <b>Approve</b>, <b>Edit plan&#8230;</b> and <b>Keep planning</b>. Rewriting the plan sends your
+        version back as Claude's instruction, instead of arguing with it in chat afterwards.</p>
 
-        <p><b>Claude can finally use the Android tools.</b> They were registered on an MCP server the CLI
-        filters down to a single tool, so none of them had ever been callable. They are served under
-        their own name now.</p>
+        <p><b>Type <code>@</code> to reference any file in the project</b> &#8212; a ranked file list,
+        filename matches first. The reference is expanded by the CLI, so Claude reads the current file
+        rather than a stale paste. <b>Add Selection to Sightline</b> in the editor's context menu does
+        the same for the lines you have selected.</p>
 
-        <p><b>Compaction and rate limits are reported.</b> Both used to pass silently &#8212; which is why
-        Claude could seem to forget something you told it earlier, with nothing on screen to explain it.</p>
+        <p><b>Deny with a reason.</b> A permission prompt can now redirect the work &#8212; "not that,
+        run the tests first" &#8212; instead of only blocking it. What you type reaches Claude as the
+        tool's own result.</p>
 
-        <p><b>New, off by default: revert Claude's file changes.</b> Right-click a message you sent to
-        restore the files Claude edited since. It covers edits made with Edit, Write and NotebookEdit
-        &#8212; not changes made by a command it ran, and not a subagent's edits inside a Task &#8212;
-        and it repeats that every time it asks you to confirm.</p>
+        <p><b>New, off by default: resume a conversation after a restart.</b> Sightline can remember
+        which Claude session belongs to a project, but only after you accept a dialog that says exactly
+        what is stored: <b>a session id and a date, nothing else</b> &#8212; no messages, prompts, file
+        contents or paths. Resuming gives <i>Claude</i> its history back; the panel starts empty, because
+        Sightline stores no transcript and cannot redraw one. Turning it off forgets the id.</p>
 
-        <p><b>The panel now opens on the conversation, not a split.</b> At a typical docked width the old
-        default left the chat column narrower than its own readable minimum. The Activity Map is one
-        click away on the header switch, and whichever view you pick is remembered.</p>
+        <p><b>A quiet turn says so.</b> If nothing has come back for a while and no tool is running, the
+        transcript tells you how long it has been silent. It stays quiet during builds and test runs,
+        which are supposed to take minutes.</p>
 
-        <p><b>Corrected:</b> this listing and the privacy notes said your conversation is never written
-        to disk. Sightline writes no transcript, but the Claude Code CLI keeps its own session history
-        under <code>~/.claude/projects/</code>. Now stated plainly in both places.</p>
+        <p><b>Conversation text size is now yours to set</b> (80&#8211;200% of the IDE font), and the tool
+        window asks for attention when Claude is blocked on you while the panel is hidden.</p>
     ]]></change-notes>
 
-    <!-- Platform + Java module. Java support (always present in Android Studio) provides the PSI/UAST
-         used for class-hierarchy enrichment (extends/implements). -->
+    <!-- Platform only. The Java module dependency went with the PSI/UAST class-hierarchy enrichment
+         that fed the (removed) activity map; nothing here calls Java PSI or UAST any more. -->
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.java</depends>
 
     <!-- Optional: Android Studio's own project model, for the one fact nothing else knows — the
          *currently selected* build variant. Everything else Android works without it (adb, the emulator
@@ -139,6 +146,28 @@
                 description="Draft a commit message from the selected changes using Claude"
                 icon="/icons/sightline.svg">
             <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+
+        <!-- Editor-side entry points. Deliberately registered with NO default keyboard shortcut: an
+             IntelliJ keymap is dense and personal, and a plugin that claims a chord it likes breaks
+             somebody's existing binding. Both are discoverable via Find Action and bindable in
+             Settings -> Keymap. -->
+        <action id="io.mp.sightline.OpenSightline"
+                class="io.mp.sightline.ui.OpenSightlineAction"
+                text="Open Sightline"
+                description="Open the Sightline tool window and focus its composer"
+                icon="/icons/sightline.svg">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+
+        <action id="io.mp.sightline.AddSelectionToSightline"
+                class="io.mp.sightline.ui.AddSelectionToSightlineAction"
+                text="Add Selection to Sightline"
+                description="Reference the selected lines (or the whole file) in the Sightline composer"
+                icon="/icons/sightline.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

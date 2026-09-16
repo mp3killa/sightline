@@ -10,7 +10,10 @@ import java.util.concurrent.TimeUnit
 class InteractionCoordinatorsTest {
 
     private fun approval(id: String, canAllowAlways: Boolean, sink: (ApprovalDecision) -> Unit) =
-        PendingApproval(id, "toolu_$id", "Edit", "Allow Edit?", "src/Foo.kt", canAllowAlways, sink)
+        PendingApproval(id, "toolu_$id", "Edit", "Allow Edit?", "src/Foo.kt", canAllowAlways) { d, _ -> sink(d) }
+
+    private fun approvalWithReason(id: String, sink: (ApprovalDecision, String?) -> Unit) =
+        PendingApproval(id, "toolu_$id", "Bash", "Allow Bash?", null, false, sink)
 
     @Test fun approvalAllowDenyRunHandlerOnce() {
         val c = ApprovalCoordinator()
@@ -75,5 +78,29 @@ class InteractionCoordinatorsTest {
         val review = c.create("d3", "src/Foo.kt", "old", "new")
         c.clear()
         assertEquals(DiffDecision.REJECT, review.future.get(1, TimeUnit.SECONDS))
+    }
+
+    /**
+     * A denial's reason reaches the handler, which is what puts it on the wire — the CLI hands a deny
+     * `message` to the model as the tool's result (verified against 2.1.235), so this is the difference
+     * between blocking an action and redirecting it.
+     */
+    @Test fun denyCarriesItsReasonToTheHandler() {
+        val c = ApprovalCoordinator()
+        var got: Pair<ApprovalDecision, String?>? = null
+        c.register(approvalWithReason("r9") { d, reason -> got = d to reason })
+
+        c.respond("r9", ApprovalDecision.DENY, "run the tests instead")
+        assertEquals(ApprovalDecision.DENY to "run the tests instead", got)
+    }
+
+    /** Blank is not a reason. Sending "" would tell the model nothing while looking deliberate. */
+    @Test fun aBlankReasonIsNoReason() {
+        val c = ApprovalCoordinator()
+        var got: String? = "unset"
+        c.register(approvalWithReason("r10") { _, reason -> got = reason })
+
+        c.respond("r10", ApprovalDecision.DENY, "   ")
+        assertNull(got)
     }
 }

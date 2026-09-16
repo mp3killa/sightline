@@ -79,6 +79,27 @@ class ClaudeSession(
     val sawSession: Boolean
         get() = lastSessionId != null
 
+    /**
+     * The current session id, for the host to remember **only with the user's explicit consent** — see
+     * [io.mp.sightline.ui.state.SessionPersistence]. Exposed read-only: the session owns it, and a
+     * setter would make it possible to point `--resume` at a conversation the CLI never reported.
+     */
+    val currentSessionId: String?
+        get() = lastSessionId
+
+    /**
+     * Arms the next launch to resume [sessionId] — a conversation from a previous IDE session, handed
+     * back by the host. Refuses while a process is running: switching the conversation under a live
+     * turn would strand it, and the caller has no way to see that happened.
+     */
+    @Synchronized
+    fun resumeSession(sessionId: String): Boolean {
+        if (isRunning) return false
+        lastSessionId = sessionId
+        resumeNext = true
+        return true
+    }
+
     @Synchronized
     fun sendUserMessage(text: String, images: List<UserMessageJson.ImageBlock> = emptyList()) {
         if (!isRunning) startProcess()

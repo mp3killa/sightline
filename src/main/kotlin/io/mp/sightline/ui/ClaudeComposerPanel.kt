@@ -15,7 +15,9 @@ import io.mp.sightline.ui.components.ContextChip
 import io.mp.sightline.ui.components.IconActionButton
 import io.mp.sightline.ui.components.WrapLayout
 import io.mp.sightline.ui.state.ComposerModel
+import io.mp.sightline.ui.state.ContextUsage
 import io.mp.sightline.ui.state.ImageAttachmentPolicy
+import io.mp.sightline.ui.state.MentionQuery
 import io.mp.sightline.ui.state.PasteRouting
 import io.mp.sightline.ui.state.PendingImage
 import java.awt.BorderLayout
@@ -73,6 +75,13 @@ class ClaudeComposerPanel(
     private val onFilesPasted: (List<File>) -> Unit = {},
     /** A one-line notice about an attachment (a refused or unreadable paste) — the host surfaces it. */
     private val onAttachmentNotice: (String) -> Unit = {},
+    /** Ask the CLI for its own `/context` breakdown — what the footer chip's click does. */
+    private val onContextBreakdown: () -> Unit = {},
+    /**
+     * Project files matching a typed `@` prefix, ranked, for the mention popup. Returns an empty list
+     * by default so previews and unit tests never touch the project index.
+     */
+    private val onMentionSearch: (String) -> List<String> = { emptyList() },
 ) : JPanel(BorderLayout()) {
 
     private val box = ComposerBox()
@@ -104,6 +113,13 @@ class ClaudeComposerPanel(
     private val input = JBTextArea(2, 20)
     private val inputScroll = JBScrollPane(input, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER)
     private val modeChip = JButton()
+
+    /**
+     * Context-window occupancy, muted, beside the mode chip — the footer is where a reader looks for
+     * "state of this conversation", and it is the placement the equivalent VS Code panel settled on.
+     * Hidden until the CLI has reported usage: an empty conversation has no context to report.
+     */
+    private val contextChip = JButton()
     private val sendButton = SendButton()
 
     private val minRows = 2
@@ -131,6 +147,9 @@ class ClaudeComposerPanel(
         input.toolTipText = "Enter to send · Shift+Enter for a new line"
         input.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
+                // While the mention popup is up it owns the navigation keys — otherwise Enter would
+                // send the message instead of accepting the completion the user is looking at.
+                if (mentionPopup?.handleKey(e) == true) return
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) { e.consume(); trySend() }
             }
         })
@@ -139,6 +158,7 @@ class ClaudeComposerPanel(
             override fun removeUpdate(e: DocumentEvent) = onTextChanged()
             override fun changedUpdate(e: DocumentEvent) = onTextChanged()
         })
+        input.addCaretListener { refreshMentionPopup() }
         input.addFocusListener(object : FocusAdapter() {
             override fun focusGained(e: FocusEvent) { box.focused = true; box.repaint(); adjustHeight() }
             override fun focusLost(e: FocusEvent) { box.focused = false; box.repaint(); adjustHeight() }
@@ -174,11 +194,42 @@ class ClaudeComposerPanel(
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0))
         right.isOpaque = false
+        styleContextChip()
+        right.add(contextChip)
         styleModeChip()
         right.add(modeChip)
         right.add(sendButton)
         row.add(right, BorderLayout.EAST)
         return row
+    }
+
+    /**
+     * Styled as a flat chip rather than a label because it *is* clickable: it runs `/context`, the
+     * CLI's own breakdown by category. That costs nothing — verified, the command is executed locally
+     * and comes back as a synthetic turn with `num_turns: 0` and zero tokens.
+     */
+    private fun styleContextChip() {
+        contextChip.isContentAreaFilled = false
+        contextChip.isFocusPainted = false
+        contextChip.isOpaque = false
+        contextChip.isVisible = false
+        contextChip.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+        contextChip.border = JBUI.Borders.empty(3, 6)
+        contextChip.addActionListener { onContextBreakdown() }
+    }
+
+    /** Shows the occupancy, or hides the chip when there is nothing evidenced to show. */
+    fun setContextUsage(view: ContextUsage.View?) {
+        if (view == null) { contextChip.isVisible = false; return }
+        contextChip.isVisible = true
+        contextChip.text = view.text
+        contextChip.toolTipText = view.detail + "  Click for the full breakdown."
+        contextChip.foreground = when (view.level) {
+            ContextUsage.Level.CRITICAL -> ClaudeUiTokens.error()
+            ContextUsage.Level.HIGH -> ClaudeUiTokens.warning()
+            ContextUsage.Level.NORMAL -> ClaudeUiTokens.textSecondary()
+        }
+        contextChip.repaint()
     }
 
     private fun styleModeChip() {
@@ -209,6 +260,40 @@ class ClaudeComposerPanel(
         val existing = input.text.orEmpty()
         input.text = if (existing.isBlank()) text else existing.trimEnd() + " " + text
         input.caretPosition = input.document.length
+        input.requestFocusInWindow()
+    }
+
+    // ---- @-mention completion ----
+
+    private var mentionPopup: MentionPopup? = null
+
+    /**
+     * Opens, updates or closes the mention popup for whatever is under the caret.
+     *
+     * Called from the document listener, so it runs on every keystroke: everything expensive is behind
+     * [MentionQuery.at] returning null, which is the common case (no `@` being typed).
+     */
+    private fun refreshMentionPopup() {
+        val query = MentionQuery.at(input.text ?: "", input.caretPosition)
+        if (query == null) { closeMentionPopup(); return }
+        val matches = runCatching { onMentionSearch(query.prefix) }.getOrDefault(emptyList())
+        if (matches.isEmpty()) { closeMentionPopup(); return }
+        val popup = mentionPopup ?: MentionPopup { path -> acceptMention(query.start, path) }.also { mentionPopup = it }
+        popup.show(input, matches)
+    }
+
+    private fun closeMentionPopup() {
+        mentionPopup?.hide()
+        mentionPopup = null
+    }
+
+    /** Replaces the typed `@prefix` with the chosen reference. */
+    private fun acceptMention(start: Int, path: String) {
+        val caret = input.caretPosition.coerceIn(0, input.document.length)
+        if (start > caret) { closeMentionPopup(); return }
+        input.document.remove(start, caret - start)
+        input.document.insertString(start, MentionQuery.completion(path), null)
+        closeMentionPopup()
         input.requestFocusInWindow()
     }
 

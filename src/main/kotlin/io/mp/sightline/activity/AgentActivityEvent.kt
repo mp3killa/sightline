@@ -3,12 +3,14 @@ package io.mp.sightline.activity
 import java.time.Instant
 
 /**
- * Normalised, immutable activity events — the **single source of truth** for graph updates.
- * The UI never depends on Claude's raw stream format directly; [ActivityInterpreter] converts
- * raw tool/stream events into these, and [ActivityGraph] reduces these into nodes/edges.
+ * Normalised, immutable activity events — the **single source of truth** for what the panel says is
+ * happening. The UI never depends on Claude's raw stream format directly; [ActivityInterpreter]
+ * converts raw tool/stream events into these, and `StatusModel` turns them into the status strip's
+ * text, its recovered-failure tally and the per-turn processing summary.
  *
- * [confidence] is 1.0 for direct tool-derived facts and lower for text-derived guesses, so the
- * renderer can draw inferred activity more subtly.
+ * [confidence] is 1.0 for direct tool-derived facts and lower for text-derived guesses. It was what
+ * let the (removed) activity map draw an inferred node more subtly; it is kept because the
+ * distinction is real and a consumer that starts trusting a guess as a fact is the thing to prevent.
  */
 sealed interface AgentActivityEvent {
     val at: Instant
@@ -127,32 +129,6 @@ data class ToolInvoked(
     val summary: String,
     override val at: Instant,
     override val confidence: Float = 1f,
-) : AgentActivityEvent
-
-/** How one file structurally relates to another (resolved to real project files, not path guesses). */
-enum class StructuralRelationKind { IMPORTS, TESTS, EXTENDS, IMPLEMENTS, NAVIGATES_TO, REFERENCED_BY }
-
-/**
- * A structural relationship discovered by enriching a file Claude touched — its import resolved to a
- * real project file, or a test file's production target. Background enrichment: it adds a graph edge
- * but never grabs focus, advances the activity trail, or changes the status line.
- */
-data class StructuralRelation(
-    val sourcePath: String,
-    val targetPath: String,
-    val targetLabel: String,
-    val relation: StructuralRelationKind,
-    override val at: Instant,
-    override val confidence: Float = 0.85f,
-) : AgentActivityEvent
-
-/** Package/module membership for a touched file — stored as node metadata; never focus-changing. */
-data class FilePackage(
-    val path: String,
-    val packageName: String,
-    val module: String?,
-    override val at: Instant,
-    override val confidence: Float = 0.9f,
 ) : AgentActivityEvent
 
 /**

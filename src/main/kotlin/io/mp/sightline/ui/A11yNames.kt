@@ -9,8 +9,12 @@ object A11yNames {
     const val APPROVAL_ALLOW = "sightline.approval.allow"
     const val APPROVAL_ALLOW_ALWAYS = "sightline.approval.allowAlways"
     const val APPROVAL_DENY = "sightline.approval.deny"
+    const val APPROVAL_DENY_REASON = "sightline.approval.denyWithReason"
     const val DIFF_ACCEPT = "sightline.diff.accept"
     const val DIFF_REJECT = "sightline.diff.reject"
+    const val PLAN_APPROVE = "sightline.plan.approve"
+    const val PLAN_EDIT = "sightline.plan.edit"
+    const val PLAN_KEEP = "sightline.plan.keepPlanning"
     const val QUESTION_CONTINUE = "sightline.question.continue"
     const val QUESTION_CANCEL = "sightline.question.cancel"
 
@@ -19,14 +23,13 @@ object A11yNames {
 
     /** The "Other…" free-text control for a question. */
     fun questionOther(questionIndex: Int) = "sightline.question.other.$questionIndex"
+    /** A recovery button on a failure card, addressed by its `SessionFailure.Action` name. */
+    fun failureAction(action: String) = "sightline.failure.${action.lowercase()}"
     const val COMPOSER_SEND = "sightline.composer.send"
 
     /** A pasted-image chip in the composer, addressed by its stable ordinal ("Image 3"). */
     fun composerImage(ordinal: Int) = "sightline.composer.image.$ordinal"
-    const val WORKSPACE_CHAT = "sightline.workspace.chat"
-    const val WORKSPACE_ACTIVITY = "sightline.workspace.activity"
     const val TOOL_WINDOW_ROOT = "sightline.toolWindow.root"
-    const val ACTIVITY_GRAPH = "sightline.activity.graph"
     const val TRANSCRIPT_JUMP_TO_LATEST = "sightline.transcript.jumpToLatest"
     const val ANDROID_CONTEXT_STRIP = "sightline.android.contextStrip"
 }

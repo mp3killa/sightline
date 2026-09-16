@@ -45,8 +45,6 @@ class WideTableReproTest : BasePlatformTestCase() {
     fun testWideTableCellsAreLaidOutVisiblyRatherThanCollapsed() {
         val settings = ClaudeSettings.getInstance().state
         settings.showDetails = true
-        settings.showActivityMap = false
-        settings.activityViewMode = "chat"
 
         val p = ClaudePanel(project, testRootDisposable)
         p.addUserMessageForPreview("show me the sheet labels")

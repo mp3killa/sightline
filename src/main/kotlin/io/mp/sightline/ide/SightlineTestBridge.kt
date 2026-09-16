@@ -59,7 +59,7 @@ class SightlineTestBridge(private val project: Project) {
     fun addToolDefs(tools: JsonArray) {
         if (!TestBridgeGuard.isEnabled()) return
         thisLogger().warn("Sightline TEST BRIDGE enabled (-Dsightline.testBridge=true) — sandbox use only")
-        tools.add(def("sightline.test.get_ui_state", "TEST-ONLY: structured tool-window state (workspace, session, pending counts)."))
+        tools.add(def("sightline.test.get_ui_state", "TEST-ONLY: structured tool-window state (session, pending counts)."))
         tools.add(def("sightline.test.list_pending_interactions", "TEST-ONLY: pending approvals and diff reviews with opaque ids + available actions."))
         tools.add(def("sightline.test.respond_permission", "TEST-ONLY: resolve a pending approval. args {interactionId, decision: ALLOW|ALLOW_ALWAYS|DENY}.",
             props("interactionId" to "string", "decision" to "string")))
@@ -88,7 +88,6 @@ class SightlineTestBridge(private val project: Project) {
     private fun getUiState(): String = JsonObject().apply {
         val s = ui
         addProperty("toolWindowVisible", s.toolWindowVisible)
-        addProperty("workspace", s.workspace)
         addProperty("sessionState", s.sessionState)
         addProperty("pendingApprovals", approvals.listPending().size)
         addProperty("pendingDiffs", diffs.listPending().size)
@@ -203,7 +202,7 @@ class SightlineTestBridge(private val project: Project) {
         val png = ByteArrayOutputStream().use { ImageIO.write(image, "png", it); it.toByteArray() }
         val meta = JsonObject().apply {
             addProperty("width", image.width); addProperty("height", image.height)
-            addProperty("workspace", ui.workspace); addProperty("sessionState", ui.sessionState)
+            addProperty("sessionState", ui.sessionState)
             addProperty("bytes", png.size)
         }.toString()
         return BridgeResult(meta, png)

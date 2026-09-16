@@ -41,8 +41,7 @@ and not avoidable without abandoning the interface. `ProcessAdapter` → `Proces
 ## Live Android Studio verification (manual)
 
 Only what genuinely needs a human is listed. Static rendering — every Markdown block type, tool cards,
-diffs, the approval card, both AskUserQuestion variants, panel layout at each width class, and map label
-density — is covered by the headless PNG harnesses described in [TESTING.md](TESTING.md); read those
+diffs, the approval card, both AskUserQuestion variants and panel layout at each width class — is covered by the headless PNG harnesses described in [TESTING.md](TESTING.md); read those
 images instead of re-checking any of it by hand. What remains needs a **click, hover, focus traversal,
 drag, scroll, clipboard round-trip, or a live CLI session** — none of which the `studio` MCP can drive,
 since it has no screenshot tool and cannot see this plugin's tool window.
@@ -61,30 +60,8 @@ Verify:
   following only at the bottom (scrolling up pauses it, sending re-follows).
 - **"Jump to latest ↓"**: appears only when follow is paused, doesn't cover the last line of text, and
   re-arms follow when clicked. Plus the **Copy** clipboard round-trip on a code fence.
-- **Keyboard a11y**: Tab reaches the Chat/Split/Map switch (`SegmentedControl` arrows + split `JButton`),
-  the activity-map canvas (arrow to move, Enter to open, Esc to clear) and the inspector (Esc clears from
-  anywhere in the drawer). Confirm nothing traps focus.
-- **Activity map features**: a touched **resource** linking to its referencing sources; the inspector
-  **"Find usages"** action adding usage edges (select a **source** node — it correctly does not appear for
-  an error node); and **"Collapse finished history"** folding clusters with the "N commands" chips
-  expanding/collapsing in place.
-- **Label behaviour in motion**: a label withheld in a crowded neighbourhood **comes back on hover**, and
-  labels don't visibly flip sides or flicker while the layout is still settling.
-- **Map density in motion**: no **flicker** between tiers as nodes arrive live; **zoom** restoring detail;
-  the hovered/selected node keeping its label; the **"N of M · Show more"** counter actually revealing more
-  nodes when clicked; **Fit** framing the bulk of the graph rather than shrinking it to a speck around a
-  stray node.
-  **Found 2026-07-20 while generating the listing screenshots:** on a settled 9-node graph, **Fit
-  leaves the rightmost node's label clipped** at the canvas edge. `MapDensity.fitPadding` pads for
-  labels by density, but `LabelPlacement` offers the *right* slot first, so the outermost node on the
-  right routinely overflows. Evidence: `build/marketplace/03-activity-map.png`. Low severity — the
-  label returns on hover and the node is intact — but it is the first thing an eye lands on in a
-  screenshot. Fix by padding asymmetrically for the widest right-placed label, or by biasing the
-  outermost nodes' labels inward.
-  Open design question: failed **command/test** nodes (`build`, `test suite`) lose their labels at the
-  IMPORTANT tier while `ERROR`-type nodes keep theirs. That follows the tier rules as written, but a
-  *failed* node arguably deserves anchor status. Decide during the live pass, with a busy graph in
-  front of you — it's a judgement about what the eye needs at density, not something to settle on paper.
+- **Keyboard a11y**: Tab reaches the composer, its actions and the buttons on an approval, question or
+  failure card, in a sensible order. Confirm nothing traps focus.
 - **AskUserQuestion interaction**: **Other…** free-text actually accepting input, Continue **enabling**
   once every question is answered, **Cancel** genuinely denying and unblocking the turn, and a
   "Skip"-style option coming back as a normal answer. The `answers`-keyed-by-full-question-text contract
