@@ -229,6 +229,16 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
   `~/Library/Application Support/Google/AndroidStudio<ver>/studio.jdk`.
 - **Bundled libraries** (platform doesn't expose them): `gson` (parse stream-json) and
   `Java-WebSocket` (the ide server; `exclude group: "org.slf4j"` — platform provides slf4j).
+- **The plugin is signed, and an unsigned publish now fails.** 0.7.0, 0.8.1 and 0.9.0 all went to the
+  Marketplace **unsigned**: `signPlugin` is *skipped* when the key material is absent, and a skip
+  reports success, so the release run was green every time. The Sign step now checks both the secrets
+  and the `*-signed.zip` the task should have produced, and stops a real publish if either is missing
+  (a dry run still tolerates neither). Key material: RSA 4096, self-signed to 2036, in
+  `~/.sightline-signing/` **and nowhere else** — back it up; see docs/RELEASING.md for regeneration.
+- **`./gradlew verifyPluginSignature` does not work either** — usage error, exit 64, IPGP 2.6.0, the
+  same flavour of breakage as `verifyPlugin`. Verify with the signer's own CLI out of the Gradle cache:
+  `java -jar marketplace-zip-signer-*-cli.jar verify -in <signed.zip> -cert ~/.sightline-signing/chain.crt`
+  (exit 0 and no output means valid — confirmed against the 0.9.0 artifact).
 - **`./gradlew verifyPlugin` does not work — run `tools/verify-plugin.sh`.** IPGP 2.6.0 resolves the IDE
   under `idea:ideaIC:<v>` (group `idea`); the artifact is at `com.jetbrains.intellij.idea:ideaIC:<v>`.
   Both `select { }` and `ide(...)` hit the same wrong group. The script downloads the IDE itself and runs

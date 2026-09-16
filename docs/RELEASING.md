@@ -72,14 +72,49 @@ Settings → Secrets and variables → Actions.
 | Secret | Required | What |
 |---|---|---|
 | `PUBLISH_TOKEN` | **yes, to publish** | Marketplace permanent token: <https://plugins.jetbrains.com/author/me/tokens> |
-| `CERTIFICATE_CHAIN` | no | Signing certificate chain, PEM |
-| `PRIVATE_KEY` | no | Signing private key, PEM |
-| `PRIVATE_KEY_PASSWORD` | no | Passphrase for that key |
+| `CERTIFICATE_CHAIN` | **yes, to publish** | Signing certificate chain, PEM |
+| `PRIVATE_KEY` | **yes, to publish** | Signing private key, PEM (encrypted PKCS#8) |
+| `PRIVATE_KEY_PASSWORD` | **yes, to publish** | Passphrase for that key |
 
-Signing is optional and `signPlugin` is **skipped** when the key material is absent, so a fork or a
-local build needs no secrets at all. It is worth setting up: JetBrains recommends it and the listing
-shows a signed badge. To generate a chain and key, follow
-<https://plugins.jetbrains.com/docs/intellij/plugin-signing.html>.
+## Signing
+
+**A publish now fails rather than shipping unsigned.** It did not always: `signPlugin` is *skipped*
+when the key material is absent, and skipping reports success — which is how 0.7.0, 0.8.1 and 0.9.0
+were each published unsigned while the release run showed green. The Sign step now checks for the key
+material and for the `*-signed.zip` the task should have produced, and stops the release if either is
+missing. A `workflow_dispatch` dry run still tolerates absent secrets, so a fork can build.
+
+**Where the key lives.** Generated 2026-09-16, RSA 4096, self-signed, valid until 2036-09-13, held in
+`~/.sightline-signing/` on the maintainer's machine (`chain.crt`, `private.pem`, `password.txt`, all
+`600` in a `700` directory) and mirrored into the three GitHub secrets above. **It exists nowhere
+else — back it up.** Losing it does not orphan the listing the way losing the plugin `<id>` would;
+you would generate a new pair and update the secrets. That is a chore, not a catastrophe, but the
+Marketplace shows a signed badge and a change of signer is visible.
+
+To regenerate:
+
+```bash
+DIR="$HOME/.sightline-signing"; mkdir -p "$DIR"; chmod 700 "$DIR"; cd "$DIR"
+openssl rand -base64 32 | tr -d '\n' > password.txt
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -aes-256-cbc \
+  -pass file:password.txt -out private.pem
+openssl req -new -x509 -days 3650 -key private.pem -passin file:password.txt -out chain.crt \
+  -subj "/CN=Michael Carroll/O=Michael Carroll/emailAddress=support@cxk.co.za"
+chmod 600 password.txt private.pem chain.crt
+gh secret set CERTIFICATE_CHAIN    --repo mp3killa/sightline < chain.crt
+gh secret set PRIVATE_KEY          --repo mp3killa/sightline < private.pem
+gh secret set PRIVATE_KEY_PASSWORD --repo mp3killa/sightline < password.txt
+```
+
+**Verifying a signature locally — not with `./gradlew verifyPluginSignature`.** That task fails with a
+usage error (exit 64) in IPGP 2.6.0, the same flavour of breakage as `verifyPlugin`. Use the signer's
+own CLI, which is already in the Gradle cache:
+
+```bash
+JAR=$(find ~/.gradle/caches -iname "marketplace-zip-signer-*-cli.jar" | head -1)
+java -jar "$JAR" verify -in build/distributions/sightline-<version>-signed.zip \
+  -cert ~/.sightline-signing/chain.crt   # exit 0, no output = valid
+```
 
 `PUBLISH_TOKEN` has no default and no fallback — an absent token fails the publish rather than
 producing a silent unauthenticated attempt.

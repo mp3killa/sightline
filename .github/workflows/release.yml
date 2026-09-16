@@ -129,14 +129,37 @@ jobs:
           SKIP_BUILD: "1"
         run: tools/verify-plugin.sh
 
-      # Optional. `signPlugin` is skipped when the key material is absent, so this is a no-op on a fork
-      # or before signing is set up — it does not fail the release.
+      # `signPlugin` is skipped when the key material is absent — silently, which is how 0.7.0, 0.8.1
+      # and 0.9.0 were all published unsigned while this step reported success. A real publish now
+      # fails instead: the artifact the Marketplace receives is either signed or the release stops.
+      # A dry run (workflow_dispatch) still tolerates missing secrets, so a fork can build.
       - name: Sign the plugin
         env:
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew $JDK_ARG signPlugin $PLATFORM_ARGS
+          PUBLISHING: ${{ startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true }}
+        run: |
+          if [[ -z "${CERTIFICATE_CHAIN:-}" || -z "${PRIVATE_KEY:-}" ]]; then
+            if [[ "$PUBLISHING" == "true" ]]; then
+              echo "::error::Signing key material is missing, so this release would be published unsigned."
+              echo "::error::Set CERTIFICATE_CHAIN, PRIVATE_KEY and PRIVATE_KEY_PASSWORD under Settings → Secrets and variables → Actions. See docs/RELEASING.md."
+              exit 1
+            fi
+            echo "::warning::No signing key material — skipping signing (not publishing, so this is allowed)."
+            exit 0
+          fi
+          ./gradlew $JDK_ARG signPlugin $PLATFORM_ARGS
+          # `signPlugin` writes a *-signed.zip beside the plain one. Its absence means the task ran and
+          # produced nothing, which reported success before and is exactly what shipped unsigned.
+          shopt -s nullglob
+          signed=(build/distributions/*-signed.zip)
+          if [[ ${#signed[@]} -eq 0 ]]; then
+            echo "::error::signPlugin produced no *-signed.zip — refusing to publish an unsigned artifact."
+            exit 1
+          fi
+          echo "Signed: ${signed[0]}"
+          echo "### Signed artifact: \`${signed[0]##*/}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to the JetBrains Marketplace
         if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
