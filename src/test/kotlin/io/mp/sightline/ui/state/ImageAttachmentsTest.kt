@@ -2,6 +2,7 @@ package io.mp.sightline.ui.state
 
 import io.mp.sightline.ui.state.PasteRouting.Route
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -89,5 +90,43 @@ class ImageAttachmentsTest {
     @Test fun plainTextDelegatesAndSoDoesAnEmptyClipboard() {
         assertEquals(Route.TEXT, PasteRouting.route(hasFiles = false, hasText = true, textIsBlank = false, hasImage = false))
         assertEquals(Route.DELEGATE, PasteRouting.route(hasFiles = false, hasText = false, textIsBlank = true, hasImage = false))
+    }
+
+    // ---- reaching an image the clipboard is also carrying ----
+
+    /**
+     * The browser case. "Copy image" in Chrome or Safari puts the picture *and* its URL on the
+     * clipboard; text leads by design, so an ordinary paste inserts the link and the image is
+     * unreachable. Precedence stays as it is — reversing it would make a spreadsheet's copied cells
+     * paste as a surprise screenshot — but the panel must say the image is there.
+     */
+    @Test
+    fun `a text paste over an image is reported, not silent`() {
+        val route = PasteRouting.route(hasFiles = false, hasText = true, textIsBlank = false, hasImage = true)
+        assertEquals(PasteRouting.Route.TEXT, route)
+        assertTrue(PasteRouting.imageWasPassedOver(route, hasImage = true))
+    }
+
+    @Test
+    fun `nothing is reported when no image was passed over`() {
+        val textOnly = PasteRouting.route(hasFiles = false, hasText = true, textIsBlank = false, hasImage = false)
+        assertFalse(PasteRouting.imageWasPassedOver(textOnly, hasImage = false))
+
+        // A screenshot carries no text flavour, so it attaches and there is nothing to mention.
+        val imageOnly = PasteRouting.route(hasFiles = false, hasText = false, textIsBlank = true, hasImage = true)
+        assertEquals(PasteRouting.Route.IMAGE, imageOnly)
+        assertFalse(PasteRouting.imageWasPassedOver(imageOnly, hasImage = true))
+
+        // Files win outright; the notice would be noise on a paste that did what was asked.
+        val files = PasteRouting.route(hasFiles = true, hasText = true, textIsBlank = false, hasImage = true)
+        assertFalse(PasteRouting.imageWasPassedOver(files, hasImage = true))
+    }
+
+    /** A capability nobody can find is not one: the notice has to name the gesture. */
+    @Test
+    fun `the notice names how to get the image`() {
+        assertTrue(PasteRouting.IMAGE_PASSED_OVER, PasteRouting.IMAGE_PASSED_OVER.contains("Shift+Ctrl+V"))
+        assertTrue(PasteRouting.IMAGE_PASSED_OVER, PasteRouting.IMAGE_PASSED_OVER.contains("Attach image from clipboard"))
+        assertTrue(PasteRouting.NO_IMAGE, PasteRouting.NO_IMAGE.contains("no image"))
     }
 }

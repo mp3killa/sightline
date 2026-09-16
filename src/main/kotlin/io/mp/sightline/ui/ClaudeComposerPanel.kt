@@ -46,6 +46,7 @@ import javax.swing.Icon
 import javax.swing.ImageIcon
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.KeyStroke
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
@@ -146,6 +147,16 @@ class ClaudeComposerPanel(
         input.font = UIUtil.getLabelFont()
         input.emptyText.text = "Ask Claude about this project…"
         input.toolTipText = "Enter to send · Shift+Enter for a new line"
+        // Shift+Cmd/Ctrl+V forces the image off the clipboard. Registered on the input rather than as
+        // an IDE action so it exists only where it means something, and cannot collide with a keymap.
+        input.registerKeyboardAction(
+            { attachImageFromClipboard() },
+            KeyStroke.getKeyStroke(
+                KeyEvent.VK_V,
+                java.awt.Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx or java.awt.event.InputEvent.SHIFT_DOWN_MASK,
+            ),
+            JComponent.WHEN_FOCUSED,
+        )
         input.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 // While the mention popup is up it owns the navigation keys — otherwise Enter would
@@ -513,8 +524,20 @@ class ClaudeComposerPanel(
                         attachClipboardImage(image)
                         true
                     }
-                    PasteRouting.Route.TEXT, PasteRouting.Route.DELEGATE ->
+                    PasteRouting.Route.TEXT, PasteRouting.Route.DELEGATE -> {
+                        // Say when a paste has just stepped over an image — the browser case, where
+                        // "Copy image" carries the picture and its URL and the text wins.
+                        val routed = PasteRouting.route(
+                            hasFiles = support.isDataFlavorSupported(DataFlavor.javaFileListFlavor),
+                            hasText = hasText,
+                            textIsBlank = hasText && (readString(t)?.isBlank() ?: true),
+                            hasImage = support.isDataFlavorSupported(DataFlavor.imageFlavor),
+                        )
+                        if (PasteRouting.imageWasPassedOver(routed, support.isDataFlavorSupported(DataFlavor.imageFlavor))) {
+                            onAttachmentNotice(PasteRouting.IMAGE_PASSED_OVER)
+                        }
                         original?.importData(support) ?: false
+                    }
                 }
             }
 
@@ -530,6 +553,24 @@ class ClaudeComposerPanel(
                 original?.exportAsDrag(comp, e, action)
             }
         }
+    }
+
+    /**
+     * Attaches whatever image the system clipboard is holding, whatever else it also holds.
+     *
+     * The explicit gesture behind Shift+Ctrl/Cmd+V and the Actions menu item. Ordinary paste keeps its
+     * precedence (files, then text, then image) so a spreadsheet still pastes as text; this is the way
+     * to reach the image when something else won.
+     */
+    fun attachImageFromClipboard() {
+        val clipboard = runCatching { java.awt.Toolkit.getDefaultToolkit().systemClipboard }.getOrNull()
+        val image = clipboard?.let { c ->
+            runCatching {
+                if (c.isDataFlavorAvailable(DataFlavor.imageFlavor)) c.getData(DataFlavor.imageFlavor) as? Image else null
+            }.getOrNull()
+        }
+        if (image == null) { onAttachmentNotice(PasteRouting.NO_IMAGE); return }
+        attachClipboardImage(image)
     }
 
     private fun readString(t: Transferable): String? = try {

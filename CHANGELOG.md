@@ -43,6 +43,13 @@ A smaller plugin, and the conversation gets the whole panel.
   The reference syntax is verified, not assumed: `@file` and `@file#L2-3` are expanded by the CLI itself
   before the model sees them, with no `Read` call.
 
+- **Reach an image the clipboard is also carrying.** Pasting a screenshot has always attached it, but
+  a browser's "Copy image" puts the picture *and* its URL on the clipboard — and since text takes
+  precedence (so a spreadsheet's cells don't paste as a surprise screenshot), the image was unreachable.
+  **Shift+Ctrl+V** (**Shift+⌘V** on macOS), or *Actions ▸ Attach image from clipboard*, now takes the
+  image whatever else is there. And when an ordinary paste steps over an image, the panel says so and
+  names the gesture, rather than leaving you to conclude the feature is missing.
+
 - **`@`-mention completion in the composer.** Typing `@` offers a ranked list of project files —
   filename matches before path matches, because typing `Claude` means `ClaudePanel.kt`, not the forty
   paths containing the word. The popup never takes focus, so typing keeps narrowing it. The reference

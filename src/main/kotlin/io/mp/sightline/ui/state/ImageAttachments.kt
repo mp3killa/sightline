@@ -144,4 +144,26 @@ object PasteRouting {
         hasImage -> Route.IMAGE
         else -> Route.DELEGATE
     }
+
+    /**
+     * Whether an ordinary paste is about to drop an image the clipboard is carrying.
+     *
+     * This is the browser case: "Copy image" in Chrome or Safari puts the picture **and** its URL on
+     * the clipboard, text wins by the rule above, and the image becomes unreachable — there is no
+     * gesture that gets at it. Rather than reverse the precedence (which would make a spreadsheet's
+     * copied cells paste as a surprise screenshot, the reason text leads in the first place), the
+     * composer says the image is there and names the gesture that takes it.
+     *
+     * Silence is the one thing this must not do: an image that is present, wanted, and unmentioned is
+     * indistinguishable from one the panel cannot handle at all.
+     */
+    fun imageWasPassedOver(route: Route, hasImage: Boolean): Boolean = route == Route.TEXT && hasImage
+
+    /** Said when that happens. Names the shortcut, because a capability nobody can find is not one. */
+    const val IMAGE_PASSED_OVER =
+        "The clipboard also held an image. Press Shift+Ctrl+V (Shift+\u2318V on macOS), or use " +
+            "Actions \u25b8 Attach image from clipboard, to attach it instead of the text."
+
+    /** Nothing on the clipboard to attach, when the user explicitly asked for the image. */
+    const val NO_IMAGE = "There is no image on the clipboard to attach."
 }

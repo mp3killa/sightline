@@ -97,6 +97,11 @@
         transcript tells you how long it has been silent. It stays quiet during builds and test runs,
         which are supposed to take minutes.</p>
 
+        <p><b>Paste an image even when the clipboard is holding something else too.</b> A browser's
+        "Copy image" carries the picture and its URL, and text takes precedence, so the image could not
+        be reached. <b>Shift+Ctrl+V</b> (Shift+&#8984;V on macOS) or <i>Actions &#9656; Attach image from
+        clipboard</i> now takes the image; an ordinary paste that steps over one says so.</p>
+
         <p><b>Fixed: slash commands typed into the composer were being billed as prompts.</b> A command
         only runs when it is the first thing in the message, and in an Android project the context block
         was going in front of it &#8212; so <code>/context</code>, <code>/model</code> and the rest quietly

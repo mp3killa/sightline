@@ -1430,6 +1430,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         group.add(Separator.create("Context"))
         group.add(action("Catch up on project") { primeProject() })
         group.add(action("Attach file…") { attachFile() })
+        // The reachable form of "paste the image": ordinary paste gives text precedence, so a browser's
+        // "Copy image" — which carries the picture and its URL — needs a gesture of its own.
+        group.add(action("Attach image from clipboard") { composer.attachImageFromClipboard() })
         androidContextAction()?.let { group.add(it) }
         group.add(Separator.create("Claude Code"))
         group.add(commandsMenu())
