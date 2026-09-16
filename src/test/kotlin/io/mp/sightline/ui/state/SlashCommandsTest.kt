@@ -113,4 +113,40 @@ class SlashCommandsTest {
         assertEquals("Show token usage", SlashCommands.shortDescription(Command("context", "Show token usage")))
         assertEquals("", SlashCommands.shortDescription(Command("context")))
     }
+
+    // ---- what makes a slash command a command ----
+
+    /**
+     * A command only executes when it is the first thing in the message. Verified against 2.1.235:
+     * `/context` sent alone came back as a local command (`num_turns: 0`, zero cost); the same text
+     * after an Android context block became an ordinary prompt with a real bill, and after an
+     * `@mention` it cost three turns of the model guessing. So this predicate is what stands between a
+     * command and a silently-paid conversation that does nothing the user asked for.
+     */
+    @Test
+    fun `a leading slash command is recognised`() {
+        assertTrue(SlashCommands.isCommand("/context"))
+        assertTrue(SlashCommands.isCommand("  /context  "))
+        assertTrue(SlashCommands.isCommand("/model haiku"))
+        assertTrue(SlashCommands.isCommand("/mcp"))
+        assertTrue(SlashCommands.isCommand("/user:my-command arg"))
+        // Only the first line decides; a command with a multi-line argument is still a command.
+        assertTrue(SlashCommands.isCommand("/review\nsecond line"))
+    }
+
+    @Test
+    fun `text that merely starts with a slash is not a command`() {
+        assertFalse("a POSIX path is a prompt, not a command", SlashCommands.isCommand("/Users/me/project/Foo.kt"))
+        assertFalse(SlashCommands.isCommand("/usr/local/bin/claude is where it lives"))
+        assertFalse(SlashCommands.isCommand("/ leading space"))
+        assertFalse(SlashCommands.isCommand("//comment"))
+        assertFalse(SlashCommands.isCommand("/123"))
+    }
+
+    @Test
+    fun `a command anywhere but the start is not a command`() {
+        assertFalse(SlashCommands.isCommand("please run /context for me"))
+        assertFalse(SlashCommands.isCommand(""))
+        assertFalse(SlashCommands.isCommand("   "))
+    }
 }

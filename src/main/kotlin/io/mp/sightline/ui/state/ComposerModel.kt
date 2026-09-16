@@ -193,6 +193,11 @@ class ComposerModel {
      */
     fun buildMessage(text: String): String {
         val body = text.trim()
+        // A slash command goes out **alone**. It only executes as a command when it is the first thing
+        // in the message: prepending the Android context block turned `/context` into an ordinary
+        // prompt that cost a turn and answered nothing, and an `@mention` before it cost three. The
+        // framing that helps a prompt is the exact thing that stops a command being one.
+        if (SlashCommands.isCommand(body)) return body
         val context = if (enabledChips.isEmpty()) "" else androidContextBlock(enabledContextChips)
         val mentions = attachmentsSet.joinToString(" ") { "@$it" }
         return listOf(context, mentions, body).filter { it.isNotEmpty() }.joinToString("\n\n")

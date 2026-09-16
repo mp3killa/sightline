@@ -109,6 +109,18 @@ A smaller plugin, and the conversation gets the whole panel.
 
 ### Fixed
 
+- **Slash commands typed into the composer were silently billed as prompts.** A slash command only
+  executes as a command when it is the *first* thing in the message. The composer prepends the Android
+  context block and any `@mentions` to everything it sends — so in an Android project, where the context
+  chips are on, `/context`, `/model` and every other command stopped being a command and became an
+  ordinary paid turn that answered something nobody asked. Measured against 2.1.235: `/context` sent
+  alone returns the breakdown at `num_turns: 0` and zero cost; the same text after a context block cost
+  a turn, and after an `@mention` it cost three. Commands now go out on their own.
+
+  Picking a command from the actions menu had the same fault from the other end: it was *appended* to
+  whatever you had already typed, which put it somewhere it could never run. It now goes to the front,
+  with your text kept after it as the command's arguments (verified: trailing text is tolerated).
+
 - **`tools/verify-plugin.sh` reported FAIL on a perfectly clean run.** Its pass check looked for
   `"Compatible."` — the trailing period the verifier writes only when it has informational notes to
   append. A verification with no deprecated or experimental usages at all prints a bare `Compatible`,

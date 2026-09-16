@@ -100,6 +100,25 @@ object SlashCommands {
      */
     fun insertion(command: Command): String = if (command.takesArguments) "/${command.name} " else "/${command.name}"
 
+    /**
+     * Whether [text] is a slash command rather than a prompt that happens to start with a slash.
+     *
+     * This decides whether the composer may prepend anything to it, and getting it wrong is expensive
+     * in both directions. **A slash command only executes when it is the first thing in the message** —
+     * verified against 2.1.235: sent alone, `/context` came back as a local command with `num_turns: 0`
+     * and zero cost; sent after an Android context block it became an ordinary prompt with
+     * `num_turns: 1` and a real bill, and after an `@mention` it cost three turns of the model guessing
+     * what was wanted. So anything prepended to a command silently converts it into a paid conversation
+     * that does not do what was asked.
+     *
+     * The rule is narrow on purpose: one leading `/`, then a command-shaped name, then whitespace or
+     * nothing. A POSIX path (`/Users/me/x`) has a `/` where the whitespace should be and is therefore
+     * still an ordinary prompt — which is right, because it is one.
+     */
+    fun isCommand(text: String): Boolean = COMMAND.matches(text.trim().lineSequence().firstOrNull() ?: "")
+
+    private val COMMAND = Regex("^/[A-Za-z][A-Za-z0-9_:-]*(\\s.*)?$")
+
     /** Menu label: the name, with the CLI's own argument hint when it gave one. */
     fun label(command: Command): String =
         if (command.takesArguments) "/${command.name} ${command.argumentHint}" else "/${command.name}"

@@ -353,4 +353,43 @@ class ComposerModelTest {
         assertFalse(m.hasImages)
         assertTrue(m.takeImages().isEmpty())
     }
+
+    // ---- slash commands must leave the composer unadorned ----
+
+    /**
+     * The bug this pins: in an Android project the context block was prepended to everything, so every
+     * slash command typed into the composer stopped being a command. Measured against 2.1.235, a
+     * prefixed `/context` came back as a normal prompt costing a turn, while the bare one executed
+     * locally for nothing. Framing that helps a prompt is what destroys a command.
+     */
+    @Test
+    fun `a slash command is sent alone, with no context block or mentions`() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "[Android]\nmodule: app\nvariant: demoDebug" }
+        m.addAttachment("src/Foo.kt")
+
+        assertEquals("/context", m.buildMessage("/context"))
+        assertEquals("/model haiku", m.buildMessage("  /model haiku  "))
+    }
+
+    @Test
+    fun `an ordinary prompt still gets its context and mentions`() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "[Android]" }
+        m.addAttachment("src/Foo.kt")
+
+        val built = m.buildMessage("what does this do?")
+        assertTrue(built, built.startsWith("[Android]"))
+        assertTrue(built, built.contains("@src/Foo.kt"))
+        assertTrue(built, built.endsWith("what does this do?"))
+    }
+
+    /** A path is a prompt: it must keep its context, or asking about a file loses the framing. */
+    @Test
+    fun `a prompt that starts with a slash is not treated as a command`() {
+        val m = ComposerModel()
+        m.androidContextBlock = { "[Android]" }
+        val built = m.buildMessage("/Users/me/project/Foo.kt — what is this?")
+        assertTrue(built, built.startsWith("[Android]"))
+    }
 }

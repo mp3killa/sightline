@@ -97,6 +97,13 @@
         transcript tells you how long it has been silent. It stays quiet during builds and test runs,
         which are supposed to take minutes.</p>
 
+        <p><b>Fixed: slash commands typed into the composer were being billed as prompts.</b> A command
+        only runs when it is the first thing in the message, and in an Android project the context block
+        was going in front of it &#8212; so <code>/context</code>, <code>/model</code> and the rest quietly
+        became ordinary paid turns that answered something else. Commands now go out on their own, and
+        picking one from the actions menu puts it at the front of what you have typed rather than the
+        end.</p>
+
         <p><b>Conversation text size is now yours to set</b> (80&#8211;200% of the IDE font), and the tool
         window asks for attention when Claude is blocked on you while the panel is hidden.</p>
     ]]></change-notes>

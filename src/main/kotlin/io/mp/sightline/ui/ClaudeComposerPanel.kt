@@ -20,6 +20,7 @@ import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.MentionQuery
 import io.mp.sightline.ui.state.PasteRouting
 import io.mp.sightline.ui.state.PendingImage
+import io.mp.sightline.ui.state.SlashCommands
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -256,9 +257,21 @@ class ClaudeComposerPanel(
      * Puts [text] in the input and focuses it, replacing whatever draft was there only when there
      * wasn't one — a half-typed message is the user's, and a menu pick must not eat it.
      */
+    /**
+     * Puts [text] in the input, ready to edit and send.
+     *
+     * A **slash command goes to the front**, not the end. It only executes as a command when it is the
+     * first thing in the message, so appending one after text the user had already typed produced a
+     * line that looked like a command and was billed as a prompt. Anything already typed stays, after
+     * it, where the CLI reads it as the command's arguments and where the user can see and edit it.
+     */
     fun putInInput(text: String) {
-        val existing = input.text.orEmpty()
-        input.text = if (existing.isBlank()) text else existing.trimEnd() + " " + text
+        val existing = input.text.orEmpty().trim()
+        input.text = when {
+            existing.isBlank() -> text
+            SlashCommands.isCommand(text) -> text.trimEnd() + " " + existing
+            else -> existing + " " + text
+        }
         input.caretPosition = input.document.length
         input.requestFocusInWindow()
     }
