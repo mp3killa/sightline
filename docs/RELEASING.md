@@ -106,6 +106,10 @@ gh secret set PRIVATE_KEY          --repo mp3killa/sightline < private.pem
 gh secret set PRIVATE_KEY_PASSWORD --repo mp3killa/sightline < password.txt
 ```
 
+**The GitHub release carries the signed zip only.** Signing produces two archives and the workflow
+used to attach both, which left anyone installing from disk guessing which one the Marketplace got.
+It is the signed one, so that is the only one offered.
+
 **Verifying a signature locally — not with `./gradlew verifyPluginSignature`.** That task fails with a
 usage error (exit 64) in IPGP 2.6.0, the same flavour of breakage as `verifyPlugin`. Use the signer's
 own CLI, which is already in the Gradle cache:

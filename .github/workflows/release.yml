@@ -175,11 +175,26 @@ jobs:
           fi
           ./gradlew $JDK_ARG publishPlugin $PLATFORM_ARGS
 
+      # Attach the *signed* zip only. Signing produces two archives, and globbing *.zip put both on the
+      # 0.9.1 release — leaving anyone installing from disk to guess which one the Marketplace got.
+      # It is the signed one, so that is the only one offered.
+      - name: Choose the artifact to attach
+        if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
+        run: |
+          shopt -s nullglob
+          signed=(build/distributions/*-signed.zip)
+          if [[ ${#signed[@]} -gt 0 ]]; then
+            echo "RELEASE_ASSET=${signed[0]}" >> "$GITHUB_ENV"
+          else
+            plain=(build/distributions/*.zip)
+            echo "RELEASE_ASSET=${plain[0]}" >> "$GITHUB_ENV"
+          fi
+
       - name: Attach the artifact to a GitHub release
         if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
         uses: softprops/action-gh-release@v3
         with:
-          files: build/distributions/*.zip
+          files: ${{ env.RELEASE_ASSET }}
           generate_release_notes: true
           # A pre-release tag is marked as one on GitHub too, so the repo and the Marketplace channel
           # do not disagree about what this build is.
