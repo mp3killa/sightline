@@ -54,68 +54,29 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.9.1</b> &#8212; the same plugin as 0.9.0, published <b>signed</b>. Nothing in the panel
-        changed; 0.9.0 and the two releases before it went out unsigned because the signing step was
-        skipped silently, and the release now refuses to publish an unsigned build. Everything below is
-        the 0.9.0 release, which most people will be coming to from 0.8.1.</p>
+        <p><b>0.10.0</b> &#8212; attachments in the composer, and two things that were quietly wrong.</p>
 
-        <p><b>0.9.0</b> &#8212; a smaller, faster plugin, and the conversation gets the whole panel.</p>
+        <p><b>Fixed: pasting an image with Ctrl/&#8984;V did nothing.</b> If you copied a screenshot and
+        pasted it into Sightline, nothing happened &#8212; no image, no error, no explanation. The IDE
+        handles paste in a plain text box down its own editor path, which understands text and nothing
+        else, so it found nothing to paste and silently swallowed the keystroke before Sightline saw it.
+        An ordinary paste now attaches the image, using whatever key <i>your</i> keymap has bound to
+        Paste. Shift+Ctrl/&#8984;V still forces the image off a clipboard that is also carrying text.</p>
 
-        <p><b>The Agent Activity Map has been removed.</b> The live graph of files, commands and
-        relationships was the largest and most platform-coupled thing here, and it earned less than it
-        cost. The conversation is now the entire panel &#8212; the Chat/Split/Map switch goes with it,
-        since a switch between one view and itself is worse than no control. Nothing in the conversation
-        changed: the status line, the recovered-failure tally and the per-turn summary all run on the
-        same observed build, test and tool events they always did. Sightline also no longer needs the
-        Java or Kotlin plugins to be present at all.</p>
+        <p><b>Fixed: the reply jumped around while it was being written.</b> Streaming text was being
+        laid out and re-scrolled in separate steps, several times a second, so the transcript visibly
+        shifted under you and only settled once the answer finished. It now draws in one pass &#8212; the
+        text grows downward steadily and stays readable while it arrives.</p>
 
-        <p><b>You can see how full the context is.</b> The composer footer now shows context-window usage
-        &#8212; <code>35.4k / 200k &#183; 18%</code> &#8212; from the CLI's own reported figures, turning
-        amber past 70% and red past 90%. Click it for <code>/context</code>, the full breakdown by
-        category, which costs no tokens.</p>
+        <p><b>A long paste becomes an attachment instead of swallowing the composer.</b> Pasting a stack
+        trace or a whole file into a few-row text box used to bury the sentence you were halfway through
+        writing. A paste over 30 lines now attaches as a <i>Pasted text</i> chip &#8212; named, measured
+        and removable &#8212; and is sent with your message. Shorter pastes are unchanged: ordinary text
+        still pastes as text.</p>
 
-        <p><b>A failed turn now has somewhere to go.</b> An error used to be one red line. It is now a
-        card that says what the failure means and offers what is worth doing next &#8212; copy the
-        sign-in command, check the sign-in, retry, or copy the full text. An unrecognised error still
-        shows the CLI's own words and explains nothing, rather than guessing.</p>
-
-        <p><b>Plan mode is a document you can edit.</b> A proposed plan renders as Markdown with
-        <b>Approve</b>, <b>Edit plan&#8230;</b> and <b>Keep planning</b>. Rewriting the plan sends your
-        version back as Claude's instruction, instead of arguing with it in chat afterwards.</p>
-
-        <p><b>Type <code>@</code> to reference any file in the project</b> &#8212; a ranked file list,
-        filename matches first. The reference is expanded by the CLI, so Claude reads the current file
-        rather than a stale paste. <b>Add Selection to Sightline</b> in the editor's context menu does
-        the same for the lines you have selected.</p>
-
-        <p><b>Deny with a reason.</b> A permission prompt can now redirect the work &#8212; "not that,
-        run the tests first" &#8212; instead of only blocking it. What you type reaches Claude as the
-        tool's own result.</p>
-
-        <p><b>New, off by default: resume a conversation after a restart.</b> Sightline can remember
-        which Claude session belongs to a project, but only after you accept a dialog that says exactly
-        what is stored: <b>a session id and a date, nothing else</b> &#8212; no messages, prompts, file
-        contents or paths. Resuming gives <i>Claude</i> its history back; the panel starts empty, because
-        Sightline stores no transcript and cannot redraw one. Turning it off forgets the id.</p>
-
-        <p><b>A quiet turn says so.</b> If nothing has come back for a while and no tool is running, the
-        transcript tells you how long it has been silent. It stays quiet during builds and test runs,
-        which are supposed to take minutes.</p>
-
-        <p><b>Paste an image even when the clipboard is holding something else too.</b> A browser's
-        "Copy image" carries the picture and its URL, and text takes precedence, so the image could not
-        be reached. <b>Shift+Ctrl+V</b> (Shift+&#8984;V on macOS) or <i>Actions &#9656; Attach image from
-        clipboard</i> now takes the image; an ordinary paste that steps over one says so.</p>
-
-        <p><b>Fixed: slash commands typed into the composer were being billed as prompts.</b> A command
-        only runs when it is the first thing in the message, and in an Android project the context block
-        was going in front of it &#8212; so <code>/context</code>, <code>/model</code> and the rest quietly
-        became ordinary paid turns that answered something else. Commands now go out on their own, and
-        picking one from the actions menu puts it at the front of what you have typed rather than the
-        end.</p>
-
-        <p><b>Conversation text size is now yours to set</b> (80&#8211;200% of the IDE font), and the tool
-        window asks for attention when Claude is blocked on you while the panel is hidden.</p>
+        <p><b>Attachment chips are easier to read</b> &#8212; the name in front, the size beside it in
+        muted text (<code>Image 2&#160;&#160;1136&#215;989</code>, <code>Pasted text 1&#160;&#160;412
+        lines</code>). Images show the dimensions Claude will actually see, after any downscaling.</p>
     ]]></change-notes>
 
     <!-- Platform only. The Java module dependency went with the PSI/UAST class-hierarchy enrichment

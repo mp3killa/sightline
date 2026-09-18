@@ -144,10 +144,20 @@ producing a silent unauthenticated attempt.
 
 ## What the pipeline does not cover
 
-Everything in [BACKLOG.md](BACKLOG.md) under *Live Android Studio verification*. CI runs 927 unit
+Everything in [BACKLOG.md](BACKLOG.md) under *Live Android Studio verification*. CI runs 1,146 unit
 tests and the Plugin Verifier; neither can click a button, hover, drag, or run a live CLI session.
 The permission cards, diff accept/reject, `AskUserQuestion`, and the first-run disclosure have never
 been exercised by a human. A green pipeline is not evidence that they work.
+
+Two *kinds* of change are structurally invisible to the suite and need a live `runIde` pass before a
+stable publish, whatever the test count says:
+
+- **Anything that claims a keystroke.** Shortcut registration, keymap interaction and focus behaviour
+  only exist in a running IDE with a real focus owner. The Cmd/Ctrl+V fix in 0.10.0 is the case in
+  point: every unit involved was correct and tested, and the feature was still completely broken,
+  because the keystroke never arrived. No headless test could have caught that.
+- **Anything about painting or scrolling.** The suite proves layout *logic*; it cannot see a frame.
+  Jitter, flicker and mid-stream jumps are only observable by watching a live streaming turn.
 
 ## Local equivalents
 

@@ -4,6 +4,56 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 — 2026-09-18
+
+Attachments in the composer, and two things that were quietly wrong.
+
+### Added
+
+- **A long paste becomes an attachment instead of swallowing the composer.** Pasting a stack trace, a
+  log, or a whole file into a few-row text box buried the sentence you were halfway through writing,
+  with no way back to it but scrolling. A paste over **30 lines or 2,000 characters** now attaches as a
+  *Pasted text* chip — named, measured, removable — and travels with the message, fenced, after your
+  prompt. Below that threshold nothing changes: ordinary text still pastes as characters, because that
+  is what a text box is for.
+
+  Two triggers rather than one because the failure is *unreadability*, and text reaches it two ways: a
+  tall stack trace, and a single minified line with no line count to show for it. The fence is built
+  longer than the longest backtick run inside the text, so pasting a Markdown document cannot close its
+  own fence a third of the way through. A paste that is refused says why and what to do instead, and a
+  paste that is accepted says so too — an input box that does not change looks exactly like a paste that
+  failed.
+
+### Changed
+
+- **Attachment chips read at a glance.** The name sits in the foreground and its size beside it in
+  muted text — `Image 2  1136×989`, `Pasted text 1  412 lines` — rather than running both together
+  into one string where neither wins. Image chips now show the dimensions **the model will actually
+  see**, after any downscale; the byte size and the downscale itself stay in the tooltip.
+
+### Fixed
+
+- **Pasting an image with Cmd/Ctrl+V did nothing.** The clipboard was read correctly, the routing was
+  correct and the encoder worked — the keystroke simply never arrived. In an IntelliJ-platform IDE,
+  `com.intellij.openapi.editor.actions.PasteAction` extends `TextComponentEditorAction`, which wraps a
+  focused plain Swing text component in an editor and handles paste down the *editor* path. That path
+  knows only plain text: with an image on the clipboard it found nothing to paste, did nothing, and
+  consumed the event, so the composer's own handler was never reached. There was no error anywhere,
+  because nothing failed — the wrong handler succeeded at doing nothing.
+
+  The composer now claims the IDE's Paste shortcut on its input, taking it from the `$Paste` action's
+  own shortcut set rather than hardcoding Cmd+V, so a rebound keymap keeps working. Both entry points
+  share one routing routine, so the gestures cannot drift apart. Shift+Cmd/Ctrl+V still forces the
+  image off a clipboard that also carries text — which is the gesture that worked throughout, and the
+  reason this went unnoticed for so long.
+
+- **Streaming text jumped while you were reading it.** A live Markdown tick rebuilt the tail of the
+  message, then scheduled the layout and the scroll correction separately — so the panel painted a
+  frame at the old height with the new offset, another at the new height with the old offset, roughly
+  seven times a second. The transcript now lays out and re-pins to the bottom within the same event as
+  the render, so the frame you see is the only one drawn. Deltas that coalesced into a later tick no
+  longer scroll at all; they changed no pixels.
+
 ## 0.9.1 — 2026-09-16
 
 **No functional change.** The same plugin as 0.9.0, published signed.
