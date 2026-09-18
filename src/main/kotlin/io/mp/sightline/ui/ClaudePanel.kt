@@ -3007,6 +3007,39 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
     }
 
+    /**
+     * Lays the transcript out and re-pins to the live end **within this same EDT turn**.
+     *
+     * [scrollToBottomSoon] is right for something that arrives every few seconds: it defers, lets the
+     * layout settle over a couple of EDT turns, and then snaps. It is the wrong shape for streaming
+     * text. `revalidate()` only *schedules* layout, so each deferred hop paints a frame — one at the
+     * old height with the new scroll offset, another at the new height with the old offset — and a
+     * live Markdown tick rebuilds the tail block roughly seven times a second. That is not a glitch
+     * anyone catches once; it is the transcript visibly jumping while the reader waits for it to
+     * settle, which is what this replaces.
+     *
+     * Laying out synchronously and setting the scrollbar before returning means the frame painted at
+     * the end of this event is the *only* frame anyone sees: new height and matching offset together.
+     * The viewport is the validate root here, so validating it is what actually re-lays the transcript
+     * and updates the scrollbar model the pin then reads.
+     */
+    private fun pinToBottomNow() {
+        if (!following) { transcript.repaint(); updateJumpToLatest(); return }
+        programmaticScroll = true
+        try {
+            transcript.invalidate()
+            scroll.viewport.validate()
+            scroll.validate()
+            val bar = scroll.verticalScrollBar
+            bar.value = bar.maximum - bar.visibleAmount
+            lastScrollValue = bar.value
+            lastScrollMaximum = bar.maximum
+            transcript.repaint()
+        } finally {
+            SwingUtilities.invokeLater { programmaticScroll = false; updateJumpToLatest() }
+        }
+    }
+
     /** Snaps to the live end without letting our own scroll be mistaken for the user scrolling. */
     private fun scrollToBottomNow() {
         val bar = scroll.verticalScrollBar
@@ -3324,8 +3357,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             dirty = true
             // First delta renders immediately (the message shows formatted from its first tokens);
             // while the timer runs, further deltas coalesce into the next tick.
+            //
+            // Scrolling is **not** done here. A delta that coalesced into a later tick changed no
+            // pixels, so scrolling for it can only re-pin to a bottom that has not moved — and the
+            // deltas that *did* change something are already followed by the render's own pin. Per
+            // delta this fired several times per tick, each one a deferred hop that painted the
+            // transcript at whatever offset the layout happened to be mid-settle.
             if (!liveTimer.isRunning) liveTick()
-            scrollToBottomSoon()
         }
         private fun liveTick() {
             if (!dirty) return
@@ -3348,7 +3386,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 markdownRenderer.render(model.subList(stable, model.size)).forEach { blocks.add(fullWidth(it)) }
                 renderedModel = model
                 if (!showingBlocks) { remove(stream); add(blocks, BorderLayout.CENTER); showingBlocks = true }
-                relayout()
+                // Lay out and re-pin now, in this turn — see [pinToBottomNow] for why a streaming tick
+                // cannot use the deferred path without the transcript jittering.
+                pinToBottomNow()
             } catch (e: Exception) {
                 // Fail once, stay plain for the rest of the stream — retrying a failing parse on
                 // every tick would burn the EDT for nothing. Finalize retries the full pipeline.
