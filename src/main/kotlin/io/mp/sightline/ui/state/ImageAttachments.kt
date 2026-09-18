@@ -85,9 +85,16 @@ object ImageAttachmentPolicy {
         return if (edge <= MAX_EDGE) 1.0 else MAX_EDGE.toDouble() / edge
     }
 
-    /** Chip text: `Image 2 · 214 KB` — short, because the tooltip carries the detail. */
-    fun chipLabel(image: PendingImage): String =
-        "Image ${image.ordinal} · ${formatBytes(image.image.bytes.size)}"
+    /** Chip name: the ordinal alone. Size lives in [chipDetail], drawn muted beside it. */
+    fun chipLabel(image: PendingImage): String = "Image ${image.ordinal}"
+
+    /**
+     * The muted half of the chip: `1136×989`. Dimensions rather than bytes, because what a reader
+     * wants to check at a glance is whether the *right* screenshot is attached and whether it is still
+     * legible at the size the model will see — and these are the **encoded** dimensions, so the number
+     * on the chip is the number the model gets. The byte size and any downscale stay in [tooltip].
+     */
+    fun chipDetail(image: PendingImage): String = "${image.image.width}\u00d7${image.image.height}"
 
     /**
      * Tooltip: dimensions, provenance of any downscale, and the format actually sent. Stating the

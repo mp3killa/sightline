@@ -106,6 +106,8 @@ import io.mp.sightline.ui.state.ContextUsage
 import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.LayoutProfile
 import io.mp.sightline.ui.state.PendingImage
+import io.mp.sightline.ui.state.PendingText
+import io.mp.sightline.ui.state.TextAttachmentPolicy
 import io.mp.sightline.ui.state.LineDiff
 import io.mp.sightline.ui.state.PermissionModes
 import io.mp.sightline.ui.state.PlanReview
@@ -902,6 +904,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         attachments: List<String>,
         images: List<PendingImage> = emptyList(),
         interjected: Boolean = false,
+        pasted: List<PendingText> = emptyList(),
     ): Bubble {
         val bubble = Bubble()
         bubble.border = JBUI.Borders.empty(9, 12)
@@ -920,6 +923,19 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 row.add(label)
             }
             col.add(fullWidth(row))
+        }
+        if (pasted.isNotEmpty()) {
+            // Named and measured, never reproduced. The block went out inside the message; repeating
+            // 400 lines here would bury the turn in the transcript exactly as it would have buried the
+            // composer, which is the whole reason it became a chip.
+            val note = plainArea(
+                pasted.joinToString(", ") {
+                    "${TextAttachmentPolicy.chipLabel(it)} (${TextAttachmentPolicy.chipDetail(it)})"
+                },
+            )
+            note.font = UIUtil.getLabelFont().deriveFont(Font.ITALIC, JBUI.scaleFontSize(11f).toFloat())
+            note.foreground = mutedFg()
+            col.add(fullWidth(note))
         }
         if (attachments.isNotEmpty()) {
             val ctx = plainArea("Context: " + attachments.joinToString(", ") { basename(it) })
@@ -1221,7 +1237,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * still going — no new activity task, no status/health reset, and no new turn container for output
      * that is still landing in the current one.
      */
-    private fun doSend(rawText: String, queuedImages: List<PendingImage>? = null) {
+    private fun doSend(
+        rawText: String,
+        queuedImages: List<PendingImage>? = null,
+        queuedTexts: List<PendingText>? = null,
+    ) {
         // Mid-turn only reaches here as an interjection: ComposerModel.submit parks the message instead
         // whenever canInterject() says nothing is listening (a Stop in flight, an unobserved exit).
         val interjecting = running
@@ -1229,13 +1249,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val text = rawText.trim()
         // Pending images make a blank body sendable: "look at this" needs no prose.
         val images = queuedImages ?: composerModel.images
-        if (text.isEmpty() && images.isEmpty()) return
+        val pasted = queuedTexts ?: composerModel.texts
+        if (text.isEmpty() && images.isEmpty() && pasted.isEmpty()) return
         // Before the first message ever leaves, not as a banner beside it: the only useful moment to
         // say "this can read your files and run commands" is before it does. Declining cancels the
         // send — dismissing a disclosure is not consent, and the images stay pending.
         if (!FirstRunDialog.ensureAcknowledged(project)) return
         val attachments = composerModel.attachments
-        val message = composerModel.buildMessage(rawText)
+        // A slash command must be the only thing in the message, so pasted blocks can't ride with one.
+        // They stay attached for the next message and the transcript says so — a chip that vanished with
+        // content that never travelled is the failure this notice exists to prevent.
+        val commandDropped = composerModel.commandWouldDropTexts(rawText, pasted)
+        val message = composerModel.buildMessage(rawText, if (commandDropped) emptyList() else pasted)
         val wire = images.map { it.toWireBlock() }
         // The interjection write comes first, before anything is consumed. A process can die at any
         // moment, including between canInterject() above and this line, and the write refuses to start a
@@ -1246,6 +1271,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             return
         }
         if (queuedImages == null) composerModel.clearImages() // `images` holds the snapshot leaving now
+        if (commandDropped) {
+            addInfo(TextAttachmentPolicy.droppedByCommandMessage(pasted.size), false)
+            if (queuedTexts != null) composerModel.restoreTexts(queuedTexts) // came off the queue; keep them
+        } else if (queuedTexts == null) {
+            composerModel.clearTexts()
+        }
         if (interjecting) {
             // Deliberately *not* finalizeCurrent(): a block still streaming belongs to the turn above
             // this bubble — that text really was written before the interjection, and cutting it off
@@ -1258,9 +1289,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
         // Remembered for a failure card's Retry. Images disqualify it: their bytes go out with this
         // send and are released, so "that message" could not be reproduced.
-        lastSentText = text.takeIf { it.isNotEmpty() && images.isEmpty() }
+        // Pasted blocks disqualify a retry for the same reason images do: they were taken out of the
+        // composer with this send, so re-sending `text` alone would repeat the request without the
+        // material it was about — a retry that quietly sends something else.
+        lastSentText = text.takeIf { it.isNotEmpty() && images.isEmpty() && pasted.isEmpty() }
         following = true // sending a message re-follows so the user always sees their own turn + the reply
-        val bubble = addUserBubble(text, attachments, images, interjected = interjecting)
+        val bubble = addUserBubble(
+            text,
+            attachments,
+            images,
+            interjected = interjecting,
+            pasted = if (commandDropped) emptyList() else pasted,
+        )
         // The queue must mirror **exactly what was written to stdin**, in order — including
         // interjections. An interjection goes out as an identical `{"type":"user",…}` line
         // (ClaudeSession.interjectUserMessage), so the CLI replays it like any other message; leaving it
@@ -1281,7 +1321,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             // reset the activity task and clear the health tally the completion card still has to report.
             feed(interpreter.status("Following up"))
         } else {
-            feed(interpreter.taskStarted(text.ifEmpty { imagesTaskLabel(images.size) }))
+            feed(interpreter.taskStarted(text.ifEmpty { blankBodyTaskLabel(images.size, pasted.size) }))
             statusModel.taskStarted(); refreshStatus()
         }
         // The interjection was already written above; a fresh turn is what starts the run.
@@ -1319,7 +1359,12 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         assumeLiveSessionForTest || session.interjectUserMessage(message, wire)
 
     /** Activity-map task label for an image-only message, which has no prose to label it with. */
-    private fun imagesTaskLabel(count: Int) = if (count == 1) "Sent an image" else "Sent $count images"
+    /** What a message with no prose is called in the status strip — it carried *something*. */
+    private fun blankBodyTaskLabel(images: Int, pasted: Int) = when {
+        images > 0 -> if (images == 1) "Sent an image" else "Sent $images images"
+        pasted == 1 -> "Sent a pasted text block"
+        else -> "Sent $pasted pasted text blocks"
+    }
 
     /** Base64 for the wire — the standard encoder, which emits no line breaks. */
     private fun PendingImage.toWireBlock() = UserMessageJson.ImageBlock(
@@ -2622,7 +2667,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun drainQueuedMessage() {
         if (running) return
         val next = composer.takeQueuedMessage() ?: return
-        doSend(next.text, next.images)
+        doSend(next.text, next.images, next.texts)
     }
 
     /**

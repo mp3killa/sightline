@@ -23,6 +23,13 @@ class ContextChip(
     label: String,
     /** Optional leading icon — e.g. a thumbnail for a pasted-image chip. */
     icon: javax.swing.Icon? = null,
+    /**
+     * Optional muted second half — the *size* of an attachment (`1136×989`, `412 lines`) set beside
+     * its name. Drawn in the secondary colour so the name still reads first: the chip answers "which
+     * attachment" at a glance and "how big" on a second look, rather than running both together into
+     * one string where neither wins.
+     */
+    detail: String? = null,
     onRemove: (String) -> Unit,
 ) : JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(1))) {
 
@@ -38,6 +45,12 @@ class ContextChip(
             text.iconTextGap = JBUI.scale(5)
         }
         add(text, BorderLayout.CENTER)
+        if (!detail.isNullOrEmpty()) {
+            val meta = JBLabel(detail)
+            meta.font = text.font
+            meta.foreground = ClaudeUiTokens.textSecondary()
+            add(meta)
+        }
         val remove = IconActionButton(
             ClaudeIcons.close.withSize(12).withColor { ClaudeUiTokens.textSecondary() },
             "Remove $label",

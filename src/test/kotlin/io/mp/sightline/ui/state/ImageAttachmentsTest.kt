@@ -40,8 +40,11 @@ class ImageAttachmentsTest {
         assertEquals("1.3 MB", ImageAttachmentPolicy.formatBytes((1.3 * 1024 * 1024).toInt()))
     }
 
-    @Test fun chipLabelCarriesOrdinalAndSize() {
-        assertEquals("Image 3 · 2 KB", ImageAttachmentPolicy.chipLabel(pending(bytes = 2048, ordinal = 3)))
+    @Test fun chipNamesTheImageAndSizesItSeparately() {
+        val img = pending(w = 1136, h = 989, bytes = 2048, ordinal = 3)
+        assertEquals("Image 3", ImageAttachmentPolicy.chipLabel(img))
+        // The dimensions the model will see, not the ones that were on the clipboard.
+        assertEquals("1136×989", ImageAttachmentPolicy.chipDetail(img))
     }
 
     /** The user should know the model sees 2576px, not their 5120px original. */

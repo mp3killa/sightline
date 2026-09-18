@@ -86,6 +86,54 @@ class ComposerModel {
      */
     fun takeImages(): List<PendingImage> = imagesList.toList().also { imagesList.clear() }
 
+    // ---- pasted text ----
+
+    private val textsList = mutableListOf<PendingText>()
+    private var nextTextOrdinal = 1
+
+    /** Large pastes held as chips rather than poured into the input, in paste order. */
+    val texts: List<PendingText> get() = textsList.toList()
+    val hasTexts: Boolean get() = textsList.isNotEmpty()
+
+    /**
+     * Accepts a large paste as an attachment, or refuses with a typed reason that
+     * [TextAttachmentPolicy] words — a paste that appears to do nothing is the failure this must never
+     * produce. Ordinals are monotonic, like the images': removing "Pasted text 1" never renames the
+     * chip beside it.
+     */
+    fun addText(text: String): TextAttachmentPolicy.AddTextResult {
+        if (textsList.size >= TextAttachmentPolicy.MAX_TEXTS) {
+            return TextAttachmentPolicy.AddTextResult.REJECTED_LIMIT
+        }
+        if (text.length > TextAttachmentPolicy.HARD_MAX_CHARS) {
+            return TextAttachmentPolicy.AddTextResult.REJECTED_TOO_LARGE
+        }
+        val ordinal = nextTextOrdinal++
+        textsList += PendingText(id = "txt-$ordinal", ordinal = ordinal, text = text)
+        return TextAttachmentPolicy.AddTextResult.ADDED
+    }
+
+    /** The chip just added, for the notice that says what became of the paste. */
+    fun lastText(): PendingText? = textsList.lastOrNull()
+
+    fun removeText(id: String): Boolean = textsList.removeAll { it.id == id }
+    fun clearTexts() = textsList.clear()
+
+    /** Reads then clears — a paste made after this instant belongs to the next message. */
+    fun takeTexts(): List<PendingText> = textsList.toList().also { textsList.clear() }
+
+    /**
+     * Puts a queued message's captured blocks back as **chips**, not as characters in the input. A card's
+     * Edit exists to revise the prose; re-inlining a 400-line paste into the textarea would undo the one
+     * thing attaching it achieved.
+     */
+    fun restoreTexts(blocks: List<PendingText>) {
+        for (t in blocks) {
+            if (textsList.size >= TextAttachmentPolicy.MAX_TEXTS) break
+            textsList.add(t)
+        }
+    }
+
     /** What submitting the composer did — the caller renders each outcome differently. */
     enum class Submit { SENT, INTERJECTED, QUEUED, IGNORED_BLANK }
 
@@ -94,7 +142,11 @@ class ComposerModel {
      * screenshot is *content*, frozen at the moment the user submitted — unlike the Android context,
      * which is framing and is deliberately re-gathered at send time (see [buildMessage]).
      */
-    data class QueuedMessage(val text: String, val images: List<PendingImage> = emptyList())
+    data class QueuedMessage(
+        val text: String,
+        val images: List<PendingImage> = emptyList(),
+        val texts: List<PendingText> = emptyList(),
+    )
 
     private val queue = ArrayDeque<QueuedMessage>()
 
@@ -123,7 +175,7 @@ class ComposerModel {
      * because the input was never disabled a user could type a whole message, press Enter, and have
      * nothing happen with no feedback at all.
      */
-    fun sendEnabled(text: String): Boolean = text.isNotBlank() || hasImages || hasAttachments
+    fun sendEnabled(text: String): Boolean = text.isNotBlank() || hasImages || hasAttachments || hasTexts
 
     /**
      * Submits [text]: sent now when idle, **interjected into the running turn** when one is in flight and
@@ -141,10 +193,10 @@ class ComposerModel {
      * entry waits belongs to the *next* message.
      */
     fun submit(text: String): Submit = when {
-        text.isBlank() && !hasImages && !hasAttachments -> Submit.IGNORED_BLANK
+        text.isBlank() && !hasImages && !hasAttachments && !hasTexts -> Submit.IGNORED_BLANK
         !running -> Submit.SENT
         canInterject() -> Submit.INTERJECTED
-        else -> { queue.addLast(QueuedMessage(text, takeImages())); Submit.QUEUED }
+        else -> { queue.addLast(QueuedMessage(text, takeImages(), takeTexts())); Submit.QUEUED }
     }
 
     /** Pops the next queued message, or null when nothing is waiting. */
@@ -191,7 +243,7 @@ class ComposerModel {
      *
      * A blank body still sends: attaching a file and pressing Enter is a legitimate "look at this".
      */
-    fun buildMessage(text: String): String {
+    fun buildMessage(text: String, pasted: List<PendingText> = texts): String {
         val body = text.trim()
         // A slash command goes out **alone**. It only executes as a command when it is the first thing
         // in the message: prepending the Android context block turned `/context` into an ordinary
@@ -200,6 +252,19 @@ class ComposerModel {
         if (SlashCommands.isCommand(body)) return body
         val context = if (enabledChips.isEmpty()) "" else androidContextBlock(enabledContextChips)
         val mentions = attachmentsSet.joinToString(" ") { "@$it" }
-        return listOf(context, mentions, body).filter { it.isNotEmpty() }.joinToString("\n\n")
+        // Pasted blocks come **after** the prompt: they are the material the request is about, and a
+        // request that starts with 400 lines of log buries itself. Each is fenced by
+        // [TextAttachmentPolicy.promptBlock], titled with the same ordinal its chip showed.
+        val blocks = pasted.joinToString("\n\n") { TextAttachmentPolicy.promptBlock(it) }
+        return listOf(context, mentions, body, blocks).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
+
+    /**
+     * Whether sending [text] would leave pasted blocks behind, because it is a slash command and a
+     * command must be the only thing in the message (the same rule that drops the context block and
+     * `@mentions`). The caller says so and the blocks stay attached for the next message — the one
+     * thing that must not happen is a chip quietly vanishing with content that never travelled.
+     */
+    fun commandWouldDropTexts(text: String, pasted: List<PendingText> = texts): Boolean =
+        pasted.isNotEmpty() && SlashCommands.isCommand(text.trim())
 }

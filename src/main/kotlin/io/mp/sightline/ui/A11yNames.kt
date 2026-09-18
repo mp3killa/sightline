@@ -29,6 +29,7 @@ object A11yNames {
 
     /** A pasted-image chip in the composer, addressed by its stable ordinal ("Image 3"). */
     fun composerImage(ordinal: Int) = "sightline.composer.image.$ordinal"
+    fun composerPastedText(ordinal: Int) = "sightline.composer.pastedText.$ordinal"
     const val TOOL_WINDOW_ROOT = "sightline.toolWindow.root"
     const val TRANSCRIPT_JUMP_TO_LATEST = "sightline.transcript.jumpToLatest"
     const val ANDROID_CONTEXT_STRIP = "sightline.android.contextStrip"
