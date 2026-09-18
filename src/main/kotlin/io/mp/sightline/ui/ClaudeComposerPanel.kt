@@ -8,6 +8,11 @@ import com.intellij.util.ui.UIUtil
 import io.mp.sightline.android.AndroidContext
 import io.mp.sightline.android.AndroidContextFormatter
 import io.mp.sightline.android.ContextChipKind
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.project.DumbAware
 import io.mp.sightline.theme.ClaudeIcons
 import io.mp.sightline.theme.ClaudeUiTokens
 import io.mp.sightline.ui.android.AndroidContextStrip
@@ -20,6 +25,8 @@ import io.mp.sightline.ui.state.ImageAttachmentPolicy
 import io.mp.sightline.ui.state.MentionQuery
 import io.mp.sightline.ui.state.PasteRouting
 import io.mp.sightline.ui.state.PendingImage
+import io.mp.sightline.ui.state.PendingText
+import io.mp.sightline.ui.state.TextAttachmentPolicy
 import io.mp.sightline.ui.state.SlashCommands
 import java.awt.BorderLayout
 import java.awt.Color
@@ -114,6 +121,9 @@ class ClaudeComposerPanel(
         isVisible = false
     }
     private val input = JBTextArea(2, 20)
+
+    /** The handler wrapped by [installPasteInterceptor] — the ordinary text paste, kept reachable. */
+    private var originalTransferHandler: TransferHandler? = null
     private val inputScroll = JBScrollPane(input, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER)
     private val modeChip = JButton()
 
@@ -180,6 +190,7 @@ class ClaudeComposerPanel(
             override fun focusLost(e: FocusEvent) { box.focused = false; box.repaint(); adjustHeight() }
         })
         installPasteInterceptor()
+        installIdePasteAction()
         inputScroll.isOpaque = false
         inputScroll.viewport.isOpaque = false
         inputScroll.border = JBUI.Borders.empty()
@@ -381,9 +392,17 @@ class ClaudeComposerPanel(
         val body = when {
             t.isNotEmpty() -> if (t.length > 60) t.take(59) + "…" else t
             msg.images.isNotEmpty() -> "${msg.images.size} image" + if (msg.images.size == 1) "" else "s"
+            msg.texts.isNotEmpty() -> "${msg.texts.size} pasted text block" + if (msg.texts.size == 1) "" else "s"
             else -> "(empty)"
         }
-        return "Queued: $body"
+        // The card names what rides along, not only the prose: a parked message whose whole content is a
+        // 400-line paste would otherwise read as a bare sentence with nothing attached to it.
+        val carried = listOfNotNull(
+            msg.images.size.takeIf { it > 0 && t.isNotEmpty() }?.let { "$it image" + if (it == 1) "" else "s" },
+            msg.texts.size.takeIf { it > 0 && t.isNotEmpty() }?.let { "$it pasted" },
+        )
+        val suffix = if (carried.isEmpty()) "" else " (+ ${carried.joinToString(", ")})"
+        return "Queued: $body$suffix"
     }
 
     /** Pulls a queued message back into the composer for revision (text + its captured images). */
@@ -392,6 +411,9 @@ class ClaudeComposerPanel(
         val existing = input.text
         input.text = if (existing.isBlank()) msg.text else existing.trimEnd() + "\n" + msg.text
         model.restoreImages(msg.images)
+        // Back as chips, never re-inlined: Edit exists to revise the prose, and dumping the paste into
+        // the textarea would undo the one thing attaching it achieved.
+        model.restoreTexts(msg.texts)
         refreshChips(); refreshQueueLabel(); updateSendEnabled(); adjustHeight()
         input.requestFocusInWindow()
     }
@@ -478,7 +500,12 @@ class ClaudeComposerPanel(
         }
 
         for (img in model.images) {
-            val chip = ContextChip(img.id, ImageAttachmentPolicy.chipLabel(img), icon = thumbnailIcon(img)) { removed ->
+            val chip = ContextChip(
+                img.id,
+                ImageAttachmentPolicy.chipLabel(img),
+                icon = thumbnailIcon(img),
+                detail = ImageAttachmentPolicy.chipDetail(img),
+            ) { removed ->
                 model.removeImage(removed)
                 refreshChips()
                 updateSendEnabled()
@@ -488,7 +515,23 @@ class ClaudeComposerPanel(
             chipsRow.add(chip)
         }
 
-        chipsRow.isVisible = model.hasAttachments || model.hasImages || contextChips.isNotEmpty()
+        for (txt in model.texts) {
+            val chip = ContextChip(
+                txt.id,
+                TextAttachmentPolicy.chipLabel(txt),
+                icon = ClaudeIcons.read.withSize(13).withColor { ClaudeUiTokens.textSecondary() },
+                detail = TextAttachmentPolicy.chipDetail(txt),
+            ) { removed ->
+                model.removeText(removed)
+                refreshChips()
+                updateSendEnabled()
+            }
+            chip.toolTipText = TextAttachmentPolicy.tooltip(txt)
+            chip.getAccessibleContext().accessibleName = A11yNames.composerPastedText(txt.ordinal)
+            chipsRow.add(chip)
+        }
+
+        chipsRow.isVisible = model.hasAttachments || model.hasImages || model.hasTexts || contextChips.isNotEmpty()
         chipsRow.revalidate(); chipsRow.repaint()
         revalidate(); repaint()
     }
@@ -504,46 +547,15 @@ class ClaudeComposerPanel(
      */
     private fun installPasteInterceptor() {
         val original = input.transferHandler
+        originalTransferHandler = original
         input.transferHandler = object : TransferHandler() {
             override fun canImport(support: TransferSupport): Boolean =
                 support.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
                     support.isDataFlavorSupported(DataFlavor.imageFlavor) ||
                     (original?.canImport(support) ?: false)
 
-            override fun importData(support: TransferSupport): Boolean {
-                val t = support.transferable
-                val hasText = support.isDataFlavorSupported(DataFlavor.stringFlavor)
-                return when (PasteRouting.route(
-                    hasFiles = support.isDataFlavorSupported(DataFlavor.javaFileListFlavor),
-                    hasText = hasText,
-                    textIsBlank = hasText && (readString(t)?.isBlank() ?: true),
-                    hasImage = support.isDataFlavorSupported(DataFlavor.imageFlavor),
-                )) {
-                    PasteRouting.Route.FILES -> {
-                        val files = readFiles(t)
-                        if (files.isEmpty()) false else { onFilesPasted(files); true }
-                    }
-                    PasteRouting.Route.IMAGE -> {
-                        val image = readImage(t) ?: return false
-                        attachClipboardImage(image)
-                        true
-                    }
-                    PasteRouting.Route.TEXT, PasteRouting.Route.DELEGATE -> {
-                        // Say when a paste has just stepped over an image — the browser case, where
-                        // "Copy image" carries the picture and its URL and the text wins.
-                        val routed = PasteRouting.route(
-                            hasFiles = support.isDataFlavorSupported(DataFlavor.javaFileListFlavor),
-                            hasText = hasText,
-                            textIsBlank = hasText && (readString(t)?.isBlank() ?: true),
-                            hasImage = support.isDataFlavorSupported(DataFlavor.imageFlavor),
-                        )
-                        if (PasteRouting.imageWasPassedOver(routed, support.isDataFlavorSupported(DataFlavor.imageFlavor))) {
-                            onAttachmentNotice(PasteRouting.IMAGE_PASSED_OVER)
-                        }
-                        original?.importData(support) ?: false
-                    }
-                }
-            }
+            override fun importData(support: TransferSupport): Boolean =
+                routePaste(support.transferable) || (original?.importData(support) ?: false)
 
             // Legacy entry point some paste paths still use — funnel into the TransferSupport one.
             override fun importData(comp: JComponent, t: Transferable): Boolean =
@@ -557,6 +569,89 @@ class ClaudeComposerPanel(
                 original?.exportAsDrag(comp, e, action)
             }
         }
+    }
+
+    /**
+     * Decides what a [Transferable] *is* and acts on it. Returns false when the paste is ordinary text
+     * that belongs in the input box, which is the caller's cue to run the normal text paste.
+     *
+     * One routine rather than two because there are two ways in: the Swing [TransferHandler] (drag and
+     * drop, and any paste path that reaches it) and the IDE paste action installed by
+     * [installIdePasteAction]. Two copies of a precedence rule is one edit away from the gestures
+     * disagreeing about what a clipboard holding both text and an image means.
+     */
+    private fun routePaste(t: Transferable): Boolean {
+        val hasFiles = t.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+        val hasText = t.isDataFlavorSupported(DataFlavor.stringFlavor)
+        val hasImage = t.isDataFlavorSupported(DataFlavor.imageFlavor)
+        val pasted = if (hasText) readString(t) else null
+        val routed = PasteRouting.route(
+            hasFiles = hasFiles,
+            hasText = hasText,
+            textIsBlank = hasText && (pasted?.isBlank() ?: true),
+            hasImage = hasImage,
+        )
+        return when (routed) {
+            PasteRouting.Route.FILES -> {
+                val files = readFiles(t)
+                if (files.isEmpty()) false else { onFilesPasted(files); true }
+            }
+            PasteRouting.Route.IMAGE -> {
+                val image = readImage(t)
+                if (image == null) false else { attachClipboardImage(image); true }
+            }
+            PasteRouting.Route.TEXT, PasteRouting.Route.DELEGATE -> {
+                // Say when a paste has just stepped over an image — the browser case, where
+                // "Copy image" carries the picture and its URL and the text wins. Said before the size
+                // check, not after: a large paste that becomes a chip stepped over the image just as
+                // surely as one that went into the input box.
+                if (PasteRouting.imageWasPassedOver(routed, hasImage)) {
+                    onAttachmentNotice(PasteRouting.IMAGE_PASSED_OVER)
+                }
+                // A paste too big for the input box becomes a chip instead of burying the sentence
+                // being written. Below the threshold nothing changes: ordinary text pastes as
+                // characters, which is what a text box is for.
+                if (pasted != null && TextAttachmentPolicy.shouldAttach(pasted)) {
+                    attachPastedText(pasted)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /**
+     * Claims the IDE's own **Paste** shortcut on the input, because in an IntelliJ-platform IDE a plain
+     * Swing `TransferHandler` never sees Cmd/Ctrl+V at all.
+     *
+     * `com.intellij.openapi.editor.actions.PasteAction` extends `TextComponentEditorAction`, which is
+     * the platform's mechanism for making *editor* actions work inside ordinary Swing text components:
+     * a focused `JTextArea` gets wrapped in a `TextComponentEditor` and the keystroke is handled by the
+     * editor paste path — which deals only in `stringFlavor`. So with an image on the clipboard the IDE
+     * action ran, found no text, did nothing, and consumed the event; `importData` was never reached and
+     * the paste looked broken with no error anywhere. (This is also why the Shift+Cmd/Ctrl+V override
+     * worked: a component-level `registerKeyboardAction` is not shadowed the same way.)
+     *
+     * The shortcut is taken from the **`${'$'}Paste` action's own shortcut set**, not hardcoded, so a user
+     * who has rebound paste keeps their binding. Registering it on [input] scopes it to this component
+     * and gives it priority there over the platform action. When the routing declines — ordinary text —
+     * the original handler runs, so normal typing-and-pasting is untouched.
+     */
+    private fun installIdePasteAction() {
+        val platformPaste = ActionManager.getInstance().getAction("${'$'}Paste") ?: return
+        object : AnAction(), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun actionPerformed(e: AnActionEvent) {
+                val contents = runCatching {
+                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.getContents(null)
+                }.getOrNull() ?: return
+                if (routePaste(contents)) return
+                // Not ours: the ordinary text paste, run against the handler we wrapped so the routing
+                // is not re-entered (and its notices not said twice).
+                originalTransferHandler?.importData(TransferHandler.TransferSupport(input, contents))
+            }
+        }.registerCustomShortcutSet(platformPaste.shortcutSet, input)
     }
 
     /**
@@ -575,6 +670,29 @@ class ClaudeComposerPanel(
         }
         if (image == null) { onAttachmentNotice(PasteRouting.NO_IMAGE); return }
         attachClipboardImage(image)
+    }
+
+    /**
+     * Turns a large paste into a chip, or says why it could not. Synchronous — unlike an image there is
+     * nothing to encode, and hopping off the EDT for a string copy would only make the chip appear a
+     * frame late.
+     *
+     * The first thing this must never be is quiet: to the user the gesture was a paste, and an input box
+     * that does not change after one looks exactly like a paste that failed. So the *outcome* is stated
+     * either way — accepted as a named chip, or refused with the reason and what to do instead.
+     */
+    private fun attachPastedText(text: String) {
+        when (model.addText(text)) {
+            TextAttachmentPolicy.AddTextResult.ADDED -> {
+                model.lastText()?.let { onAttachmentNotice(TextAttachmentPolicy.attachedNotice(it)) }
+                refreshChips()
+                updateSendEnabled()
+            }
+            TextAttachmentPolicy.AddTextResult.REJECTED_LIMIT ->
+                onAttachmentNotice(TextAttachmentPolicy.limitMessage())
+            TextAttachmentPolicy.AddTextResult.REJECTED_TOO_LARGE ->
+                onAttachmentNotice(TextAttachmentPolicy.tooLargeMessage(text.length))
+        }
     }
 
     private fun readString(t: Transferable): String? = try {
