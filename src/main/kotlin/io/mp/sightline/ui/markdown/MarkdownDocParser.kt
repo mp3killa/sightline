@@ -46,7 +46,10 @@ object MarkdownDocParser {
             name == "ORDERED_LIST" -> list(node, text, ordered = true)
             name == "CODE_FENCE" -> codeFence(node, text)
             name == "CODE_BLOCK" -> MdCodeBlock(null, dedentIndentedCode(node.getTextInNode(text).toString()))
-            name == "BLOCK_QUOTE" -> calloutOf(node.getTextInNode(text).toString())
+            // Platform 262+ parses GitHub alerts natively as ALERT; 261 still yields a BLOCK_QUOTE
+            // whose first line is the marker. Both go through the same raw-text path, so the callout
+            // looks identical on every IDE in the sinceBuild range.
+            name == "BLOCK_QUOTE" || name == "ALERT" -> calloutOf(node.getTextInNode(text).toString())
                 ?: MdQuote(node.children.mapNotNull { quoteChild(it, text) })
             name == "TABLE" -> table(node, text)
             name == "HORIZONTAL_RULE" -> MdThematicBreak

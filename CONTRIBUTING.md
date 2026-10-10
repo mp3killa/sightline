@@ -72,7 +72,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 tools/verify-plugin.sh  # Plugin Verifier — NOT ./gradlew verifyPlugin, see the script header
 ```
 
-Build with Android Studio's bundled **JBR 21**, not the PATH's Java. That and several other non-obvious
+Build with Android Studio's bundled **JBR**, not the PATH's Java. That and several other non-obvious
 build constraints are in [CLAUDE.md](CLAUDE.md) under *Build gotchas* — each cost real debugging, so
 read them before fighting the build.
 

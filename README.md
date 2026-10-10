@@ -54,7 +54,7 @@ stock Android Studio runtime.
 
 ## Requirements
 
-- **Android Studio 2026.1** (build 261) — the build targets your installed copy. Other IntelliJ
+- **Android Studio 2026.2** (build 262) — the build targets your installed copy. Other IntelliJ
   IDEs of the same generation work too (the plugin only depends on the platform module).
 - The **Claude Code CLI** installed and logged in (`claude --version` should work in a terminal).
 - **JDK 21** to build — Android Studio bundles one; the build is preconfigured to use it.
@@ -62,7 +62,7 @@ stock Android Studio runtime.
 ## Build
 
 ```bash
-# Uses Android Studio's bundled JBR 21 (already set in gradle.properties).
+# Uses Android Studio's bundled JBR (already set in gradle.properties).
 ./gradlew buildPlugin
 ```
 
@@ -193,7 +193,7 @@ interactive flows are verified see [docs/TESTING.md](docs/TESTING.md).
   the IDE server and your settings, and states what it verified plus a concrete hint for anything
   not OK. **Copy report** yields a sanitised report safe to paste into an issue.
 - **“Could not launch claude”** — set an absolute path in *Settings → Tools → Sightline for Claude Code → Claude command*. GUI apps often don't inherit your shell `PATH`; the panel shows an error you can act on.
-- **Build fails with a Kotlin “internal compiler error”** — the Kotlin plugin version in `build.gradle.kts` must be ≥ the Kotlin bundled in your Android Studio (2026.1 ships **2.3.10**).
+- **Build fails with a Kotlin “internal compiler error”** — the Kotlin plugin version in `build.gradle.kts` must be ≥ the Kotlin bundled in your Android Studio (2026.2 ships **2.3.20**; the build uses 2.4.21).
 - **Build can't find Java 21** — point `org.gradle.java.home` in `gradle.properties` at your Android Studio's `Contents/jbr/Contents/Home`.
 
 ---

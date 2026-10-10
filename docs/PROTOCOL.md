@@ -89,6 +89,16 @@ user message can be sent back-to-back (no delay needed; verified).
 Composes with `--permission-mode` (`default` prompts all, `acceptEdits` only non-edit tools,
 `bypassPermissions` none, `plan` read-only, `dontAsk`, `auto`).
 
+**Re-checked against 2.1.295 (2026-10-09):** `--help` now lists `manual` instead of `default`
+(choices: `acceptEdits, auto, bypassPermissions, manual, dontAsk, plan`). `default` is still accepted as
+a hidden alias, and **both** `default` and `manual` echo back as `permissionMode: "default"` in
+`system/init`. Keep sending `default`: `ClaudePanel` detects a silent fallback by comparing the requested
+mode with the echoed one, so requesting `manual` would show a spurious fallback notice on every launch.
+If a future CLI ever rejects `default`, change the request and teach that comparison the alias at the same time.
+All other flags Sightline passes (`--input-format`, `--output-format`, `--verbose`,
+`--include-partial-messages`, `--permission-prompt-tool`, `--mcp-config`, `--resume`, `--model`) are
+still present.
+
 **`auto` mode is model-gated.** `--permission-mode auto` (or the `set_permission_mode` control
 request) is honored **only on capable models (Sonnet/Opus)** — it uses a model classifier to
 approve safe actions and prompt for risky ones. On **Haiku** it fails: the control request returns

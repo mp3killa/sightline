@@ -149,7 +149,7 @@ unblock the turn (a valid option like "Skip" is a normal answer, never a denial)
 ## Build / run
 
 ```bash
-# ALWAYS build with Android Studio's bundled JBR 21 (set in gradle.properties):
+# ALWAYS build with Android Studio's bundled JBR (25 since AS 2026.2; set in gradle.properties):
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew buildPlugin           # -> build/distributions/sightline-<version>.zip  (rootProject.name)
 ./gradlew runIde                # sandbox AS with the plugin
@@ -206,20 +206,28 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
 ## Build gotchas (each cost real debugging)
 
 - **Target = the installed Android Studio** via `local("/Applications/Android Studio.app")`. This AS
-  is **2026.1 / build 261**, bundles **JBR 21** and **Kotlin 2.3.10**.
-- **Kotlin Gradle plugin version must be ≥ the IDE's bundled Kotlin (2.3.10).** An older compiler
+  is **2026.2 / build 262** (auto-updated from 2026.1/261 by 2026-10-09), bundles **JBR 25** and kotlinc
+  **2.3.20**. The toolchain is **Gradle 9.8.1 / IPGP 2.19.0 / Kotlin 2.4.21** — Gradle 8.x cannot run on
+  Java 25 at all (it fails with the bare message `25.0.3`), so an AS update can break the build with no
+  repo change.
+- **The bytecode target stays JVM 21** (the 261.25134 floor's runtime), pinned per `KotlinCompile` task: IPGP
+  2.19 derives Kotlin's `jvmTarget` from the target platform and overrode the `kotlin {}` block with 25.
+  Check `file` on a built `.class` reads *version 65* after any toolchain change.
+- **The platform's Markdown parser changes shape between builds.** 262 emits a native `ALERT` node for
+  `> [!WARNING]` where 261 emits `BLOCK_QUOTE`; `MarkdownDocParser` handles both. Re-run its tests
+  after any platform bump.
+- **Kotlin Gradle plugin version must be ≥ the IDE's bundled Kotlin.** An older compiler
   can't read the platform's newer class metadata and dies with a FIR "Internal compiler error"
   (`FirIncompatibleClassExpressionChecker`, "source must not be null").
-- **Build with JBR 21**, not the PATH's Java 17 (`org.gradle.java.home` in `gradle.properties`).
+- **Build with a JDK Gradle can run on**, not the PATH's Java 17 (`org.gradle.java.home` in
+  `gradle.properties`, or `-Dorg.gradle.java.home=…` on the command line, which wins).
 - **An Android Studio update can break the build, because `org.gradle.java.home` points into the app
   bundle.** As of 2026-08-12 the installed AS ships **JBR 25.0.2**, and Gradle 8.14.3 refuses to run on
   Java 25 — the daemon dies with a bare `* What went wrong: 25.0.2`, which names the JDK version and
-  nothing else, so it reads like a corrupted build rather than an unsupported runtime. There is no other
-  JDK on this machine, but Gradle's own toolchain cache has one:
-  `~/.gradle/jdks/jetbrains_s_r_o_-21-aarch64-os_x.2/*/Contents/Home`. Build with
-  `./gradlew … -Dorg.gradle.java.home=<that path>` until either `gradle.properties` is repointed at a JDK
-  that does not move under the IDE, or the wrapper is raised to a Gradle that supports 25. Repointing at
-  the bundle again just re-arms the same trap on the next AS update.
+  nothing else, so it reads like a corrupted build rather than an unsupported runtime. **Resolved
+  2026-10-10 by the toolchain bump above**: Gradle 9.8.1 runs on Java 21 through 27, so either JDK works.
+  `gradle.properties` still names one machine's Gradle-cache JDK 21
+  (`~/.gradle/jdks/…-21-…/Contents/Home`); on any other machine pass `-Dorg.gradle.java.home`.
 - `buildSearchableOptions = false` — the task launches a second IDE and is flaky against `local()` AS.
 - **No JCEF**: this AS's bundled JBR has **no** JCEF/Chromium, so a webview panel can't render.
   The UI is therefore **native Swing**, not HTML. Verify with

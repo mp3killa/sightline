@@ -7,10 +7,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("java")
-    // Match the Kotlin bundled in the target IDE (Android Studio 2026.1 ships Kotlin 2.3.10);
+    // At least the Kotlin bundled in the target IDE (Android Studio 2026.2 ships kotlinc 2.3.20);
     // an older compiler can't read the platform's newer class metadata.
-    id("org.jetbrains.kotlin.jvm") version "2.3.10"
-    id("org.jetbrains.intellij.platform") version "2.6.0"
+    id("org.jetbrains.kotlin.jvm") version "2.4.21"
+    id("org.jetbrains.intellij.platform") version "2.19.0"
 }
 
 group = "io.mp"
@@ -83,11 +83,11 @@ dependencies {
 
     // Bundled into the plugin: used to parse the CLI's streaming-JSON events.
     // (The IntelliJ platform doesn't expose Gson on the plugin classpath.)
-    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("com.google.code.gson:gson:2.14.0")
 
     // WebSocket server for the `ide` MCP integration the CLI connects to.
     // slf4j-api is already provided by the IntelliJ platform at runtime.
-    implementation("org.java-websocket:Java-WebSocket:1.5.7") {
+    implementation("org.java-websocket:Java-WebSocket:1.6.0") {
         exclude(group = "org.slf4j")
     }
 
@@ -115,6 +115,14 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_21)
     }
+}
+
+// The bytecode target is the sinceBuild floor's runtime (261 runs on JBR 21), not the local IDE's.
+// IPGP 2.19 derives Kotlin's jvmTarget from the target platform, so against Android Studio 2026.2
+// (build 262, JBR 25) it set 25 over the extension above — an artifact that would refuse to load on
+// every build-261 IDE the listing claims. Pinning it per task wins over that convention.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
 }
 
 intellijPlatform {

@@ -15,9 +15,9 @@ None of the three jars ships a `LICENSE` or `NOTICE` entry of its own, so this f
 
 | Component | Version | Licence | Full text | Source |
 |---|---|---|---|---|
-| Gson | 2.11.0 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) | https://github.com/google/gson |
-| Java-WebSocket | 1.5.7 | MIT | [licenses/MIT-Java-WebSocket.txt](licenses/MIT-Java-WebSocket.txt) | https://github.com/TooTallNate/Java-WebSocket |
-| Error Prone Annotations | 2.27.0 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) | https://github.com/google/error-prone |
+| Gson | 2.14.0 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) | https://github.com/google/gson |
+| Java-WebSocket | 1.6.0 | MIT | [licenses/MIT-Java-WebSocket.txt](licenses/MIT-Java-WebSocket.txt) | https://github.com/TooTallNate/Java-WebSocket |
+| Error Prone Annotations | 2.48.0 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) | https://github.com/google/error-prone |
 
 `error_prone_annotations` arrives as a transitive compile-time dependency of Gson and is annotations
 only. It is listed because it is present in the archive, not because Sightline calls it.
