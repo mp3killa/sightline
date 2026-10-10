@@ -279,7 +279,7 @@ Install: **Settings → Plugins → ⚙ → Install Plugin from Disk** → the z
   `": Compatible"`. Note this ran against the
   **local** Android Studio, which has moved to build 261.26222, above the 261.25134 floor; the script
   prefers it precisely because it is at or above the floor. Compiling against the *oldest* supported
-  platform is still CI's job, not this script's. **Re-run for 0.10.0 (2026-09-18): `io.mp.sightline:0.10.0` vs `AI-261.26222.65` — PASS, 0 compatibility problems, 0 deprecated and 0 experimental API usages.** The `$Paste` action lookup and `registerCustomShortcutSet` added for the Cmd+V fix are stable API, so the clean sheet from 0.9.1 held. Re-run before every release.
+  platform is still CI's job, not this script's. **Re-run for 0.10.0 (2026-09-18): `io.mp.sightline:0.10.0` vs `AI-261.26222.65` — PASS, 0 compatibility problems, 0 deprecated and 0 experimental API usages.** The `$Paste` action lookup and `registerCustomShortcutSet` added for the Cmd+V fix are stable API, so the clean sheet from 0.9.1 held. **Re-run 2026-10-10 on the `look-and-feel` branch, verifier 1.410 + IPGP 2.19 toolchain: `io.mp.sightline:0.10.0` vs `AI-261.25134.95` (Quail 2, the floor itself) — PASS, 0 compatibility problems, 0 deprecated, 0 experimental.** Re-run before every release.
 - **Verify against Android Studio, not IntelliJ IDEA — the verifier only tells you about the IDE you
   point it at.** This script targeted IC-253 until 2026-07-27 and reported "Compatible, 0 problems" for
   0.4.0-beta, while the Marketplace's own report — run against AS 261 — flagged three deprecated
