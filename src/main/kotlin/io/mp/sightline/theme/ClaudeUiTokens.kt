@@ -5,6 +5,7 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import io.mp.sightline.ui.state.StatusKind
+import io.mp.sightline.ui.state.TimelineMarker
 import java.awt.Color
 
 /**
@@ -111,6 +112,15 @@ object ClaudeUiTokens {
         StatusKind.SUCCESS, StatusKind.COMPLETED -> success()
         StatusKind.WARNING, StatusKind.PERMISSION -> warning()
         StatusKind.ERROR -> error()
+    }
+
+    /** The colour of a step's dot on the transcript's timeline rail. BLOCKED is drawn as a hollow ring. */
+    fun markerColor(marker: TimelineMarker): Color = when (marker) {
+        TimelineMarker.NEUTRAL -> withAlpha(textSecondary(), 0.55f)
+        TimelineMarker.ACTIVE -> accent()
+        TimelineMarker.SUCCESS -> success()
+        TimelineMarker.ERROR -> error()
+        TimelineMarker.BLOCKED -> textSecondary()
     }
 
     private fun clamp(v: Int) = if (v < 0) 0 else if (v > 255) 255 else v

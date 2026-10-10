@@ -126,6 +126,10 @@ import io.mp.sightline.ui.state.SubagentPresentation
 import io.mp.sightline.ui.state.ToolEventPresentation
 import io.mp.sightline.ui.state.ToolOutcome
 import io.mp.sightline.ui.state.ToolWeight
+import io.mp.sightline.ui.state.TimelineMarker
+import io.mp.sightline.ui.state.TimelinePresentation
+import io.mp.sightline.ui.state.WorkingVerbs
+import io.mp.sightline.ui.state.StickyPrompt
 import io.mp.sightline.ui.state.TranscriptPresenter
 import java.awt.BorderLayout
 import java.awt.Color
@@ -220,6 +224,25 @@ private const val INTERJECTED_NOTE = "Sent while Claude was working"
  * appeared with the button would reintroduce exactly the shifting the overlay exists to avoid.
  */
 private const val JUMP_TO_LATEST_GUTTER = 46
+
+/** Width of the timeline rail column the step dots sit in. */
+private const val RAIL_WIDTH = 18
+
+/** Space above a step's first line; the rail dot is centred on that line. */
+private const val STEP_TOP_INSET = 2
+
+/** Vertical gap between steps, inside each row so the rail line crosses it. */
+private const val STEP_GAP = 8
+
+/** Width of the IN / OUT tag column in a command block. */
+private const val IO_LABEL_WIDTH = 28
+
+/**
+ * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
+ * workspace (transcript / activity map / split), a coordinated [ClaudeStatusStrip], and the
+ * [ClaudeComposerPanel]. Stream parsing feeds both the transcript blocks and a normalised activity
+ * stream shared by the activity map and the status model.
+ */
 
 /**
  * Native Swing chat panel for Claude Code. Four regions: a compact [ClaudeToolHeader], the primary
@@ -392,6 +415,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             val moved = bar.value != lastScrollValue
             lastScrollMaximum = bar.maximum
             lastScrollValue = bar.value
+            updateStickyPrompt()
             if (programmaticScroll) return@addAdjustmentListener
             // A real gesture moves the content out from under the pointer, leaving hover actions
             // revealed on a row that is no longer hovered. Pure growth must *not* close them, or they
@@ -418,21 +442,39 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * Overlays [jumpToLatestButton] on the transcript without stealing layout space, so the affordance can
      * appear and disappear during a scroll without shifting the text the user is reading.
      */
+    /**
+     * The latest prompt whose bar has scrolled away, pinned over the top of the transcript so a long
+     * answer is never read without its question. Clicking it scrolls back to the prompt.
+     */
+    private val stickyPrompt = StickyPromptBar()
+
     private val transcriptLayer = object : JLayeredPane() {
         override fun doLayout() {
             scroll.setBounds(0, 0, width, height)
             val d = jumpToLatestButton.preferredSize
             jumpToLatestButton.setBounds((width - d.width) / 2, height - d.height - JBUI.scale(12), d.width, d.height)
+            // Lined up with the transcript column, so it sits exactly where the prompt bars do.
+            val ins = transcript.insets
+            val w = (scroll.viewport.width - ins.left - ins.right).coerceAtLeast(0)
+            stickyPrompt.setBounds(ins.left, JBUI.scale(4), w, stickyPrompt.preferredSize.height)
         }
         override fun getPreferredSize(): Dimension = scroll.preferredSize
     }.apply {
         setLayer(scroll, JLayeredPane.DEFAULT_LAYER)
         setLayer(jumpToLatestButton, JLayeredPane.PALETTE_LAYER)
+        setLayer(stickyPrompt, JLayeredPane.PALETTE_LAYER)
         add(scroll)
         add(jumpToLatestButton)
+        add(stickyPrompt)
     }
 
+    /** The "still working" line kept at the very end of the transcript while a turn runs. */
+    private val workingRow by lazy { WorkingRow() }
+
     private val hand = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+
+    /** Every user prompt bar with its text, in transcript order — what the sticky bar chooses from. */
+    private val prompts = ArrayList<Pair<JComponent, String>>()
 
     // styles (used inside per-block styled panes)
     private val sNormal = SimpleAttributeSet()
@@ -609,12 +651,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             onAttachmentNotice = { notice -> showEmptyState(false); addInfo(notice, err = false); scrollToBottomSoon() },
             onContextBreakdown = { askForContextBreakdown() },
             onMentionSearch = { prefix -> searchProjectFiles(prefix) },
+            onModelMenu = { anchor -> popup("Model", modelMenu() as DefaultActionGroup, anchor) },
         )
         installAndroidContext()
         statusStrip = ClaudeStatusStrip(this)
 
+        // The composer sits on the transcript's own surface, so the column reads as one page.
+        southHost.isOpaque = true
+        southHost.background = ClaudeUiTokens.surface()
         southHost.add(statusStrip, BorderLayout.NORTH)
         southHost.add(composer, BorderLayout.CENTER)
+        updateModelChip()
         root.add(southHost, BorderLayout.SOUTH)
 
         updateModeChip()
@@ -846,9 +893,29 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     // ---------- transcript rows ----------
 
     private fun addRow(c: JComponent) {
+        transcript.remove(workingRow)
         transcript.add(c)
         transcript.add(Box.createVerticalStrut(JBUI.scale(10)))
+        placeWorkingRow()
         scrollToBottomSoon()
+    }
+
+    /** Keeps the working row as the transcript's last child while running, and absent otherwise. */
+    private fun placeWorkingRow() {
+        transcript.remove(workingRow)
+        if (running) transcript.add(workingRow)
+        transcript.revalidate(); transcript.repaint()
+    }
+
+    private fun updateStickyPrompt() {
+        if (prompts.isEmpty()) { stickyPrompt.showPrompt(null); return }
+        val viewTop = scroll.viewport.viewPosition.y
+        val bottoms = prompts.map { (bar, _) ->
+            if (bar.parent == null) Int.MAX_VALUE
+            else SwingUtilities.convertRectangle(bar.parent, bar.bounds, transcript).let { it.y + it.height }
+        }
+        val i = StickyPrompt.select(bottoms, viewTop)
+        stickyPrompt.showPrompt(i?.let { prompts[it] })
     }
 
     /**
@@ -907,7 +974,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         pasted: List<PendingText> = emptyList(),
     ): Bubble {
         val bubble = Bubble()
-        bubble.border = JBUI.Borders.empty(9, 12)
+        bubble.border = JBUI.Borders.empty(6, 10)
         val col = JPanel(); col.layout = BoxLayout(col, BoxLayout.Y_AXIS); col.isOpaque = false
         if (text.isNotEmpty()) col.add(fullWidth(plainArea(text)))
         if (images.isNotEmpty()) {
@@ -950,8 +1017,25 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             col.add(fullWidth(note))
         }
         bubble.add(col, BorderLayout.CENTER)
-        addRow(bubble)
+        val wrap = fullWidth(object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
+        })
+        val time = JPanel(BorderLayout()); time.isOpaque = false
+        time.border = JBUI.Borders.emptyBottom(3)
+        time.add(timestampLabel(java.time.LocalTime.now()), BorderLayout.EAST)
+        wrap.add(time, BorderLayout.NORTH)
+        wrap.add(bubble, BorderLayout.CENTER)
+        prompts.add(bubble to text)
+        addRow(wrap)
         return bubble
+    }
+
+    /** A muted, right-aligned time in the user's locale ("8:27 PM"). */
+    private fun timestampLabel(at: java.time.LocalTime): JBLabel {
+        val l = JBLabel(TimelinePresentation.timestamp(at))
+        l.foreground = mutedFg()
+        l.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
+        return l
     }
 
     /**
@@ -1530,6 +1614,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         val label = ModelCatalog.label(id)
         val switched = id != null && session.setModel(id)
+        updateModelChip()
         showEmptyState(false)
         addInfo(
             if (switched) "Model switched to $label for this conversation."
@@ -1591,6 +1676,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
     private fun setModel(value: String) {
         ClaudeSettings.getInstance().state.model = value
+        updateModelChip()
+    }
+
+    /** The composer's model chip: the picker's current entry, as [modelMenu] marks it. */
+    private fun updateModelChip() {
+        val settings = ClaudeSettings.getInstance().state
+        val current = ModelCatalog.entries(settings.model, reportedModel, settings.customModels).firstOrNull { it.current }
+        composer.setModelLabel(current?.label?.takeUnless { it == "Default" } ?: "Default model")
     }
 
     private fun popup(title: String, group: DefaultActionGroup, anchor: Component) {
@@ -1796,6 +1889,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // setRunning() defers to invokeLater, so apply the running state synchronously here — otherwise
         // the queue would still see an idle model and send the message instead of parking it.
         running = true
+        workingRow.start(); placeWorkingRow()
         composer.setRunning(true)
         composer.queueForTest(message)
     }
@@ -1923,7 +2017,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 notePermissionModeFallback(o.str("permissionMode"))
                 // The only trustworthy answer to "which model is this?": the CLI resolves an alias to a
                 // dated id and re-announces init after a set_model, so this is read on every init.
-                o.str("model")?.takeIf { it.isNotBlank() }?.let { reportedModel = it }
+                o.str("model")?.takeIf { it.isNotBlank() }?.let { reportedModel = it; updateModelChip() }
                 // Names only, so it never displaces a richer entry — see [SlashCommands.merge].
                 noteSlashCommands(SlashCommands.fromInitEvent(o))
             }
@@ -2105,7 +2199,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         finalizeCurrent()
         when (val t = cb?.str("type") ?: "text") {
             "text" -> { val tb = TextBlock(); turn.addBlock(tb); curText = tb; curType = "text" }
-            "thinking" -> { val th = ThinkingBlock(); turn.addBlock(th); curThinking = th; curType = "thinking" }
+            "thinking" -> { val th = ThinkingBlock(streaming = true); turn.addBlock(th); curThinking = th; curType = "thinking" }
             "tool_use" -> {
                 val card = ToolCard(cb?.str("name") ?: "tool"); turn.addBlock(card)
                 curTool = card; curToolName = cb?.str("name") ?: "tool"; curToolId = cb?.str("id"); curToolJson.setLength(0)
@@ -2129,12 +2223,17 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private fun blockStop() {
         when (curType) {
             "text" -> curText?.finalizeMarkdown()
+            "thinking" -> curThinking?.finish()
             "tool" -> curTool?.let { renderToolBody(curToolName ?: "tool", curToolId, parseObj(curToolJson.toString()), it) }
         }
         curType = null
     }
 
-    private fun finalizeCurrent() { if (curType == "text") curText?.finalizeMarkdown(); curType = null }
+    private fun finalizeCurrent() {
+        if (curType == "text") curText?.finalizeMarkdown()
+        if (curType == "thinking") curThinking?.finish()
+        curType = null
+    }
 
     private fun onAssistant(o: JsonObject) {
         val content = o.objOrNull("message")?.get("content") ?: return
@@ -2151,7 +2250,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                     }
                 }
                 "text" -> if (!sawStream) { val tb = TextBlock(); turn.addBlock(tb); tb.setMarkdown(b.str("text") ?: "") }
-                "thinking" -> if (!sawStream) { val th = ThinkingBlock(); turn.addBlock(th); th.append(b.str("thinking") ?: "") }
+                "thinking" -> if (!sawStream) { val th = ThinkingBlock(streaming = false); turn.addBlock(th); th.append(b.str("thinking") ?: "") }
             }
         }
         scrollToBottomSoon()
@@ -2330,9 +2429,14 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         var summary = ""
         when (name) {
             "Bash" -> {
-                inp.str("description")?.let { insert("$it\n", sMuted) }
                 val cmd = inp.str("command") ?: ""
-                insert("$ " + cmd + "\n", sCode); summary = oneLine(cmd, 72)
+                summary = oneLine(cmd, 72)
+                // A card shows the command in its IN block; only the approval preview, which has no card,
+                // needs it written out here.
+                if (card == null) {
+                    inp.str("description")?.let { insert("$it\n", sMuted) }
+                    insert("$ " + cmd + "\n", sCode)
+                }
             }
             "Edit" -> {
                 val path = inp.str("file_path")
@@ -2356,7 +2460,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 summary = shortPath(path)
                 addEditOrText(card, path, listOf(LineDiff.diff("", inp.str("content") ?: "")), "New file")
             }
-            "Read" -> { summary = shortPath(inp.str("file_path")); insert(shortPath(inp.str("file_path")) + "\n", sMuted) }
+            "Read" -> { summary = shortPath(inp.str("file_path")); if (card == null) insert(shortPath(inp.str("file_path")) + "\n", sMuted) }
             "Grep" -> { summary = inp.str("pattern") ?: ""; insert("pattern: " + (inp.str("pattern") ?: "") + "\n", sMuted); inp.str("path")?.let { insert("path: $it\n", sMuted) } }
             "Glob" -> { summary = inp.str("pattern") ?: ""; insert("pattern: " + (inp.str("pattern") ?: "") + "\n", sMuted) }
             "WebFetch" -> { summary = inp.str("url") ?: ""; insert((inp.str("url") ?: "") + "\n", sMuted) }
@@ -2651,6 +2755,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         // since the user sees no error and assumes the click was ignored rather than lost.
         rewindInFlight = false
         SwingUtilities.invokeLater {
+            if (v) workingRow.start() else workingRow.stop()
+            placeWorkingRow()
+            if (v) scrollToBottomSoon()
             composer.setRunning(v)
             refreshStatus()
             // A turn just ended — send whatever couldn't be folded into it (a message submitted during a
@@ -2926,6 +3033,10 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         val meta = listOfNotNull(if (running) modelLabel().takeIf { it.isNotBlank() } else null, healthChip)
             .joinToString("   ·   ").takeIf { it.isNotBlank() }
         statusStrip.update(view, meta)
+        // The transcript's working row says the turn is alive and the completion card says how it ended,
+        // so the strip is kept for what needs attention and isn't otherwise on screen: a failure, a stop,
+        // or the recovered-failure tally.
+        statusStrip.isVisible = view.kind == StatusKind.ERROR || view.kind == StatusKind.WARNING || healthChip != null
         header.setSessionState(coarseKind(view), coarseLabel(view))
         uiState.sessionState = if (approvalCoordinator.hasPending()) "WAITING_FOR_APPROVAL" else view.kind.name
     }
@@ -2960,6 +3071,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         transcript.removeAll()
         // removeAll() takes the notice with it — put it back, or a later eviction has nowhere to report.
         transcript.add(retentionNotice)
+        prompts.clear(); stickyPrompt.showPrompt(null)
+        placeWorkingRow()
         toolCardsById.clear(); toolMetaById.clear(); renderedTools.clear(); evictedTurns = 0; pendingReportScans.clear(); approvalCoordinator.clear(); questionCoordinator.clear(); turns.clear(); inAssistant = false; curTurn = null; resetBlock()
         updateRetentionNotice()
         interpreter.reset(); observedEvents = 0
@@ -3117,17 +3230,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         else -> humanizeTool(name)
     }
 
-    private fun toolIcon(name: String): Icon = when (name) {
-        "Read" -> ClaudeIcons.read
-        "Edit", "MultiEdit", "Write", "NotebookEdit" -> ClaudeIcons.edit
-        "Bash" -> ClaudeIcons.command
-        "Grep", "Glob", "WebSearch" -> ClaudeIcons.search
-        "WebFetch" -> ClaudeIcons.web
-        "TodoWrite", "AskUserQuestion", "ExitPlanMode" -> ClaudeIcons.diamond
-        "Task", "Skill", "SlashCommand" -> ClaudeIcons.diamond
-        else -> ClaudeIcons.diamond
-    }
-
     private fun humanizeTool(name: String): String {
         val short = name.substringAfterLast("__")
         return short.replace('_', ' ').replaceFirstChar { it.uppercase() }
@@ -3144,6 +3246,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * pending approvals/questions that a later panel — or the sandbox bridge — would still see.
      */
     override fun dispose() {
+        workingRow.stop()
         mcpPollTimer.stop()
         mcpTimeoutTimer.stop()
         session.dispose()
@@ -3163,8 +3266,78 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
     }
 
+    /** A block that sits on a turn's timeline rail, and says which dot it gets. */
+    private interface TimelineStep {
+        fun marker(): TimelineMarker
+    }
+
+    /**
+     * One step of a turn on the timeline rail: a dot level with the step's first line, joined to its
+     * neighbours by a thin line. The gap between steps lives *inside* the row, under the content, so the
+     * line crosses it unbroken. A separate strut, as before, would leave a hole in the rail.
+     */
+    private inner class TimelineRow(val content: JComponent) : JPanel(BorderLayout()) {
+        init {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            val wrap = JPanel(BorderLayout()); wrap.isOpaque = false
+            wrap.border = JBUI.Borders.emptyBottom(STEP_GAP)
+            wrap.add(content, BorderLayout.CENTER)
+            add(Rail(), BorderLayout.WEST)
+            add(wrap, BorderLayout.CENTER)
+        }
+        override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
+
+        private inner class Rail : JComponent() {
+            init { preferredSize = Dimension(JBUI.scale(RAIL_WIDTH), 1) }
+            override fun paintComponent(g: Graphics) {
+                val rows = this@TimelineRow.parent?.components?.filter { it is TimelineRow && it.isVisible } ?: return
+                val first = rows.firstOrNull() === this@TimelineRow
+                val last = rows.lastOrNull() === this@TimelineRow
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val cx = width / 2
+                val cy = railDotY()
+                // The line runs dot to dot: from this row's dot down to the next one, never past the ends.
+                val top = if (first) cy else 0
+                val bottom = if (last) cy else height
+                if (bottom > top) {
+                    g2.color = ClaudeUiTokens.withAlpha(ClaudeUiTokens.textSecondary(), 0.4f)
+                    g2.fillRect(cx, top, JBUI.scale(1), bottom - top)
+                }
+                val marker = (content as? TimelineStep)?.marker() ?: TimelineMarker.NEUTRAL
+                val d = JBUI.scale(7)
+                val x = cx - d / 2 + 1; val y = cy - d / 2
+                // A ring of background around the dot keeps it crisp where the line meets it.
+                g2.color = ClaudeUiTokens.surface()
+                g2.fillOval(x - 2, y - 2, d + 4, d + 4)
+                g2.color = ClaudeUiTokens.markerColor(marker)
+                if (marker == TimelineMarker.BLOCKED) {
+                    g2.stroke = java.awt.BasicStroke(JBUI.scale(1).toFloat() * 1.3f)
+                    g2.drawOval(x, y, d - 1, d - 1)
+                } else {
+                    g2.fillOval(x, y, d, d)
+                }
+                g2.dispose()
+            }
+        }
+    }
+
+    /** Vertical centre of a step's first line, where its rail dot sits. */
+    private fun railDotY(): Int = JBUI.scale(STEP_TOP_INSET) + UIUtil.getLabelFont().let { f ->
+        transcript.getFontMetrics(f).height / 2
+    }
+
+    /** Asks the rail beside [c] to repaint, for when its step's marker changed. */
+    private fun repaintRail(c: Component) {
+        SwingUtilities.getAncestorOfClass(TimelineRow::class.java, c)?.repaint()
+    }
+
     private inner class AssistantTurn : Block() {
         private val body = JPanel()
+        /** The steps in order, unwrapped from their rail rows. */
+        private val steps = ArrayList<JComponent>()
+        private val startedAt = java.time.LocalTime.now()
         private var textCount = 0
         private val detailKids = ArrayList<Component>()
         private var summary = ProcessingSummary()
@@ -3182,20 +3355,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         init {
             layout = BorderLayout()
             border = JBUI.Borders.empty(2, 2, 6, 2)
-            val role = JBLabel("Claude")
-            role.foreground = mutedFg(); role.font = role.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(11f).toFloat())
             // Copy lives on the role line, a row that already exists — so it can never move the reply
             // underneath it. It is a small always-visible icon rather than a hover reveal: "copy the
             // whole response" is the affordance users actually hunt for, and one they could not find
             // while it only existed on hover.
             val roleRow = JPanel(BorderLayout()); roleRow.isOpaque = false
             roleRow.border = JBUI.Borders.emptyBottom(3)
-            roleRow.add(role, BorderLayout.WEST)
             copiedLabel.foreground = mutedFg()
             copiedLabel.font = copiedLabel.font.deriveFont(JBUI.scaleFontSize(10.5f).toFloat())
             copiedLabel.isVisible = false
             val copyGroup = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)); copyGroup.isOpaque = false
-            copyGroup.add(copiedLabel); copyGroup.add(copyButton)
+            // The turn's top line carries only its time, right-aligned, with Copy beside it.
+            copyGroup.add(copiedLabel); copyGroup.add(copyButton); copyGroup.add(timestampLabel(startedAt))
             roleRow.add(copyGroup, BorderLayout.EAST)
             add(roleRow, BorderLayout.NORTH)
             body.layout = BoxLayout(body, BoxLayout.Y_AXIS); body.isOpaque = false; body.alignmentX = Component.LEFT_ALIGNMENT
@@ -3216,17 +3387,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             refreshVisibility()
         }
         fun addBlock(c: JComponent) {
-            val strut = Box.createVerticalStrut(JBUI.scale(5))
-            body.add(fullWidth(c)); body.add(strut)
+            val row = TimelineRow(c)
+            body.add(fullWidth(row))
+            steps.add(c)
             if (c is TextBlock || c is ApprovalBlock || c is AskUserQuestionBlock) textCount++
             if (c is ThinkingBlock || c is ToolCard) {
-                c.isVisible = showDetails; strut.isVisible = showDetails
-                detailKids.add(c); detailKids.add(strut)
+                row.isVisible = showDetails
+                detailKids.add(row)
             }
             refreshVisibility(); relayout()
         }
         /** Every text block in this turn, as the Markdown Claude actually sent. */
-        private fun markdownText(): String = body.components
+        private fun markdownText(): String = steps
             .filterIsInstance<TextBlock>()
             .joinToString("\n\n") { it.rawMarkdown }
             .trim()
@@ -3239,7 +3411,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         /** Propagates the transcript column's width so hosted diffs can pick unified vs side-by-side. */
         fun applyDiffWidth(widthPx: Int) {
-            for (c in body.components) if (c is ToolCard) c.applyDiffWidth(widthPx)
+            for (c in steps) if (c is ToolCard) c.applyDiffWidth(widthPx)
         }
 
         /**
@@ -3316,7 +3488,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun refreshVisibility() {
             isVisible = showDetails || textCount > 0
             // A turn can be nothing but tool activity; a copy control there would yield "".
-            copyButton.isVisible = body.components.any { it is TextBlock }
+            copyButton.isVisible = steps.any { it is TextBlock }
         }
     }
 
@@ -3333,7 +3505,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
      * ([stream]) for the rest of the stream, and finalize retries the full render with the old
      * regex-renderer fallback behind it.
      */
-    private inner class TextBlock : Block() {
+    private inner class TextBlock : Block(), TimelineStep {
+        override fun marker() = TimelineMarker.NEUTRAL
         /** The original Markdown, which is what "Copy" should yield — not the rendered text. */
         val rawMarkdown: String get() = sb.toString()
         private val stream = styledPane()
@@ -3429,52 +3602,67 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun insStream(t: String) { try { stream.styledDocument.insertString(stream.styledDocument.length, t, sNormal) } catch (e: BadLocationException) {} }
     }
 
-    /** Extended thinking, rendered subtly under "Processing details" (only when details are on). */
-    private inner class ThinkingBlock : Block() {
-        private val header = JBLabel("Processing details")
+    /**
+     * Extended thinking as one quiet timeline line: "Thinking…" while it streams, then "Thought for 4s".
+     * The line states the time even when the model sent no visible reasoning, which some models never
+     * do. The disclosure chevron appears only once there is text to disclose: a control that expands to
+     * nothing reads as content that failed to load.
+     */
+    private inner class ThinkingBlock(streaming: Boolean) : Block(), TimelineStep {
+        private val header = JBLabel(TimelinePresentation.thoughtLabel(null, streaming))
         private val area = plainArea("")
         private var open = false
-        private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
+        private var finished = !streaming
+        private val startedMillis = System.currentTimeMillis()
+        private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(11))
         private val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
         init {
             layout = BorderLayout()
-            head.isOpaque = false; head.cursor = hand
-            // The block is created at `content_block_start`, before a single token has arrived — and some
-            // thinking blocks never deliver visible text at all (a signature-only delta, say). Showing the
-            // disclosure regardless left a control that expanded to nothing, which is worse than no
-            // control: it reads as content that failed to load. The header appears with the first text.
-            head.isVisible = false
-            header.foreground = mutedFg(); header.font = header.font.deriveFont(Font.ITALIC)
-            head.add(chevron); head.add(header)
-            head.addMouseListener(click { toggle() })
+            head.isOpaque = false
+            head.border = JBUI.Borders.emptyTop(STEP_TOP_INSET)
+            header.foreground = mutedFg()
+            chevron.isVisible = false
+            head.add(header); head.add(chevron)
+            head.addMouseListener(click { if (chevron.isVisible) toggle() })
             area.foreground = mutedFg(); area.font = area.font.deriveFont(Font.ITALIC); area.isVisible = false
-            area.border = JBUI.Borders.empty(2, 16, 2, 0)
+            area.border = JBUI.Borders.empty(2, 0, 2, 0)
             add(head, BorderLayout.NORTH); add(area, BorderLayout.CENTER)
         }
+        override fun marker() = TimelineMarker.NEUTRAL
         /**
          * Append via the document, not `area.text = area.text + t`: the latter rebuilds the whole
          * string on every delta, which is O(n²) over a long thinking block and visibly stutters.
          */
         fun append(t: String) {
             try { area.document.insertString(area.document.length, t, null) } catch (e: BadLocationException) { /* drop */ }
-            if (!head.isVisible && area.document.length > 0 && t.isNotBlank()) { head.isVisible = true; relayout() }
+            if (!chevron.isVisible && t.isNotBlank()) { chevron.isVisible = true; head.cursor = hand; relayout() }
             scrollToBottomSoon()
         }
-        private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
+        /** Called at the block's end; idempotent, so a later finalise can't overwrite the measured time. */
+        fun finish() {
+            if (finished) return
+            finished = true
+            header.text = TimelinePresentation.thoughtLabel(System.currentTimeMillis() - startedMillis, streaming = false)
+        }
+        private fun toggle() { open = !open; area.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(11); relayout() }
     }
 
     /**
-     * One tool call. Renders either as a quiet **compact row** (routine, successful work) or as a
-     * bordered **card** (failures, denials, and edits) — see [ToolEventPresentation], which decides
-     * from structured metadata only.
+     * One tool call, as one step on the timeline: the tool's name in bold, then its target. A file is its
+     * name as a link, with the path in the tooltip. A command gets an `IN` / `OUT` block. The rail dot
+     * carries the outcome (green, red, hollow when denied), so there is no card chrome.
+     * [ToolEventPresentation]'s weight still sets the spacing, decided from structured metadata only.
      */
-    private inner class ToolCard(name: String) : Block() {
+    private inner class ToolCard(name: String) : Block(), TimelineStep {
         private val bodyPane = styledPane()
         val bodyDoc: StyledDocument get() = bodyPane.styledDocument
         private val actionLabel = JBLabel(name)
         private val targetLabel = JBLabel("")
-        private val iconLabel = JBLabel(toolIcon(name).let { (it as? io.mp.sightline.theme.VectorIcon)?.withColor { ClaudeUiTokens.textSecondary() } ?: it })
-        private val stateLabel = JBLabel("")
+        private val suffixLabel = JBLabel("")
+        /** A command's IN / OUT block; null for every other tool. */
+        private var io: IoBlock? = null
+        /** The raw output, for Copy output — a command's output lives in [io], not [bodyDoc]. */
+        private var outputText: String = ""
         private val chevron = JBLabel(ClaudeIcons.chevronRight.withSize(12))
         private val bodyWrap = JPanel(BorderLayout())
         private val head = JPanel(BorderLayout(JBUI.scale(6), 0))
@@ -3499,14 +3687,16 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             border = JBUI.Borders.empty(1, 0)
             head.isOpaque = false; head.cursor = hand
             val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)); left.isOpaque = false
+            actionLabel.text = TimelinePresentation.toolTitle(name)
             actionLabel.font = actionLabel.font.deriveFont(Font.BOLD)
             actionLabel.foreground = ClaudeUiTokens.textPrimary()
             targetLabel.foreground = mutedFg()
-            left.add(iconLabel); left.add(actionLabel); left.add(targetLabel)
+            suffixLabel.foreground = mutedFg()
+            left.add(actionLabel); left.add(targetLabel); left.add(suffixLabel)
             head.add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)); right.isOpaque = false
             headerActions.isOpaque = false
-            right.add(headerActions); right.add(stateLabel); right.add(chevron)
+            right.add(headerActions); right.add(chevron)
             head.add(right, BorderLayout.EAST)
             head.addMouseListener(click { toggle() })
             add(head, BorderLayout.NORTH)
@@ -3517,20 +3707,53 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             applyWeight()
         }
 
+        override fun marker(): TimelineMarker = TimelinePresentation.markerFor(outcome)
+
         /** Re-derives presentation from the current tool + outcome and restyles in place. */
         private fun applyWeight() {
             weight = ToolEventPresentation.weight(toolName, outcome)
-            // A compact row is a line of text, not a container: tighter insets, no chrome.
-            head.border = if (weight == ToolWeight.COMPACT) JBUI.Borders.empty(2, 4) else JBUI.Borders.empty(6, 8)
-            bodyWrap.border = if (weight == ToolWeight.COMPACT) JBUI.Borders.empty(0, 10, 4, 4) else JBUI.Borders.empty(0, 12, 6, 8)
-            chevron.isVisible = ToolEventPresentation.hasDisclosure(bodyDoc.length)
+            // The header sits level with the rail dot whatever the weight; weight only adds air below
+            // a step worth stopping on.
+            head.border = JBUI.Borders.empty(STEP_TOP_INSET, 0, 0, 0)
+            bodyWrap.border = if (weight == ToolWeight.COMPACT) JBUI.Borders.empty(4, 0, 0, 0) else JBUI.Borders.empty(4, 0, 2, 0)
+            chevron.isVisible = io == null && ToolEventPresentation.hasDisclosure(bodyDoc.length)
+            // An empty text pane still claims a line of height, which left a gap under every edit.
+            bodyPane.isVisible = bodyDoc.length > 0
             revalidate(); repaint()
+            repaintRail(this)
         }
 
         fun setDetails(name: String, input: JsonObject, summary: String) {
             toolName = name
-            actionLabel.text = toolAction(name)
-            targetLabel.text = summary
+            actionLabel.text = TimelinePresentation.toolTitle(name)
+            val filePath = input.str("file_path")
+            // A command's target is its IN line, so the header names only the tool (plus its description).
+            // A file shows its name alone, which is what the eye scans a column of steps for; the
+            // project-relative path is one hover away and stays what Copy, the map and Open use.
+            targetLabel.text = when {
+                name == "Bash" -> ""
+                filePath != null -> basename(filePath)
+                else -> summary
+            }
+            if (filePath != null) targetLabel.toolTipText = summary
+            suffixLabel.text = when (name) {
+                "Bash" -> input.str("description")?.let { oneLine(it, 80) }.orEmpty()
+                "Read" -> TimelinePresentation.readRange(input.intOrNull("offset"), input.intOrNull("limit")).orEmpty()
+                else -> ""
+            }
+            if (filePath != null && !installedActions) {
+                // The file is a link to itself. Its own listener means a click opens the file instead of
+                // toggling the row, which is what a link-coloured name promises.
+                targetLabel.foreground = JBUI.CurrentTheme.Link.Foreground.ENABLED
+                targetLabel.cursor = hand
+                targetLabel.addMouseListener(click { openFileRef(filePath) })
+            }
+            if (name == "Bash" && io == null) {
+                val block = IoBlock(input.str("command") ?: "")
+                io = block
+                bodyWrap.add(block, BorderLayout.NORTH)
+                open = true; bodyWrap.isVisible = true
+            }
             // A command is the thing people most often want to re-run or paste into a report, so it
             // gets Copy command / Copy output on hover.
             linkPath = input.str("file_path")
@@ -3541,7 +3764,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
                 val acts = ArrayList<Pair<String, () -> Unit>>(3)
                 if (name == "Bash") {
                     acts.add("Copy command" to { copyToClipboard(cmd) })
-                    acts.add("Copy output" to { copyToClipboard(bodyDoc.getText(0, bodyDoc.length)) })
+                    acts.add("Copy output" to { copyToClipboard(outputText) })
                 }
                 // Into the header row that already exists, not a new row below: the header's height is
                 // set by the labels either way, so revealing these can never move the transcript.
@@ -3551,12 +3774,18 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             relayout()
         }
         fun addResult(text: String, isErr: Boolean) {
-            target = bodyDoc
-            if (bodyDoc.length > 0) insert("\n", sMuted)
-            insert(if (isErr) "! " else "» ", if (isErr) sError else sMuted)
-            insert(truncate(text).ifBlank { if (isErr) "(error)" else "(no output)" } + "\n", sMuted)
-            target = null
-            stateLabel.icon = if (isErr) ClaudeIcons.errorCircle.withSize(13) else ClaudeIcons.check.withSize(13)
+            outputText = text
+            val block = io
+            if (block != null) {
+                block.setOutput(text, isErr)
+            } else if (isErr || toolName !in ToolEventPresentation.MUTATING_TOOLS) {
+                // A successful edit's result is only "Applied": the green dot and the diff already say so.
+                target = bodyDoc
+                if (bodyDoc.length > 0) insert("\n", sMuted)
+                insert(if (isErr) "! " else "» ", if (isErr) sError else sMuted)
+                insert(truncate(text).ifBlank { if (isErr) "(error)" else "(no output)" } + "\n", sMuted)
+                target = null
+            }
             outcome = if (isErr) ToolOutcome.ERROR else ToolOutcome.OK
             applyWeight()
             if (isErr) expand()
@@ -3620,6 +3849,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         private fun refreshDisclosure() {
             chevron.isVisible = ToolEventPresentation.hasDisclosure(bodyDoc.length)
+            bodyPane.isVisible = bodyDoc.length > 0
             relayout()
         }
 
@@ -3642,7 +3872,6 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         /** Marks this tool as denied/cancelled: blocked icon + a muted "not run" note; never looks done. */
         fun markBlocked(reason: String) {
-            stateLabel.icon = ClaudeIcons.blocked.withSize(13)
             targetLabel.foreground = mutedFg()
             target = bodyDoc
             if (bodyDoc.length > 0) insert("\n", sMuted)
@@ -3655,19 +3884,122 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private fun toggle() { open = !open; bodyWrap.isVisible = open; chevron.icon = (if (open) ClaudeIcons.chevronDown else ClaudeIcons.chevronRight).withSize(12); relayout() }
 
         override fun paintComponent(g: Graphics) {
-            // A compact row draws no chrome at all — that is the whole point of the tier.
-            if (weight == ToolWeight.CARD) {
-                val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val arc = ClaudeUiTokens.radiusMd()
-                g2.color = cardBg()
-                g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-                g2.color = ClaudeUiTokens.subtleBorder()
-                g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-                g2.dispose()
-            }
             super.paintComponent(g)
         }
+    }
+
+    /**
+     * A command's `IN` / `OUT` block: the command on one line, clipped at the edge, then the first
+     * [TimelinePresentation.OUTPUT_PREVIEW_LINES] of output. Longer output fades out and states how many
+     * lines are hidden. "Show N more lines" opens the rest, which [truncate] still caps (and says so).
+     */
+    private inner class IoBlock(command: String) : JPanel() {
+        private val outArea = monoArea("")
+        private val outRow = ioRow("OUT", outArea)
+        private val more = ActionLink("") { expanded = !expanded; render(); relayout() }
+        private var full = ""
+        private var isErr = false
+        private var expanded = false
+        private var fade = false
+
+        init {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(6, 10)
+            add(ioRow("IN", monoArea(oneLine(command, 2000))))
+            outRow.isVisible = false
+            outRow.border = JBUI.Borders.emptyTop(4)
+            add(outRow)
+            more.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11f).toFloat())
+            more.isVisible = false
+            val moreRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)); moreRow.isOpaque = false
+            moreRow.border = JBUI.Borders.empty(2, JBUI.scale(IO_LABEL_WIDTH) + JBUI.scale(10), 0, 0)
+            moreRow.add(more)
+            add(fullWidth(moreRow))
+        }
+        override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
+
+        fun setOutput(text: String, err: Boolean) {
+            full = text; isErr = err
+            outRow.isVisible = true
+            render()
+        }
+
+        private fun render() {
+            val preview = TimelinePresentation.outputPreview(full)
+            outArea.text = when {
+                full.isBlank() -> if (isErr) "(error)" else "(no output)"
+                expanded || !preview.truncated -> truncate(full).trimEnd()
+                else -> preview.shown
+            }
+            outArea.foreground = when {
+                isErr -> ClaudeUiTokens.error()
+                full.isBlank() -> mutedFg()
+                else -> ClaudeUiTokens.textPrimary()
+            }
+            more.isVisible = preview.truncated
+            more.text = if (expanded) "Show less" else TimelinePresentation.moreLinesText(preview.hiddenLines)
+            fade = preview.truncated && !expanded
+            revalidate(); repaint()
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = ClaudeUiTokens.subtleSurface()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, ClaudeUiTokens.radiusSm(), ClaudeUiTokens.radiusSm())
+            g2.dispose()
+            super.paintComponent(g)
+        }
+
+        /** Fades the last preview line into the block, so a cut reads as "there is more", not as the end. */
+        override fun paintChildren(g: Graphics) {
+            super.paintChildren(g)
+            if (!fade || !outArea.isShowing) return
+            val r = SwingUtilities.convertRectangle(outArea.parent, outArea.bounds, this)
+            val h = outArea.getFontMetrics(outArea.font).height
+            val bg = ClaudeUiTokens.subtleSurface()
+            val g2 = g.create() as Graphics2D
+            g2.paint = java.awt.GradientPaint(
+                0f, (r.y + r.height - h).toFloat(), ClaudeUiTokens.withAlpha(bg, 0f),
+                0f, (r.y + r.height).toFloat(), bg,
+            )
+            g2.fillRect(r.x, r.y + r.height - h, r.width, h)
+            g2.dispose()
+        }
+    }
+
+    /** One labelled line of an [IoBlock]: a fixed-width `IN` / `OUT` tag, then the monospace text. */
+    private fun ioRow(tag: String, area: JComponent): JPanel {
+        val row = JPanel(BorderLayout(JBUI.scale(10), 0)); row.isOpaque = false
+        row.alignmentX = Component.LEFT_ALIGNMENT
+        val label = JBLabel(tag)
+        label.foreground = mutedFg()
+        label.font = monoFont(0.85f)
+        label.verticalAlignment = javax.swing.SwingConstants.TOP
+        label.preferredSize = Dimension(JBUI.scale(IO_LABEL_WIDTH), label.preferredSize.height)
+        row.add(label, BorderLayout.WEST)
+        row.add(area, BorderLayout.CENTER)
+        return row
+    }
+
+    private fun monoFont(scale: Float): Font {
+        val mono = EditorColorsManager.getInstance().globalScheme.getFont(EditorFontType.PLAIN)
+        return mono.deriveFont(UIUtil.getLabelFont().size2D * scale)
+    }
+
+    /**
+     * Selectable monospace text that never asks for more width than it is given: a long line is clipped
+     * at the block's edge instead of widening the transcript. Unwrapped on purpose, because wrapping a
+     * shell line makes it read as two.
+     */
+    private fun monoArea(text: String): JTextArea = object : JTextArea(text) {
+        override fun getPreferredSize(): Dimension = Dimension(JBUI.scale(40), super.getPreferredSize().height)
+    }.apply {
+        isEditable = false; lineWrap = false; isOpaque = false
+        border = JBUI.Borders.empty()
+        font = monoFont(0.92f)
+        foreground = ClaudeUiTokens.textPrimary()
     }
 
     /**
@@ -3805,7 +4137,13 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private inner class ApprovalBlock(
         title: String, toolName: String, input: JsonObject,
         canAllowAlways: Boolean, private val onDecision: (ApprovalDecision, String?) -> Unit,
-    ) : Block() {
+    ) : Block(), TimelineStep {
+        private var decision: ApprovalDecision? = null
+        override fun marker(): TimelineMarker = when (decision) {
+            null -> TimelineMarker.ACTIVE
+            ApprovalDecision.DENY -> TimelineMarker.BLOCKED
+            else -> TimelineMarker.NEUTRAL
+        }
         // WrapLayout, not FlowLayout: four buttons no longer fit one row on a narrow docked panel, and
         // a FlowLayout reports a single row's height however many it lays out — which is how this
         // codebase previously lost a context chip off the bottom of the composer. An approval whose
@@ -3865,6 +4203,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
 
         /** Reflects a resolved decision (from a human click or the test bridge) in the card. */
         fun markResolved(decision: ApprovalDecision, reason: String? = null) {
+            this.decision = decision
+            repaintRail(this)
             buttons.isVisible = false
             decided.text = when (decision) {
                 ApprovalDecision.ALLOW -> "Allowed"
@@ -3905,7 +4245,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private inner class PlanBlock(
         private val plan: PlanReview.Plan,
         private val onDecision: (PlanDecision) -> Unit,
-    ) : Block() {
+    ) : Block(), TimelineStep {
+        private var planResolved = false
+        override fun marker(): TimelineMarker = if (planResolved) TimelineMarker.NEUTRAL else TimelineMarker.ACTIVE
         private val buttons = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4)))
         private val decided = JBLabel("")
         private val body = JPanel(BorderLayout())
@@ -4007,6 +4349,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
 
         private fun resolve(decision: PlanDecision, label: String) {
+            planResolved = true
+            repaintRail(this)
             buttons.isVisible = false
             decided.text = label
             if (decision is PlanDecision.Revise) {
@@ -4048,7 +4392,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     private inner class FailureBlock(
         private val advice: SessionFailure.Advice,
         private val onAction: (SessionFailure.Action, FailureBlock) -> Unit,
-    ) : Block() {
+    ) : Block(), TimelineStep {
+        override fun marker() = TimelineMarker.ERROR
         private val note = JBLabel("")
         private val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
 
@@ -4151,7 +4496,8 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         private val invalidReason: String?,
         private val onSubmit: (Map<String, List<String>>) -> Unit,
         private val onCancel: () -> Unit,
-    ) : Block() {
+    ) : Block(), TimelineStep {
+        override fun marker(): TimelineMarker = if (resolved) TimelineMarker.NEUTRAL else TimelineMarker.ACTIVE
         private val form = request?.let { QuestionFormState(it) }
         private val centerPanel = JPanel()
         private val continueBtn = JButton("Continue").named(A11yNames.QUESTION_CONTINUE)
@@ -4337,6 +4683,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         /** Reflects a resolved answer/cancel (human click or test bridge): swaps controls for a summary. */
         fun markResolved(resolution: QuestionResolution) {
             resolved = true
+            repaintRail(this)
             centerPanel.removeAll()
             continueBtn.isVisible = false; cancelBtn.isVisible = false
             when (resolution) {
@@ -4392,8 +4739,101 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         }
     }
 
+    /**
+     * The last line of a running turn: a pulsing accent dot on the rail's axis, and a rotating word with
+     * the elapsed time ("Mulling… · 12s"). While a prompt waits on the user it says so instead. The
+     * waiting is the user's to end, so a playful word there would hide it.
+     */
+    private inner class WorkingRow : JPanel(BorderLayout()) {
+        private val label = JBLabel("")
+        private var seed = 0
+        private var startedMillis = 0L
+        private var pulse = 0.0
+        private val timer = Timer(120) { tick() }
+        private val glyph = object : JComponent() {
+            init { preferredSize = Dimension(JBUI.scale(RAIL_WIDTH), 1) }
+            override fun paintComponent(g: Graphics) {
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val still = ClaudeSettings.getInstance().state.activityReduceMotion
+                val a = if (still) 1f else (0.55 + 0.45 * Math.sin(pulse)).toFloat()
+                val d = JBUI.scale(7)
+                g2.color = ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), a)
+                g2.fillOval(width / 2 - d / 2 + 1, height / 2 - d / 2, d, d)
+                g2.dispose()
+            }
+        }
+        init {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            // Matches AssistantTurn's side inset, so the dot sits on the rail's axis.
+            border = JBUI.Borders.empty(2, 2, 6, 2)
+            label.foreground = mutedFg()
+            add(glyph, BorderLayout.WEST)
+            add(label, BorderLayout.CENTER)
+            getAccessibleContext().accessibleName = "Sightline is working"
+        }
+        override fun getMaximumSize(): Dimension = Dimension(Integer.MAX_VALUE, preferredSize.height)
+
+        fun start() {
+            if (timer.isRunning) return
+            seed = kotlin.random.Random.nextInt(WorkingVerbs.ALL.size)
+            startedMillis = System.currentTimeMillis()
+            tick(); timer.start()
+        }
+        fun stop() { timer.stop() }
+
+        private fun tick() {
+            val v = statusModel.view
+            label.text = if (v.kind == StatusKind.PERMISSION) v.primary
+                else WorkingVerbs.line(seed, System.currentTimeMillis() - startedMillis)
+            pulse += 0.35
+            glyph.repaint()
+        }
+    }
+
+    /** See [stickyPrompt]. Hidden while nothing is pinned. */
+    private inner class StickyPromptBar : JPanel(BorderLayout()) {
+        private val label = JBLabel("")
+        private var target: JComponent? = null
+        init {
+            isOpaque = false
+            isVisible = false
+            border = JBUI.Borders.empty(6, 10)
+            cursor = hand
+            label.foreground = ClaudeUiTokens.textPrimary()
+            add(label, BorderLayout.CENTER)
+            toolTipText = "Scroll to this message"
+            getAccessibleContext().accessibleName = "Pinned prompt"
+            addMouseListener(click {
+                target?.let { t -> t.scrollRectToVisible(Rectangle(0, 0, t.width, t.height)) }
+            })
+        }
+        fun showPrompt(prompt: Pair<JComponent, String>?) {
+            target = prompt?.first
+            val text = prompt?.second?.let { oneLine(it, 400) }
+            val show = text != null
+            if (text != null) label.text = text
+            if (show != isVisible) { isVisible = show; parent?.revalidate() }
+            repaint()
+        }
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = ClaudeUiTokens.radiusSm()
+            // Opaque, unlike the inline bar: text scrolls underneath it.
+            g2.color = cardBg()
+            g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.color = ClaudeUiTokens.subtleBorder()
+            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g2.dispose()
+            super.paintComponent(g)
+        }
+    }
+
+    /** The user's prompt: a slim, full-width filled bar — quieter than the reply it asks for. */
     private inner class Bubble : JPanel(BorderLayout()) {
-        init { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT; border = JBUI.Borders.empty(9, 12) }
+        init { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT; border = JBUI.Borders.empty(6, 10) }
 
         /**
          * Offers "Revert Claude's file changes to here" on right-click, once the CLI has replayed this
@@ -4414,11 +4854,9 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val arc = ClaudeUiTokens.radiusMd()
+            val arc = ClaudeUiTokens.radiusSm()
             g2.color = cardBg()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = ClaudeUiTokens.subtleBorder()
-            g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)
         }

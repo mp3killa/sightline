@@ -4,6 +4,25 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- **A new transcript layout**, modelled on the official Claude Code extension and kept in Sightline's
+  own colours. Each step of a reply sits on a timeline rail, with a dot showing its outcome. Commands
+  show `IN` / `OUT`, with long output faded and the hidden lines counted. Files show as links. Thinking
+  reads "Thought for 4s". A working line with elapsed time closes a running turn, and your latest
+  message stays pinned at the top while you read the answer.
+- The composer is one outlined box with a **model chip** and a square send/stop button.
+- Technical details are shown by default. A setting you changed yourself keeps your choice.
+- The status strip appears only for errors, stops and recovered failures.
+- Build toolchain: Gradle 9.8.1, IntelliJ Platform Gradle Plugin 2.19.0, Kotlin 2.4.21, needed to
+  build against Android Studio 2026.2. The plugin still targets Java 21 and the 261.25134 floor.
+- Bundled libraries: Gson 2.14.0, Java-WebSocket 1.6.0.
+
+### Fixed
+- GitHub-style callouts (`> [!WARNING]` …) rendered as plain text on Android Studio 2026.2, whose
+  Markdown parser now reports them as a distinct node.
+
 ## 0.10.0 — 2026-09-18
 
 Attachments in the composer, and two things that were quietly wrong.

@@ -50,8 +50,11 @@ class ClaudeSettings : SimplePersistentStateComponent<ClaudeSettings.State>(Stat
          */
         var fileCheckpointing by property(false)
 
-        /** Show thinking blocks and tool-call cards in the transcript (off = compact/summary view). */
-        var showDetails by property(false)
+        /**
+         * Show thinking rows and tool steps in the transcript (off = one-line summary per turn). On by
+         * default since 2026-10-10: the timeline transcript is built to be read step by step.
+         */
+        var showDetails by property(true)
 
         /** Render ```mermaid flowchart/state diagrams as native Swing diagrams (else show them as code). */
         var renderMermaid by property(true)

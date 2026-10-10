@@ -92,6 +92,8 @@ class ClaudeComposerPanel(
      * by default so previews and unit tests never touch the project index.
      */
     private val onMentionSearch: (String) -> List<String> = { emptyList() },
+    /** Opens the model picker under the model chip. No-op by default so tests and previews stay simple. */
+    private val onModelMenu: (Component) -> Unit = {},
 ) : JPanel(BorderLayout()) {
 
     private val box = ComposerBox()
@@ -126,6 +128,7 @@ class ClaudeComposerPanel(
     private var originalTransferHandler: TransferHandler? = null
     private val inputScroll = JBScrollPane(input, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER)
     private val modeChip = JButton()
+    private val modelChip = JButton()
 
     /**
      * Context-window occupancy, muted, beside the mode chip — the footer is where a reader looks for
@@ -217,6 +220,9 @@ class ClaudeComposerPanel(
         val slashButton = IconActionButton(ClaudeIcons.slash, "Add context / actions") { slashRef?.let { onSlash(it) } }
         slashRef = slashButton
         left.add(slashButton)
+        styleChip(modelChip, "Model")
+        modelChip.addActionListener { onModelMenu(modelChip) }
+        left.add(modelChip)
         row.add(left, BorderLayout.WEST)
 
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0))
@@ -235,6 +241,25 @@ class ClaudeComposerPanel(
      * CLI's own breakdown by category. That costs nothing — verified, the command is executed locally
      * and comes back as a synthetic turn with `num_turns: 0` and zero tokens.
      */
+    /** A quiet text chip, as the model chip is drawn. */
+    private fun styleChip(chip: JButton, tooltip: String) {
+        chip.isContentAreaFilled = false
+        chip.isFocusPainted = false
+        chip.isOpaque = false
+        chip.font = UIUtil.getLabelFont().deriveFont(JBUI.scaleFontSize(11.5f).toFloat())
+        chip.foreground = ClaudeUiTokens.textSecondary()
+        chip.border = JBUI.Borders.empty(2, 8)
+        chip.toolTipText = tooltip
+        chip.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+    }
+
+    /** The model chip's text: the model the next message will use ("Opus", or "Default model"). */
+    fun setModelLabel(text: String) {
+        modelChip.text = text
+        modelChip.getAccessibleContext().accessibleName = "Model: $text"
+        modelChip.revalidate(); modelChip.repaint()
+    }
+
     private fun styleContextChip() {
         contextChip.isContentAreaFilled = false
         contextChip.isFocusPainted = false
@@ -833,7 +858,8 @@ class ClaudeComposerPanel(
             val arc = ClaudeUiTokens.radiusLg()
             g2.color = ClaudeUiTokens.subtleSurface()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
-            g2.color = if (focused) ClaudeUiTokens.accent() else ClaudeUiTokens.border()
+            // Always outlined in the accent so it reads as the place to type; full strength while focused.
+            g2.color = if (focused) ClaudeUiTokens.accent() else ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), 0.45f)
             g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             super.paintComponent(g)
@@ -851,7 +877,7 @@ class ClaudeComposerPanel(
             isBorderPainted = false
             isFocusPainted = false
             isOpaque = false
-            val d = Dimension(JBUI.scale(30), JBUI.scale(30))
+            val d = Dimension(JBUI.scale(26), JBUI.scale(26))
             preferredSize = d; minimumSize = d; maximumSize = d
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             toolTipText = "Send"
@@ -862,13 +888,10 @@ class ClaudeComposerPanel(
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val bg = when {
-                running -> ClaudeUiTokens.error()
-                !isEnabled -> ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), 0.35f)
-                else -> ClaudeUiTokens.accent()
-            }
+            // One square control in one colour: the glyph says send or stop, so the colour needn't.
+            val bg = if (!running && !isEnabled) ClaudeUiTokens.withAlpha(ClaudeUiTokens.accent(), 0.35f) else ClaudeUiTokens.accent()
             g2.color = bg
-            val arc = ClaudeUiTokens.radiusMd()
+            val arc = ClaudeUiTokens.radiusSm()
             g2.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
             g2.dispose()
             val icon = if (running) stopIcon else sendIcon
