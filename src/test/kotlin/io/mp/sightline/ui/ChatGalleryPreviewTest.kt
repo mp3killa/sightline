@@ -188,6 +188,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
         } ?: return false
         mgr.setGlobalScheme(wanted)
         JBColor.setDark(dark)
+        HeadlessTheme.applyUiDefaults(dark)
         // Guard against "I set the flag but the surface is still the other theme" — the exact trap
         // that made the first light render come out dark.
         val bg = io.mp.sightline.theme.ClaudeUiTokens.surface()
@@ -217,7 +218,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             println("[chat-gallery] no light scheme resolved in the test platform — skipping light render")
             return
         }
-        try { renderGallery("light") } finally { JBColor.setDark(false) }
+        try { renderGallery("light") } finally { JBColor.setDark(false); HeadlessTheme.applyUiDefaults(false) }
     }
 
     fun testRendersTheGalleryInDarkTheme() {
@@ -225,7 +226,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             println("[chat-gallery] no dark scheme resolved in the test platform — skipping dark render")
             return
         }
-        try { renderGallery("dark") } finally { JBColor.setDark(false) }
+        try { renderGallery("dark") } finally { JBColor.setDark(false); HeadlessTheme.applyUiDefaults(false) }
     }
 
     /**
@@ -234,7 +235,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
      */
     fun testRendersTheCompactGalleryWithDetailsOff() {
         if (!applyTheme(dark = false)) return
-        try { renderGallery("compact", details = false) } finally { JBColor.setDark(false) }
+        try { renderGallery("compact", details = false) } finally { JBColor.setDark(false); HeadlessTheme.applyUiDefaults(false) }
     }
 
     /**
@@ -292,7 +293,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             render(p.component, w, h, out)
             println("[chat-gallery] wrote ${'$'}{out.absolutePath}")
             assertTrue(out.length() > 5000)
-        } finally { JBColor.setDark(false) }
+        } finally { JBColor.setDark(false); HeadlessTheme.applyUiDefaults(false) }
     }
 
     /**
@@ -355,7 +356,7 @@ class ChatGalleryPreviewTest : BasePlatformTestCase() {
             println("[chat-gallery] wrote ${'$'}{out.absolutePath}")
             assertTrue(out.length() > 5000)
         } finally {
-            JBColor.setDark(false)
+            JBColor.setDark(false); HeadlessTheme.applyUiDefaults(false)
             ClaudeSettings.getInstance().state.firstRunAcknowledged = false
         }
     }

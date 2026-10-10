@@ -275,6 +275,7 @@ class MarketplaceScreenshotTest : BasePlatformTestCase() {
         } ?: return false
         mgr.setGlobalScheme(wanted)
         JBColor.setDark(dark)
+        HeadlessTheme.applyUiDefaults(dark)
         val bg = io.mp.sightline.theme.ClaudeUiTokens.surface()
         val luminance = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) / 255.0
         return if (dark) luminance < 0.5 else luminance > 0.5

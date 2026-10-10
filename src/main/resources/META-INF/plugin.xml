@@ -54,29 +54,26 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>0.10.0</b> &#8212; attachments in the composer, and two things that were quietly wrong.</p>
+        <p><b>0.11.0</b> &#8212; a calmer, easier-to-follow conversation.</p>
 
-        <p><b>Fixed: pasting an image with Ctrl/&#8984;V did nothing.</b> If you copied a screenshot and
-        pasted it into Sightline, nothing happened &#8212; no image, no error, no explanation. The IDE
-        handles paste in a plain text box down its own editor path, which understands text and nothing
-        else, so it found nothing to paste and silently swallowed the keystroke before Sightline saw it.
-        An ordinary paste now attaches the image, using whatever key <i>your</i> keymap has bound to
-        Paste. Shift+Ctrl/&#8984;V still forces the image off a clipboard that is also carrying text.</p>
+        <p><b>Each reply reads as a sequence of steps.</b> Every step Claude takes sits on a thin line
+        down the left with a dot beside it: green when a tool finished, red when it failed, a hollow ring
+        when you denied it, and teal while it is running or waiting for you. Tool steps lead with the
+        tool's name &#8212; <b>Bash</b>, <b>Read</b>, <b>Edit</b> &#8212; and a file appears as its name,
+        which you can click to open.</p>
 
-        <p><b>Fixed: the reply jumped around while it was being written.</b> Streaming text was being
-        laid out and re-scrolled in separate steps, several times a second, so the transcript visibly
-        shifted under you and only settled once the answer finished. It now draws in one pass &#8212; the
-        text grows downward steadily and stays readable while it arrives.</p>
+        <p><b>Commands show what ran and what came back.</b> You see the command and the first few lines
+        of its output; longer output fades out, says how many lines are hidden, and opens with a click.
+        Thinking takes one line &#8212; &#8220;Thought for 4s&#8221;.</p>
 
-        <p><b>A long paste becomes an attachment instead of swallowing the composer.</b> Pasting a stack
-        trace or a whole file into a few-row text box used to bury the sentence you were halfway through
-        writing. A paste over 30 lines now attaches as a <i>Pasted text</i> chip &#8212; named, measured
-        and removable &#8212; and is sent with your message. Shorter pastes are unchanged: ordinary text
-        still pastes as text.</p>
+        <p><b>You can always tell where things stand.</b> A running reply ends with a line saying it is
+        still working, with the elapsed time &#8212; or that it is waiting for you. Scroll through a long
+        answer and the question that asked for it stays pinned at the top.</p>
 
-        <p><b>Attachment chips are easier to read</b> &#8212; the name in front, the size beside it in
-        muted text (<code>Image 2&#160;&#160;1136&#215;989</code>, <code>Pasted text 1&#160;&#160;412
-        lines</code>). Images show the dimensions Claude will actually see, after any downscaling.</p>
+        <p><b>A tidier message box</b>, with its own model button. Steps are now shown by default; for the
+        one-line summary instead, choose <i>More &#9656; Hide technical details</i>.</p>
+
+        <p><b>Fixed:</b> warning and note callouts showed as plain text on Android Studio 2026.2.</p>
     ]]></change-notes>
 
     <!-- Platform only. The Java module dependency went with the PSI/UAST class-hierarchy enrichment
