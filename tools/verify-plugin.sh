@@ -44,7 +44,7 @@ set -euo pipefail
 AS_VERSION="${AS_VERSION:-2026.1.2.10}"          # Android Studio Quail 2 | 2026.1.2 (Release)
 AS_PLATFORM_BUILD="${AS_PLATFORM_BUILD:-261.25134}"
 # The download URL and its checksum live in tools/fetch-android-studio.sh, which CI also uses.
-VERIFIER_VERSION="${VERIFIER_VERSION:-1.388}"
+VERIFIER_VERSION="${VERIFIER_VERSION:-1.410}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${VERIFY_WORK_DIR:-${TMPDIR:-/tmp}/sightline-verify}"

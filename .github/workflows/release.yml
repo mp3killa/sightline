@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -118,8 +118,8 @@ jobs:
         with:
           path: |
             /home/runner/.cache/sightline-verify/android-studio-2026.1.2.10
-            /home/runner/.cache/sightline-verify/verifier-cli-1.388.jar
-          key: verifier-ide-as-2026.1.2.10-cli-1.388
+            /home/runner/.cache/sightline-verify/verifier-cli-1.410.jar
+          key: verifier-ide-as-2026.1.2.10-cli-1.410
 
       # A Marketplace review runs the verifier too. Failing here costs a re-tag; failing there costs a
       # rejected submission, so it gates the publish rather than following it.

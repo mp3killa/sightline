@@ -178,7 +178,10 @@ verifies every push and PR; `release.yml` publishes on a `v*` tag. Three things 
   beta channel, a bare version → **stable, everyone**. Shipping stable is a deliberate edit to `version`,
   not a workflow input. **0.5.0 (2026-07-27) is the first stable release**, gated on a human `runIde`
   pass over the interactive approval/diff paths — a precondition to re-satisfy whenever those paths
-  change, not a box permanently ticked. **Re-satisfied for 0.9.0 (2026-09-16)** — the 0.9.x line changed the approval card (Deny with reason),
+  change, not a box permanently ticked. **The timeline transcript (2026-10-10)** restyled the approval,
+  plan and question cards onto the rail; the owner ran it under `runIde` and reported it looks good. That
+  is a visual pass, so confirm the approval and diff flows themselves before a stable release.
+  **Re-satisfied for 0.9.0 (2026-09-16)** — the 0.9.x line changed the approval card (Deny with reason),
   added a plan-review card and an `@`-mention popup, and the owner confirmed a live walkthrough in the
   IDE before it was published stable. **Re-satisfied for 0.8.1 (2026-08-27)**: the 0.8.x line changed
   Stop, permission-mode application and file writes, went to beta as `0.8.0-beta`/`0.8.1-beta`, and was

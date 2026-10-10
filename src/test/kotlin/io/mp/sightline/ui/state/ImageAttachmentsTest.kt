@@ -40,6 +40,17 @@ class ImageAttachmentsTest {
         assertEquals("1.3 MB", ImageAttachmentPolicy.formatBytes((1.3 * 1024 * 1024).toInt()))
     }
 
+    /** CI runs in an en-US locale, so without forcing one this would only ever fail on a developer's machine. */
+    @Test fun byteFormattingIgnoresACommaDecimalLocale() {
+        val saved = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY)
+            assertEquals("1.3 MB", ImageAttachmentPolicy.formatBytes((1.3 * 1024 * 1024).toInt()))
+        } finally {
+            java.util.Locale.setDefault(saved)
+        }
+    }
+
     @Test fun chipNamesTheImageAndSizesItSeparately() {
         val img = pending(w = 1136, h = 989, bytes = 2048, ordinal = 3)
         assertEquals("Image 3", ImageAttachmentPolicy.chipLabel(img))

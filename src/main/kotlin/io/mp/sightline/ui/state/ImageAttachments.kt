@@ -115,13 +115,17 @@ object ImageAttachmentPolicy {
     fun tooLargeMessage(byteCount: Int): String =
         "Image not attached: ${formatBytes(byteCount)} after encoding, above the ${formatBytes(HARD_MAX_BYTES)} per-image limit."
 
-    /** `980 B`, `214 KB`, `1.3 MB` — one decimal only where it carries information. */
+    /**
+     * `980 B`, `214 KB`, `1.3 MB` — one decimal only where it carries information. Always a `.` decimal,
+     * like every other number the panel prints ([CompletionSummary]'s `51.6s` and `$0.404`): under a
+     * comma-decimal locale the default would put `1,3 MB` beside `51.6s` in the same panel.
+     */
     fun formatBytes(n: Int): String = when {
         n < 1024 -> "$n B"
         n < 1024 * 1024 -> "${(n + 512) / 1024} KB"
         else -> {
             val mb = n / (1024.0 * 1024.0)
-            if (mb >= 10) "${mb.toInt()} MB" else String.format("%.1f MB", mb)
+            if (mb >= 10) "${mb.toInt()} MB" else String.format(java.util.Locale.US, "%.1f MB", mb)
         }
     }
 }

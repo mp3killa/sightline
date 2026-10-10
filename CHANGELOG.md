@@ -6,22 +6,35 @@ All notable changes to Sightline are recorded here. Format follows
 
 ## Unreleased
 
+A calmer, easier-to-follow conversation.
+
 ### Changed
-- **A new transcript layout**, modelled on the official Claude Code extension and kept in Sightline's
-  own colours. Each step of a reply sits on a timeline rail, with a dot showing its outcome. Commands
-  show `IN` / `OUT`, with long output faded and the hidden lines counted. Files show as links. Thinking
-  reads "Thought for 4s". A working line with elapsed time closes a running turn, and your latest
-  message stays pinned at the top while you read the answer.
-- The composer is one outlined box with a **model chip** and a square send/stop button.
-- Technical details are shown by default. A setting you changed yourself keeps your choice.
-- The status strip appears only for errors, stops and recovered failures.
-- Build toolchain: Gradle 9.8.1, IntelliJ Platform Gradle Plugin 2.19.0, Kotlin 2.4.21, needed to
-  build against Android Studio 2026.2. The plugin still targets Java 21 and the 261.25134 floor.
-- Bundled libraries: Gson 2.14.0, Java-WebSocket 1.6.0.
+
+- **Each reply reads as a sequence of steps.** Every step Claude takes sits on a thin line down the
+  left with a dot beside it: green when a tool finished, red when it failed, a hollow ring when you
+  denied it, and teal while it is running or waiting for you. Tool steps lead with the tool's name —
+  **Bash**, **Read**, **Edit** — and a file appears as its name, which you can click to open.
+- **Commands show what ran and what came back.** A command step shows its input and the first few
+  lines of its output. Longer output fades out and says how many lines are hidden, with a link to show
+  them.
+- **Thinking takes one line.** It reads "Thinking…" while it happens and "Thought for 4s" after, and
+  opens to the reasoning when there is any.
+- **You can see that Claude is still working.** While a reply is in progress, its last line says so,
+  with the elapsed time — or says that it is waiting for you, when a question or approval is open.
+- **Your question stays in view.** Scroll down through a long answer and the message that asked for it
+  stays pinned at the top; click it to jump back. Messages and replies show the time they were sent.
+- **A tidier message box.** The model now has its own button beside the attach and `/` buttons, and
+  the Send/Stop button is a small square.
+- **Steps are now shown by default.** If you prefer the one-line summary of each reply, choose
+  **More ▸ Hide technical details**.
+- **The status line under the conversation only appears when it has something to tell you** — an error,
+  a stop, or a failure Claude recovered from.
 
 ### Fixed
-- GitHub-style callouts (`> [!WARNING]` …) rendered as plain text on Android Studio 2026.2, whose
-  Markdown parser now reports them as a distinct node.
+
+- **Warning and note callouts showed as plain text on Android Studio 2026.2.**
+- **File sizes used a different decimal mark from every other number in the panel** on systems that
+  write decimals with a comma — `1,3 MB` beside `51.6s`.
 
 ## 0.10.0 — 2026-09-18
 
