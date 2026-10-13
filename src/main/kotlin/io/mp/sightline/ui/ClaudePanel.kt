@@ -405,6 +405,20 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     /** True while *we* are moving the scrollbar, so our own scroll isn't read as a user gesture. */
     private var programmaticScroll = false
 
+    /**
+     * The value *we* last wrote to the scrollbar, and the thing that actually identifies our own
+     * scroll. [programmaticScroll] alone cannot: it is raised, the transcript is laid out, the bar is
+     * written, and only then is the flag cleared on the next EDT turn. A live render tick does that
+     * several times a second, and laying out a long transcript is the slow part — so wheel events the
+     * user generates *during* that layout are queued ahead of the runnable that clears the flag, and
+     * dispatch while it is still up. Ignoring them wholesale meant a reader who scrolled back
+     * mid-stream had their gesture dropped and was dragged to the bottom by the next tick.
+     *
+     * Comparing the value closes that window without widening anything: a scroll to a position we did
+     * not ask for is somebody else's, whatever the flag says.
+     */
+    private var selfSetValue = -1
+
     private var lastScrollMaximum = 0
     private var lastScrollValue = 0
 
@@ -416,7 +430,11 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             lastScrollMaximum = bar.maximum
             lastScrollValue = bar.value
             updateStickyPrompt()
-            if (programmaticScroll) return@addAdjustmentListener
+            // Ours only if it landed where we put it — see [selfSetValue]. Anything else is the user,
+            // including during the brief window where we are still flagged as the one scrolling.
+            if (programmaticScroll && bar.value == selfSetValue) return@addAdjustmentListener
+            // It was not ours, so stop claiming the rest of this burst is either.
+            programmaticScroll = false
             // A real gesture moves the content out from under the pointer, leaving hover actions
             // revealed on a row that is no longer hovered. Pure growth must *not* close them, or they
             // would flicker away mid-stream just as the user reaches for one.
@@ -1878,6 +1896,30 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
     }
 
     /**
+     * Test-only: the interleaving that caused the bug, made deterministic — a wheel event landing
+     * inside the window where the panel is still flagged as the one scrolling. A real one arrives
+     * from the native queue during the tick's layout pass; there is no way to inject that headlessly,
+     * so the seam reproduces the *state* rather than the timing.
+     */
+    @TestOnly
+    internal fun scrollUpDuringRepinForTest() {
+        programmaticScroll = true
+        scroll.verticalScrollBar.value = 0
+    }
+
+    /** Test-only: where the viewport currently sits. */
+    @TestOnly
+    internal fun scrollValueForTest(): Int = scroll.verticalScrollBar.value
+
+    /** Test-only: whether the "Jump to latest" affordance is being offered. */
+    @TestOnly
+    internal fun isJumpToLatestVisibleForTest(): Boolean = jumpToLatestButton.isVisible
+
+    /** Test-only: the same action the "Jump to latest" button performs. */
+    @TestOnly
+    internal fun jumpToLatestForTest() = jumpToLatest()
+
+    /**
      * Test-only: puts the panel in the running state and parks [message] behind the in-flight turn,
      * so the queued-composer state can be previewed and asserted without a live CLI session.
      *
@@ -3145,6 +3187,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
             scroll.validate()
             val bar = scroll.verticalScrollBar
             bar.value = bar.maximum - bar.visibleAmount
+            selfSetValue = bar.value // read back: the model clamps, and the clamped value is ours
             lastScrollValue = bar.value
             lastScrollMaximum = bar.maximum
             transcript.repaint()
@@ -3159,6 +3202,7 @@ class ClaudePanel(private val project: Project, parent: Disposable) : Disposable
         programmaticScroll = true
         try {
             bar.value = bar.maximum - bar.visibleAmount
+            selfSetValue = bar.value
             lastScrollValue = bar.value
             lastScrollMaximum = bar.maximum
         } finally {
