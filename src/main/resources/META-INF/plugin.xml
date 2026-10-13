@@ -54,6 +54,18 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.11.1</b> &#8212; a fix for reading while Claude is still writing.</p>
+
+        <p><b>Scrolling back during a reply no longer snaps you to the bottom.</b> If you scrolled up to
+        re-read something while a reply was still arriving, the next few words pulled the view back down
+        again, so the only way to read an earlier passage was to wait for the reply to finish. Scrolling
+        back now stays put, and <b>Jump to latest &#8595;</b> takes you to the live end and resumes
+        following when you want it. The faster the reply, the worse this used to be &#8212; which is
+        exactly when you are most likely to want to look back at something.</p>
+
+        <p>Everything in <b>0.11.0</b> below is unchanged.</p>
+
+
         <p><b>0.11.0</b> &#8212; a calmer, easier-to-follow conversation.</p>
 
         <p><b>Each reply reads as a sequence of steps.</b> Every step Claude takes sits on a thin line

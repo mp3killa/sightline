@@ -4,6 +4,22 @@ All notable changes to Sightline are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.1 — 2026-10-13
+
+### Fixed
+
+- **Scrolling back during a reply no longer snaps you to the bottom.** If you scrolled up to re-read
+  something while Claude was still writing, the next few words dragged the view back down — so the
+  only way to read an earlier passage was to wait for the reply to finish. Scrolling back now holds,
+  and **Jump to latest ↓** brings you to the live end and resumes following when you want it.
+
+  The gesture was being thrown away rather than ignored. While the transcript re-lays itself for each
+  render tick, the panel flags the scrollbar as "we are moving this, not the user" — and a scroll made
+  during that layout pass arrives before the flag comes down, so it was read as the panel's own and
+  discarded. The panel now recognises its own scroll by the position it asked for, so a scroll to
+  anywhere else is the reader's, whichever way the flag happens to be set at that instant. The faster
+  the reply, the longer the layout pass, which is why this was worst exactly when it mattered most.
+
 ## 0.11.0 — 2026-10-10
 
 A calmer, easier-to-follow conversation.
