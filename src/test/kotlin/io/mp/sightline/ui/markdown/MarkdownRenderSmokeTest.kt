@@ -1,5 +1,8 @@
 package io.mp.sightline.ui.markdown
 
+import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
+import com.intellij.openapi.fileTypes.UnknownFileType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.BorderLayout
 import java.awt.Color
@@ -134,12 +137,56 @@ class MarkdownRenderSmokeTest : BasePlatformTestCase() {
         assertEquals("Collapse", toggle.text)
     }
 
-    fun testKnownLanguageIsLexedIntoHighlightSpans() {
-        val code = "fun main() {\n    val greeting = \"hi\"\n}\n"
-        val spans = CodeHighlighting.spans(project, "kotlin", code)
-        assertFalse("Kotlin has a registered highlighter on the test classpath", spans.isEmpty())
+    /**
+     * Whether the platform under test can lex [extension] at all — asked of the platform directly
+     * rather than through [CodeHighlighting], so this cannot agree with the code it is checking.
+     */
+    private fun platformCanLex(extension: String): Boolean {
+        val fileType = FileTypeManager.getInstance().getFileTypeByExtension(extension)
+        if (fileType is UnknownFileType) return false
+        return SyntaxHighlighterFactory.getSyntaxHighlighter(fileType, project, null) != null
+    }
+
+    /** Fence tag → extension → a snippet with enough string/keyword tokens to colour. */
+    private val lexSamples = listOf(
+        Triple("kotlin", "kt", "fun main() {\n    val greeting = \"hi\"\n}\n"),
+        Triple("java", "java", "class A {\n    String greeting = \"hi\";\n}\n"),
+        Triple("json", "json", "{\n  \"greeting\": \"hi\"\n}\n"),
+        Triple("xml", "xml", "<root>\n  <greeting to=\"world\"/>\n</root>\n"),
+    )
+
+    /**
+     * Lexing a language the IDE actually carries produces well-formed spans.
+     *
+     * The language is **chosen from what this platform has**, not fixed. Which languages a test
+     * classpath carries is a property of the IDE being built against rather than of this plugin —
+     * Kotlin lexes against the Android Studio CI provisions and does not against the one installed
+     * locally — so pinning the assertion to Kotlin reported the IDE's inventory as a defect in our
+     * code, failing every local run while CI stayed green. What is ours is the contract: given a
+     * highlighter, we return spans, and they are real ranges inside the text.
+     */
+    fun testALexableLanguageIsLexedIntoWellFormedSpans() {
+        val sample = lexSamples.firstOrNull { platformCanLex(it.second) }
+        assertNotNull("no lexable language at all on the test classpath — the probe is broken", sample)
+        val (language, _, code) = sample!!
+
+        val spans = CodeHighlighting.spans(project, language, code)
+        assertFalse("$language has a registered highlighter, so it must produce spans", spans.isEmpty())
         spans.forEach { assertTrue("span is a real range", it.end > it.start && it.start >= 0) }
         assertTrue("spans stay inside the text", spans.all { it.end <= code.length })
+    }
+
+    /**
+     * The other half, asserted where *it* holds: a language this platform cannot lex degrades to no
+     * spans — the block renders as plain monospace — rather than throwing.
+     */
+    fun testALanguageThisPlatformCannotLexDegradesToNoSpans() {
+        val absent = lexSamples.firstOrNull { !platformCanLex(it.second) } ?: return
+        val (language, _, code) = absent
+        assertTrue(
+            "$language has no highlighter here, so it must degrade to plain text",
+            CodeHighlighting.spans(project, language, code).isEmpty(),
+        )
     }
 
     fun testUnknownLanguageYieldsNoSpans() {
